@@ -23,10 +23,19 @@ interface Props {
   width?: number;
 }
 
+/**
+ * カードは常に固定の基準サイズ（幅340px）で描画し、CSS transform で目的のサイズに拡縮する。
+ * こうすると、ブラウザの最小フォントサイズ等の影響を受けず、どのサイズでも同じ見た目になる。
+ */
+const BASE_WIDTH = 340;
+
 export function CardFrame({ card, width = 300 }: Props) {
   const isLandscape = card.type === 'character' && card.size === 'legendaryLarge';
-  const w = width;
+  const scale = width / BASE_WIDTH;
+  const w = BASE_WIDTH;
   const h = (w * 417) / 300;
+  const outerW = isLandscape ? h : w;
+  const outerH = isLandscape ? w : h;
   // "1-A041-SR" → "1-A041 SR"（右下のコレクター表記）
   const collectorNo = card.id.replace(/-([A-Z]+)$/, ' $1');
 
@@ -34,17 +43,26 @@ export function CardFrame({ card, width = 300 }: Props) {
     <div
       className="card-frame"
       style={{
-        width: isLandscape ? h : w,
-        height: isLandscape ? w : h,
-        borderRadius: w * 0.0267,
+        width: outerW * scale,
+        height: outerH * scale,
+        borderRadius: w * 0.0267 * scale,
       }}
     >
-      <RarityFrame rarity={card.rarity} w={w} collectorNo={collectorNo}>
-        {card.type === 'character' && <CharacterContent card={card} w={w} h={h} landscape={isLandscape} />}
-        {card.type === 'skill' && <SkillContent card={card} w={w} h={h} />}
-        {card.type === 'equipment' && <EquipmentContent card={card} w={w} />}
-        {card.type === 'field' && <FieldContent card={card} w={w} />}
-      </RarityFrame>
+      <div
+        style={{
+          width: outerW,
+          height: outerH,
+          transform: `scale(${scale})`,
+          transformOrigin: 'top left',
+        }}
+      >
+        <RarityFrame rarity={card.rarity} w={w} collectorNo={collectorNo}>
+          {card.type === 'character' && <CharacterContent card={card} w={w} h={h} landscape={isLandscape} />}
+          {card.type === 'skill' && <SkillContent card={card} w={w} h={h} />}
+          {card.type === 'equipment' && <EquipmentContent card={card} w={w} />}
+          {card.type === 'field' && <FieldContent card={card} w={w} />}
+        </RarityFrame>
+      </div>
     </div>
   );
 }
