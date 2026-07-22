@@ -47,9 +47,9 @@ export function rarityGradient(rarity: Rarity): string | null {
   }
 }
 
-/** スキルの値プレート（AI生成の新素材。C=通常 / R=銀 / それ以上=金） */
+/** スキルの値プレート（AI生成の新素材。C=通常 / UC・R=銀 / それ以上=金） */
 export function skillPlate(rarity: Rarity): string {
-  const grade = rarity === 'C' ? 'normal' : rarity === 'R' ? 'silver' : 'gold';
+  const grade = rarity === 'C' ? 'normal' : rarity === 'UC' || rarity === 'R' ? 'silver' : 'gold';
   return IMG_PNG(`plate_${grade}`);
 }
 

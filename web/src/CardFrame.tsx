@@ -101,23 +101,34 @@ function RarityFrame({ rarity, w, collectorNo, children }: {
   );
 }
 
-/** 白フチ付きテキスト */
-function Outlined({ text, size, color = '#000', stroke = '#fff', weight = 700, style }: {
-  text: string; size: number; color?: string; stroke?: string; weight?: number; style?: CSSProperties;
+/** フチ付きテキスト（縁取りを背面レイヤーに描くので、細くてもきれいに出る） */
+function Outlined({ text, size, color = '#000', stroke = '#fff', weight = 700, strokeWidth, style }: {
+  text: string; size: number; color?: string; stroke?: string; weight?: number; strokeWidth?: number; style?: CSSProperties;
 }) {
-  const s = Math.max(1, size * 0.09);
+  const t = strokeWidth ?? Math.max(0.8, size * 0.1);
   return (
     <span
       style={{
+        position: 'relative',
+        display: 'inline-block',
         fontSize: size,
         fontWeight: weight,
-        color,
-        textShadow: `${s}px 0 0 ${stroke}, -${s}px 0 0 ${stroke}, 0 ${s}px 0 ${stroke}, 0 -${s}px 0 ${stroke}, ${s}px ${s}px 0 ${stroke}, -${s}px ${s}px 0 ${stroke}, ${s}px -${s}px 0 ${stroke}, -${s}px -${s}px 0 ${stroke}`,
-        lineHeight: 1.1,
+        lineHeight: 1.2,
         ...style,
       }}
     >
-      {text}
+      <span
+        aria-hidden
+        style={{
+          position: 'absolute',
+          inset: 0,
+          WebkitTextStroke: `${t}px ${stroke}`,
+          color: 'transparent',
+        }}
+      >
+        {text}
+      </span>
+      <span style={{ position: 'relative', color }}>{text}</span>
     </span>
   );
 }
@@ -129,7 +140,22 @@ function AttributeIcons({ attrs, size, gap }: { attrs: string[]; size: number; g
   return (
     <div style={{ display: 'flex', justifyContent: 'center', gap }}>
       {attrs.map((a, i) => (
-        <img key={i} src={IMG(a)} width={size} height={size} style={{ objectFit: 'contain' }} alt={a} />
+        <span
+          key={i}
+          style={{
+            width: size,
+            height: size,
+            borderRadius: '50%',
+            background: 'radial-gradient(circle at 35% 30%, rgba(90,90,100,0.9), rgba(20,20,26,0.9))',
+            boxShadow: '0 1px 2px rgba(0,0,0,0.5), inset 0 0 2px rgba(255,255,255,0.35)',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+          }}
+        >
+          <img src={IMG(a)} width={size * 0.98} height={size * 0.98} style={{ objectFit: 'contain', display: 'block' }} alt={a} />
+        </span>
       ))}
     </div>
   );
@@ -247,10 +273,16 @@ function CharacterContent({ card, w, h, landscape }: { card: CharacterCard; w: n
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            transform: `translateY(-${w * 0.016}px)`,
           }}
         >
-          <Outlined text={String(card.hp)} size={w * 0.1} style={{ fontFamily: NUM_FONT }} />
+          <Outlined
+            text={String(card.hp)}
+            size={w * 0.062}
+            color="#fff"
+            stroke="rgba(0,0,0,0.85)"
+            weight={800}
+            style={{ fontFamily: NUM_FONT }}
+          />
         </div>
       </div>
     </div>
@@ -310,7 +342,14 @@ function SkillContent({ card, w, h }: { card: SkillCard; w: number; h: number })
                 justifyContent: 'center',
               }}
             >
-              <Outlined text={String(card.costAp)} size={w * 0.095} style={{ fontFamily: NUM_FONT }} />
+              <Outlined
+                text={String(card.costAp)}
+                size={w * 0.068}
+                color="#fff"
+                stroke="rgba(0,0,0,0.85)"
+                weight={800}
+                style={{ fontFamily: NUM_FONT }}
+              />
             </div>
           </div>
           <div>
@@ -319,8 +358,9 @@ function SkillContent({ card, w, h }: { card: SkillCard; w: number; h: number })
               style={{
                 fontSize: w * 0.053,
                 fontWeight: 700,
-                color: card.rarity !== 'SR' && card.rarity !== 'USR' ? 'rgba(0,0,0,0.8)' : 'rgba(255,255,255,0.85)',
-                textShadow: card.rarity === 'USR' ? nameShadow : undefined,
+                color: card.rarity === 'C' || card.rarity === 'R' ? 'rgba(0,0,0,0.8)' : 'rgba(255,255,255,0.9)',
+                textShadow:
+                  card.rarity === 'USR' ? nameShadow : card.rarity === 'C' || card.rarity === 'R' ? undefined : '1px 1px 2px rgba(0,0,0,0.8)',
               }}
             >
               {card.name}
@@ -339,7 +379,7 @@ function SkillContent({ card, w, h }: { card: SkillCard; w: number; h: number })
             <div
               style={{
                 height: h * 0.088,
-                minWidth: w * 0.42,
+                minWidth: w * 0.56,
                 backgroundImage: `url(${skillPlate(card.rarity)})`,
                 backgroundSize: '100% 100%',
                 display: 'flex',
@@ -357,7 +397,7 @@ function SkillContent({ card, w, h }: { card: SkillCard; w: number; h: number })
             <div
               style={{
                 height: h * 0.088,
-                minWidth: w * 0.2,
+                minWidth: w * 0.24,
                 backgroundImage: `url(${skillPlate(card.rarity)})`,
                 backgroundSize: '100% 100%',
                 display: 'flex',
@@ -468,8 +508,8 @@ function FieldContent({ card, w }: { card: FieldCard; w: number }) {
             filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.5))',
           }}
         >
-          <span className="afs" style={{ fontSize: w * 0.055, fontWeight: 700, color: '#1a1205' }}>{card.name}</span>
-          <span style={{ fontSize: w * 0.034, fontWeight: 800, color: '#1a1205', fontFamily: NUM_FONT, letterSpacing: '0.2em' }}>FIELD</span>
+          <span className="afs" style={{ fontSize: w * 0.044, fontWeight: 700, color: '#1a1205' }}>{card.name}</span>
+          <span style={{ fontSize: w * 0.024, fontWeight: 800, color: 'rgba(26,18,5,0.75)', fontFamily: NUM_FONT, letterSpacing: '0.28em', marginTop: w * 0.004 }}>FIELD</span>
         </div>
         <div style={{ height: w * 0.0267 }} />
         <DescriptionArea effectText={card.effectText} flavorText={card.flavorText} w={w} />
