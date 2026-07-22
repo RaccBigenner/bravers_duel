@@ -9,7 +9,7 @@
     "effectText": "自分のターンのドローフェーズに引く手札の上限枚数を+1。",
     "flavorText": "「世界はまだ、変化を求めている」——アイ",
     "size": "legendaryLarge",
-    "hp": 14,
+    "hp": 16,
     "attribute": [
       "風",
       "雷",
@@ -27,7 +27,7 @@
     "effectText": "自分のターンの終わりにデッキからカードを2枚トラッシュ。",
     "flavorText": "——たかだか頭部のみの顕現で、人類には厄災級。",
     "size": "legendaryLarge",
-    "hp": 17,
+    "hp": 20,
     "attribute": [
       "闇",
       "竜",
