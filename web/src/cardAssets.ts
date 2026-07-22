@@ -47,11 +47,21 @@ export function rarityGradient(rarity: Rarity): string | null {
   }
 }
 
-/** スキルの値プレート（左: 種類ラベル / 右: 数値） */
-export function skillPlate(rarity: Rarity, side: 'left' | 'right'): string {
+/** スキルの値プレート（AI生成の新素材。C=通常 / R=銀 / それ以上=金） */
+export function skillPlate(rarity: Rarity): string {
   const grade = rarity === 'C' ? 'normal' : rarity === 'R' ? 'silver' : 'gold';
-  return IMG(`skill_value_${side}_${grade}`);
+  return IMG_PNG(`plate_${grade}`);
 }
+
+/** フィールドカードのタイトル帯（AI生成の新素材。R=銀 / SR=金） */
+export function fieldTitlePlate(rarity: Rarity): string {
+  return IMG_PNG(rarity === 'R' ? 'field_title_silver' : 'field_title_gold');
+}
+
+/** 数字・英字ラベル用フォント（ファンタジー調） */
+export const NUM_FONT = "'Cinzel', 'Murecho', serif";
+/** フレーバーテキスト用フォント */
+export const FLAVOR_FONT = "'Shippori Mincho', serif";
 
 export function valueTypeLabel(valueType: string): string {
   switch (valueType) {

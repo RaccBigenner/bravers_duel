@@ -5,8 +5,11 @@
 import type { Card, CharacterCard, EquipmentCard, FieldCard, Rarity, SkillCard } from '@bravers/engine';
 import { CSSProperties } from 'react';
 import {
+  FLAVOR_FONT,
   IMG,
   IMG_PNG,
+  NUM_FONT,
+  fieldTitlePlate,
   frameImage,
   innerImage,
   isFullArt,
@@ -24,6 +27,8 @@ export function CardFrame({ card, width = 300 }: Props) {
   const isLandscape = card.type === 'character' && card.size === 'legendaryLarge';
   const w = width;
   const h = (w * 417) / 300;
+  // "1-A041-SR" → "1-A041 SR"（右下のコレクター表記）
+  const collectorNo = card.id.replace(/-([A-Z]+)$/, ' $1');
 
   return (
     <div
@@ -34,7 +39,7 @@ export function CardFrame({ card, width = 300 }: Props) {
         borderRadius: w * 0.0267,
       }}
     >
-      <RarityFrame rarity={card.rarity} w={w}>
+      <RarityFrame rarity={card.rarity} w={w} collectorNo={collectorNo}>
         {card.type === 'character' && <CharacterContent card={card} w={w} h={h} landscape={isLandscape} />}
         {card.type === 'skill' && <SkillContent card={card} w={w} h={h} />}
         {card.type === 'equipment' && <EquipmentContent card={card} w={w} />}
@@ -44,7 +49,9 @@ export function CardFrame({ card, width = 300 }: Props) {
   );
 }
 
-function RarityFrame({ rarity, w, children }: { rarity: Rarity; w: number; children: React.ReactNode }) {
+function RarityFrame({ rarity, w, collectorNo, children }: {
+  rarity: Rarity; w: number; collectorNo: string; children: React.ReactNode;
+}) {
   const frameSize = w * 0.02667;
   const inner = innerImage(rarity);
   return (
@@ -73,6 +80,23 @@ function RarityFrame({ rarity, w, children }: { rarity: Rarity; w: number; child
       >
         {children}
       </div>
+      {/* コレクター表記（カード番号・レアリティ） */}
+      <span
+        style={{
+          position: 'absolute',
+          right: w * 0.014,
+          bottom: w * 0.001,
+          fontSize: w * 0.028,
+          fontFamily: NUM_FONT,
+          fontWeight: 700,
+          letterSpacing: '0.05em',
+          color: 'rgba(255,255,255,0.9)',
+          textShadow: '0 1px 2px rgba(0,0,0,0.9), 0 0 3px rgba(0,0,0,0.7)',
+          pointerEvents: 'none',
+        }}
+      >
+        {collectorNo}
+      </span>
     </div>
   );
 }
@@ -135,7 +159,7 @@ function DescriptionArea({ effectText, flavorText, w, wide = false }: {
       <Outlined
         text={flavorText}
         size={w * 0.03}
-        style={{ display: 'block', textAlign: 'right', fontFamily: "'Sawarabi Mincho', serif" }}
+        style={{ display: 'block', textAlign: 'right', fontFamily: FLAVOR_FONT }}
       />
     </div>
   );
@@ -226,7 +250,7 @@ function CharacterContent({ card, w, h, landscape }: { card: CharacterCard; w: n
             transform: `translateY(-${w * 0.016}px)`,
           }}
         >
-          <Outlined text={String(card.hp)} size={w * 0.106} />
+          <Outlined text={String(card.hp)} size={w * 0.1} style={{ fontFamily: NUM_FONT }} />
         </div>
       </div>
     </div>
@@ -275,7 +299,7 @@ function SkillContent({ card, w, h }: { card: SkillCard; w: number; h: number })
       >
         {/* 上段: コスト＋名前＋条件属性 */}
         <div style={{ display: 'flex', alignItems: 'flex-start', padding: w * 0.013, gap: w * 0.013 }}>
-          <div style={{ position: 'relative', width: w * 0.134, height: w * 0.134, flexShrink: 0 }}>
+          <div style={{ position: 'relative', width: w * 0.165, height: w * 0.165, flexShrink: 0 }}>
             <img src={IMG_PNG('diamond_material')} style={{ width: '100%', height: '100%', objectFit: 'contain', filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.5))' }} alt="コスト" />
             <div
               style={{
@@ -284,10 +308,9 @@ function SkillContent({ card, w, h }: { card: SkillCard; w: number; h: number })
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                transform: `translateY(-${w * 0.016}px)`,
               }}
             >
-              <Outlined text={String(card.costAp)} size={w * 0.08} />
+              <Outlined text={String(card.costAp)} size={w * 0.095} style={{ fontFamily: NUM_FONT }} />
             </div>
           </div>
           <div>
@@ -312,18 +335,42 @@ function SkillContent({ card, w, h }: { card: SkillCard; w: number; h: number })
 
         {/* 下段: 値プレート＋説明 */}
         <div>
-          <div style={{ display: 'flex', justifyContent: 'center' }}>
-            <div style={{ position: 'relative', height: h * 0.086 }}>
-              <img src={skillPlate(card.rarity, 'left')} style={{ height: '100%' }} alt="" />
-              <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', transform: `translateY(-${w * 0.013}px)` }}>
-                <span style={{ fontSize: w * 0.075, fontWeight: 700, color: '#000' }}>{valueTypeLabel(card.valueType)}</span>
-              </div>
+          <div style={{ display: 'flex', justifyContent: 'center', gap: w * 0.013 }}>
+            <div
+              style={{
+                height: h * 0.088,
+                minWidth: w * 0.42,
+                backgroundImage: `url(${skillPlate(card.rarity)})`,
+                backgroundSize: '100% 100%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: `0 ${w * 0.04}px`,
+                filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.4))',
+                boxSizing: 'border-box',
+              }}
+            >
+              <span style={{ fontSize: w * 0.06, fontWeight: 800, color: '#1a1205', fontFamily: NUM_FONT, letterSpacing: '0.08em' }}>
+                {valueTypeLabel(card.valueType)}
+              </span>
             </div>
-            <div style={{ position: 'relative', height: h * 0.086 }}>
-              <img src={skillPlate(card.rarity, 'right')} style={{ height: '100%' }} alt="" />
-              <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', transform: `translateY(-${w * 0.013}px)` }}>
-                <span style={{ fontSize: w * 0.08, fontWeight: 700, color: '#000' }}>{card.baseValue}</span>
-              </div>
+            <div
+              style={{
+                height: h * 0.088,
+                minWidth: w * 0.2,
+                backgroundImage: `url(${skillPlate(card.rarity)})`,
+                backgroundSize: '100% 100%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: `0 ${w * 0.03}px`,
+                filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.4))',
+                boxSizing: 'border-box',
+              }}
+            >
+              <span style={{ fontSize: w * 0.075, fontWeight: 800, color: '#1a1205', fontFamily: NUM_FONT }}>
+                {card.baseValue}
+              </span>
             </div>
           </div>
           <DescriptionArea effectText={card.effectText} flavorText={card.flavorText} w={w} />
@@ -390,7 +437,7 @@ function EquipmentContent({ card, w }: { card: EquipmentCard; w: number }) {
 // ---------------------------------------------------------------- フィールド
 
 function FieldContent({ card, w }: { card: FieldCard; w: number }) {
-  const titleImage = card.rarity === 'R' ? IMG('field_title_r') : IMG('field_title_sr');
+  const titleImage = fieldTitlePlate(card.rarity);
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       <img
@@ -408,21 +455,21 @@ function FieldContent({ card, w }: { card: FieldCard; w: number }) {
           alignItems: 'center',
         }}
       >
-        <div style={{ position: 'relative', width: '90%' }}>
-          <img src={titleImage} style={{ width: '100%' }} alt="" />
-          <div
-            style={{
-              position: 'absolute',
-              inset: 0,
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            <span style={{ fontSize: w * 0.0534, fontWeight: 700, color: '#000' }}>{card.name}</span>
-            <Outlined text="FIELD" size={w * 0.04} />
-          </div>
+        <div
+          style={{
+            width: '88%',
+            height: w * 0.19,
+            backgroundImage: `url(${titleImage})`,
+            backgroundSize: '100% 100%',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.5))',
+          }}
+        >
+          <span className="afs" style={{ fontSize: w * 0.055, fontWeight: 700, color: '#1a1205' }}>{card.name}</span>
+          <span style={{ fontSize: w * 0.034, fontWeight: 800, color: '#1a1205', fontFamily: NUM_FONT, letterSpacing: '0.2em' }}>FIELD</span>
         </div>
         <div style={{ height: w * 0.0267 }} />
         <DescriptionArea effectText={card.effectText} flavorText={card.flavorText} w={w} />
