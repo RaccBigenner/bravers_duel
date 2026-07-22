@@ -1,0 +1,108 @@
+@font-face {
+  font-family: 'AFS';
+  src: url('./fonts/AFSMinNovaE.ttf') format('truetype');
+  font-display: swap;
+}
+
+* { margin: 0; }
+
+body {
+  font-family: 'Murecho', 'Hiragino Sans', sans-serif;
+  background: #1c1e26;
+  color: #eee;
+}
+
+.afs { font-family: 'AFS', 'Murecho', sans-serif; }
+
+.page { min-height: 100vh; }
+
+.toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: rgba(24, 26, 33, 0.96);
+  padding: 12px 16px;
+  border-bottom: 1px solid #333;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.toolbar h1 { font-size: 18px; }
+
+.filter-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.filter-label {
+  font-size: 12px;
+  color: #999;
+  margin-right: 2px;
+  margin-left: 8px;
+}
+
+.chip {
+  border: 1px solid #555;
+  background: #2a2d38;
+  color: #ccc;
+  border-radius: 14px;
+  padding: 3px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.chip.on { background: #ffd700; border-color: #ffd700; color: #222; font-weight: 700; }
+
+.attr-chip {
+  border: 1px solid #555;
+  background: #2a2d38;
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  padding: 3px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.55;
+}
+.attr-chip.on { opacity: 1; border-color: #ffd700; background: #3a3520; }
+
+.search {
+  background: #2a2d38;
+  border: 1px solid #555;
+  color: #eee;
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 13px;
+  width: 220px;
+}
+
+select {
+  background: #2a2d38;
+  border: 1px solid #555;
+  color: #eee;
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+
+.count { margin-left: auto; font-size: 13px; color: #aaa; }
+
+.gallery {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 18px;
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.cell { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.cell-caption { font-size: 11px; color: #888; }
+
+.card-frame {
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+  flex-shrink: 0;
+}

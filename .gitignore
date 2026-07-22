@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+.idea/
+.vscode/
+
+# 旧プロトタイプのビルド生成物（1GB超あるのでGitに入れない）
+archive/**/build/
+archive/**/.dart_tool/
+archive/**/.flutter-plugins
+archive/**/.flutter-plugins-dependencies

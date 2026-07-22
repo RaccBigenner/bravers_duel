@@ -1,0 +1,2307 @@
+[
+  {
+    "id": "1-A001-LSR",
+    "vol": 1,
+    "code": "A001",
+    "rarity": "LSR",
+    "name": "[集合知]アイ",
+    "type": "character",
+    "effectText": "自分のターンのドローフェーズに引く手札の上限枚数を+1。",
+    "flavorText": "「世界はまだ、変化を求めている」——アイ",
+    "size": "legendaryLarge",
+    "hp": 14,
+    "attribute": [
+      "風",
+      "雷",
+      "氷",
+      "補"
+    ]
+  },
+  {
+    "id": "1-A002-LSR",
+    "vol": 1,
+    "code": "A002",
+    "rarity": "LSR",
+    "name": "[邪竜王]ジエンド",
+    "type": "character",
+    "effectText": "自分のターンの終わりにデッキからカードを2枚トラッシュ。",
+    "flavorText": "——たかだか頭部のみの顕現で、人類には厄災級。",
+    "size": "legendaryLarge",
+    "hp": 17,
+    "attribute": [
+      "闇",
+      "竜",
+      "竜",
+      "竜"
+    ]
+  },
+  {
+    "id": "1-A003-USR",
+    "vol": 1,
+    "code": "A003",
+    "rarity": "USR",
+    "name": "[閃光の勇者]クラウディア",
+    "type": "character",
+    "effectText": "バトル開始時、デッキからカードを2枚チャージ。",
+    "flavorText": "——正義の剣を振るった先には、平和などないのだろうか。",
+    "size": "normal",
+    "hp": 9,
+    "attribute": [
+      "斬",
+      "聖",
+      "雷"
+    ]
+  },
+  {
+    "id": "1-A004-USR",
+    "vol": 1,
+    "code": "A004",
+    "rarity": "USR",
+    "name": "[朽ち往く魔王]トランザード",
+    "type": "character",
+    "effectText": "このキャラクターが使用するスキルの消費APを+2。",
+    "flavorText": "——まだ、王の役割を果たそうとしてる。",
+    "size": "normal",
+    "hp": 8,
+    "attribute": [
+      "闇",
+      "闇",
+      "闇",
+      "闇"
+    ]
+  },
+  {
+    "id": "1-A005-USR",
+    "vol": 1,
+    "code": "A005",
+    "rarity": "USR",
+    "name": "[闘神]オルス",
+    "type": "character",
+    "effectText": "",
+    "flavorText": "",
+    "size": "normal",
+    "hp": 13,
+    "attribute": [
+      "斬",
+      "突",
+      "打"
+    ]
+  },
+  {
+    "id": "1-A006-USR",
+    "vol": 1,
+    "code": "A006",
+    "rarity": "USR",
+    "name": "[次元漂獣]アニマ",
+    "type": "character",
+    "effectText": "自分のターンの最初に、このキャラクターをアクターにできる。",
+    "flavorText": "",
+    "size": "normal",
+    "hp": 7,
+    "attribute": [
+      "闇",
+      "獣"
+    ]
+  },
+  {
+    "id": "1-A007-SSR",
+    "vol": 1,
+    "code": "A007",
+    "rarity": "SSR",
+    "name": "[復讐者]レオン",
+    "type": "character",
+    "effectText": "自分を含む味方が戦闘不能になった時、敵のアクターに3ダメージ。",
+    "flavorText": "「疾くも無ぇ、巧くも無ぇ、重くも無ぇ、だが強ぇ!!」——グロウ",
+    "size": "normal",
+    "hp": 10,
+    "attribute": [
+      "斬",
+      "斬",
+      "炎"
+    ]
+  },
+  {
+    "id": "1-A008-SSR",
+    "vol": 1,
+    "code": "A008",
+    "rarity": "SSR",
+    "name": "[氷の女王]セレーナ",
+    "type": "character",
+    "effectText": "このキャラクターの生存中、味方全体に氷属性を付与。",
+    "flavorText": "",
+    "size": "normal",
+    "hp": 8,
+    "attribute": [
+      "氷",
+      "氷"
+    ]
+  },
+  {
+    "id": "1-A009-SR",
+    "vol": 1,
+    "code": "A009",
+    "rarity": "SR",
+    "name": "[狂弾]ヤクビ",
+    "type": "character",
+    "effectText": "自分のターンの終わりに、このキャラクターがアクターなら、全ての敵キャラクターに1ダメージを与えて、アクターを変更する。",
+    "flavorText": "",
+    "size": "normal",
+    "hp": 7,
+    "attribute": [
+      "闇",
+      "射"
+    ]
+  },
+  {
+    "id": "1-A010-SR",
+    "vol": 1,
+    "code": "A010",
+    "rarity": "SR",
+    "name": "[深緑の勇者]フォギア",
+    "type": "character",
+    "effectText": "このキャラクターが回復した時、トラッシュエリアの下から2枚をデッキに戻し、シャッフルする。",
+    "flavorText": "",
+    "size": "normal",
+    "hp": 10,
+    "attribute": [
+      "木",
+      "射",
+      "聖"
+    ]
+  },
+  {
+    "id": "1-A011-SR",
+    "vol": 1,
+    "code": "A011",
+    "rarity": "SR",
+    "name": "[千槍の勇者]ストミー",
+    "type": "character",
+    "effectText": "",
+    "flavorText": "",
+    "size": "normal",
+    "hp": 11,
+    "attribute": [
+      "突",
+      "突",
+      "飛"
+    ]
+  },
+  {
+    "id": "1-A012-SR",
+    "vol": 1,
+    "code": "A012",
+    "rarity": "SR",
+    "name": "[鎧の躯]ディレイア",
+    "type": "character",
+    "effectText": "",
+    "flavorText": "",
+    "size": "normal",
+    "hp": 12,
+    "attribute": [
+      "斬",
+      "守",
+      "闇"
+    ]
+  },
+  {
+    "id": "1-A013-SR",
+    "vol": 1,
+    "code": "A013",
+    "rarity": "SR",
+    "name": "[反転]ボーダン",
+    "type": "character",
+    "effectText": "このキャラクターがアクターの時、受けたダメージの数だけトラッシュエリアの下からチャージ。",
+    "flavorText": "",
+    "size": "normal",
+    "hp": 5,
+    "attribute": [
+      "炎",
+      "氷"
+    ]
+  },
+  {
+    "id": "1-A014-SR",
+    "vol": 1,
+    "code": "A014",
+    "rarity": "SR",
+    "name": "[魔神素体]グロウ",
+    "type": "character",
+    "effectText": "自分のターン終了時、自分に闇属性×1を追加。",
+    "flavorText": "",
+    "size": "normal",
+    "hp": 7,
+    "attribute": []
+  },
+  {
+    "id": "1-A015-SR",
+    "vol": 1,
+    "code": "A015",
+    "rarity": "SR",
+    "name": "[沼王]ドッソ",
+    "type": "character",
+    "effectText": "自分のトラッシュエリアの枚数だけ、HPが増加。（最大20）",
+    "flavorText": "",
+    "size": "normal",
+    "hp": 5,
+    "attribute": [
+      "風",
+      "土"
+    ]
+  },
+  {
+    "id": "1-A016-SR",
+    "vol": 1,
+    "code": "A016",
+    "rarity": "SR",
+    "name": "[炎の料理人]パークル",
+    "type": "character",
+    "effectText": "",
+    "flavorText": "",
+    "size": "normal",
+    "hp": 9,
+    "attribute": [
+      "補",
+      "炎"
+    ]
+  },
+  {
+    "id": "1-A017-R",
+    "vol": 1,
+    "code": "A017",
+    "rarity": "R",
+    "name": "[収監兵]ビコウ",
+    "type": "character",
+    "effectText": "このキャラクターは控えにいる時、ダメージを受けない。",
+    "flavorText": "",
+    "size": "normal",
+    "hp": 12,
+    "attribute": [
+      "打",
+      "木"
+    ]
+  },
+  {
+    "id": "1-A018-R",
+    "vol": 1,
+    "code": "A018",
+    "rarity": "R",
+    "name": "[鏡の盾]ミルオン",
+    "type": "character",
+    "effectText": "ダメージを受けた時、このキャラクターがアクターなら、敵に同じだけダメージを与え、自分のデッキの上から3枚をトラッシュ。",
+    "flavorText": "",
+    "size": "normal",
+    "hp": 10,
+    "attribute": [
+      "守",
+      "氷"
+    ]
+  },
+  {
+    "id": "1-A019-R",
+    "vol": 1,
+    "code": "A019",
+    "rarity": "R",
+    "name": "[聖歌]ハスミール",
+    "type": "character",
+    "effectText": "",
+    "flavorText": "",
+    "size": "normal",
+    "hp": 6,
+    "attribute": [
+      "聖",
+      "聖",
+      "聖"
+    ]
+  },
+  {
+    "id": "1-A020-R",
+    "vol": 1,
+    "code": "A020",
+    "rarity": "R",
+    "name": "[半人半竜]セヴン",
+    "type": "character",
+    "effectText": "",
+    "flavorText": "",
+    "size": "normal",
+    "hp": 9,
+    "attribute": [
+      "打",
+      "竜",
+      "飛"
+    ]
+  },
+  {
+    "id": "1-A021-R",
+    "vol": 1,
+    "code": "A021",
+    "rarity": "R",
+    "name": "[混成鬼]ダダ･ダ･ダ",
+    "type": "character",
+    "effectText": "",
+    "flavorText": "",
+    "size": "normal",
+    "hp": 11,
+    "attribute": [
+      "雷",
+      "氷",
+      "土"
+    ]
+  },
+  {
+    "id": "1-A022-R",
+    "vol": 1,
+    "code": "A022",
+    "rarity": "R",
+    "name": "[大喰鳥]オウー",
+    "type": "character",
+    "effectText": "",
+    "flavorText": "",
+    "size": "normal",
+    "hp": 10,
+    "attribute": [
+      "飛",
+      "風",
+      "獣"
+    ]
+  },
+  {
+    "id": "1-A023-R",
+    "vol": 1,
+    "code": "A023",
+    "rarity": "R",
+    "name": "[追悼]ソーベルト",
+    "type": "character",
+    "effectText": "味方が戦闘不能になった時、生存している味方全体のHPを2回復。",
+    "flavorText": "",
+    "size": "normal",
+    "hp": 8,
+    "attribute": [
+      "聖",
+      "土"
+    ]
+  },
+  {
+    "id": "1-A024-R",
+    "vol": 1,
+    "code": "A024",
+    "rarity": "R",
+    "name": "[荷物持ち]ロッソ",
+    "type": "character",
+    "effectText": "このキャラクターに装備カードがセットしてあれば、HPを+3。",
+    "flavorText": "",
+    "size": "normal",
+    "hp": 9,
+    "attribute": [
+      "補"
+    ]
+  },
+  {
+    "id": "1-A025-SR",
+    "vol": 1,
+    "code": "A025",
+    "rarity": "SR",
+    "name": "崩れかけの宝剣",
+    "type": "equipment",
+    "effectText": "使うスキルの消費APを+1。",
+    "flavorText": "",
+    "addAttribute": [
+      "斬",
+      "斬"
+    ]
+  },
+  {
+    "id": "1-A026-SR",
+    "vol": 1,
+    "code": "A026",
+    "rarity": "SR",
+    "name": "王家の盾",
+    "type": "equipment",
+    "effectText": "HPを+1。",
+    "flavorText": "",
+    "addAttribute": [
+      "守"
+    ]
+  },
+  {
+    "id": "1-A027-R",
+    "vol": 1,
+    "code": "A027",
+    "rarity": "R",
+    "name": "魔王の心臓",
+    "type": "equipment",
+    "effectText": "HPを-2。",
+    "flavorText": "",
+    "addAttribute": [
+      "闇",
+      "闇"
+    ]
+  },
+  {
+    "id": "1-A028-R",
+    "vol": 1,
+    "code": "A028",
+    "rarity": "R",
+    "name": "星樹の腕輪",
+    "type": "equipment",
+    "effectText": "",
+    "flavorText": "",
+    "addAttribute": [
+      "土",
+      "木"
+    ]
+  },
+  {
+    "id": "1-A029-C",
+    "vol": 1,
+    "code": "A029",
+    "rarity": "C",
+    "name": "医療セット",
+    "type": "equipment",
+    "effectText": "自分のターンの終わりにHPを1回復。",
+    "flavorText": "",
+    "addAttribute": []
+  },
+  {
+    "id": "1-A030-C",
+    "vol": 1,
+    "code": "A030",
+    "rarity": "C",
+    "name": "革の鎧",
+    "type": "equipment",
+    "effectText": "体力を+2。",
+    "flavorText": "",
+    "addAttribute": []
+  },
+  {
+    "id": "1-A031-C",
+    "vol": 1,
+    "code": "A031",
+    "rarity": "C",
+    "name": "シルバーロッド",
+    "type": "equipment",
+    "effectText": "",
+    "flavorText": "",
+    "addAttribute": [
+      "聖",
+      "打"
+    ]
+  },
+  {
+    "id": "1-A032-C",
+    "vol": 1,
+    "code": "A032",
+    "rarity": "C",
+    "name": "四次元バッグ",
+    "type": "equipment",
+    "effectText": "",
+    "flavorText": "",
+    "addAttribute": [
+      "補"
+    ]
+  },
+  {
+    "id": "1-A033-SR",
+    "vol": 1,
+    "code": "A033",
+    "rarity": "SR",
+    "name": "新たな地平線",
+    "type": "field",
+    "effectText": "全てのキャラクターが使うスキルの消費APが-1。",
+    "flavorText": ""
+  },
+  {
+    "id": "1-A034-SR",
+    "vol": 1,
+    "code": "A034",
+    "rarity": "SR",
+    "name": "大乱戦",
+    "type": "field",
+    "effectText": "そのプレイヤーのキャラクターが3枚生存しているなら、アクター変更時に1枚飛ばして変更する。",
+    "flavorText": ""
+  },
+  {
+    "id": "1-A035-R",
+    "vol": 1,
+    "code": "A035",
+    "rarity": "R",
+    "name": "剣の墓場",
+    "type": "field",
+    "effectText": "全てのキャラクターに斬属性を追加。",
+    "flavorText": ""
+  },
+  {
+    "id": "1-A036-R",
+    "vol": 1,
+    "code": "A036",
+    "rarity": "R",
+    "name": "激闘",
+    "type": "field",
+    "effectText": "全てのプレイヤーはドローフェーズに1枚多く引く。",
+    "flavorText": ""
+  },
+  {
+    "id": "1-A037-USR",
+    "vol": 1,
+    "code": "A037",
+    "rarity": "USR",
+    "name": "崩壊の竜波",
+    "type": "skill",
+    "effectText": "自分のトラッシュの枚数×1ダメージを追加。",
+    "flavorText": "",
+    "costAp": 8,
+    "conditionAttribute": [
+      "竜",
+      "竜"
+    ],
+    "baseValue": 0,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A038-USR",
+    "vol": 1,
+    "code": "A038",
+    "rarity": "USR",
+    "name": "カオスフレア",
+    "type": "skill",
+    "effectText": "敵全体に攻撃し、闇属性×1ダメージを追加。",
+    "flavorText": "",
+    "costAp": 4,
+    "conditionAttribute": [
+      "闇"
+    ],
+    "baseValue": 1,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A039-USR",
+    "vol": 1,
+    "code": "A039",
+    "rarity": "USR",
+    "name": "ディメンションエッジ",
+    "type": "skill",
+    "effectText": "対象の最大HPの半分（切り下げ）のダメージ。",
+    "flavorText": "",
+    "costAp": 4,
+    "conditionAttribute": [
+      "斬",
+      "斬"
+    ],
+    "baseValue": 0,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A040-USR",
+    "vol": 1,
+    "code": "A040",
+    "rarity": "USR",
+    "name": "ティアグレイス",
+    "type": "skill",
+    "effectText": "戦闘不能の味方キャラクター1枚を復活回復する。",
+    "flavorText": "",
+    "costAp": 3,
+    "conditionAttribute": [
+      "聖",
+      "聖",
+      "聖"
+    ],
+    "baseValue": 1,
+    "valueType": "heal"
+  },
+  {
+    "id": "1-A041-SR",
+    "vol": 1,
+    "code": "A041",
+    "rarity": "SR",
+    "name": "フレイムヴォルテクス",
+    "type": "skill",
+    "effectText": "敵のデッキの上から炎属性×1枚をトラッシュ。",
+    "flavorText": "",
+    "costAp": 7,
+    "conditionAttribute": [
+      "炎"
+    ],
+    "baseValue": 9,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A042-SR",
+    "vol": 1,
+    "code": "A042",
+    "rarity": "SR",
+    "name": "ドラゴンズメテオ",
+    "type": "skill",
+    "effectText": "竜属性×1ダメージを追加。",
+    "flavorText": "",
+    "costAp": 6,
+    "conditionAttribute": [
+      "竜"
+    ],
+    "baseValue": 6,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A043-SR",
+    "vol": 1,
+    "code": "A043",
+    "rarity": "SR",
+    "name": "コメットスナイプ",
+    "type": "skill",
+    "effectText": "対象を選択して攻撃。",
+    "flavorText": "",
+    "costAp": 5,
+    "conditionAttribute": [
+      "射"
+    ],
+    "baseValue": 6,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A044-SR",
+    "vol": 1,
+    "code": "A044",
+    "rarity": "SR",
+    "name": "サウザンドスパイク",
+    "type": "skill",
+    "effectText": "突×3ダメージを追加。バトル中、使用キャラクターの突属性を1つ追加。",
+    "flavorText": "",
+    "costAp": 5,
+    "conditionAttribute": [
+      "突"
+    ],
+    "baseValue": 0,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A045-SR",
+    "vol": 1,
+    "code": "A045",
+    "rarity": "SR",
+    "name": "エボエ",
+    "type": "skill",
+    "effectText": "敵全体に攻撃し、敵のAPを-2。",
+    "flavorText": "",
+    "costAp": 5,
+    "conditionAttribute": [
+      "木",
+      "雷"
+    ],
+    "baseValue": 4,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A046-SR",
+    "vol": 1,
+    "code": "A046",
+    "rarity": "SR",
+    "name": "ブラッディソード",
+    "type": "skill",
+    "effectText": "自分が受けているダメージ×1ダメージを追加。",
+    "flavorText": "",
+    "costAp": 4,
+    "conditionAttribute": [
+      "斬",
+      "闇"
+    ],
+    "baseValue": 1,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A047-SR",
+    "vol": 1,
+    "code": "A047",
+    "rarity": "SR",
+    "name": "魔力喰らい",
+    "type": "skill",
+    "effectText": "対象の属性×1ダメージを追加。",
+    "flavorText": "",
+    "costAp": 4,
+    "conditionAttribute": [
+      "獣"
+    ],
+    "baseValue": 3,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A048-SR",
+    "vol": 1,
+    "code": "A048",
+    "rarity": "SR",
+    "name": "セイントクロス",
+    "type": "skill",
+    "effectText": "対象が闇属性を持っていればダメージを+2。",
+    "flavorText": "",
+    "costAp": 3,
+    "conditionAttribute": [
+      "斬",
+      "聖"
+    ],
+    "baseValue": 3,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A049-SR",
+    "vol": 1,
+    "code": "A049",
+    "rarity": "SR",
+    "name": "聖なる風",
+    "type": "skill",
+    "effectText": "味方全体を聖属性×2回復し、敵のアクターを変更する。",
+    "flavorText": "",
+    "costAp": 3,
+    "conditionAttribute": [
+      "聖",
+      "風"
+    ],
+    "baseValue": 0,
+    "valueType": "heal"
+  },
+  {
+    "id": "1-A050-SR",
+    "vol": 1,
+    "code": "A050",
+    "rarity": "SR",
+    "name": "キャンプ",
+    "type": "skill",
+    "effectText": "残りの手札を全てチャージし、さらにデッキの上から4枚をチャージ。",
+    "flavorText": "",
+    "costAp": 3,
+    "conditionAttribute": [
+      "炎",
+      "補"
+    ],
+    "baseValue": 4,
+    "valueType": "support"
+  },
+  {
+    "id": "1-A051-SR",
+    "vol": 1,
+    "code": "A051",
+    "rarity": "SR",
+    "name": "タクティカルブレイン",
+    "type": "skill",
+    "effectText": "手札を全てトラッシュし、デッキから手札が5枚になるようにカードを引く。",
+    "flavorText": "",
+    "costAp": 1,
+    "conditionAttribute": [
+      "補"
+    ],
+    "baseValue": 0,
+    "valueType": "support"
+  },
+  {
+    "id": "1-A052-SR",
+    "vol": 1,
+    "code": "A052",
+    "rarity": "SR",
+    "name": "無双乱撃",
+    "type": "skill",
+    "effectText": "APを全てトラッシュし、トラッシュした数×1ダメージを追加。",
+    "flavorText": "",
+    "costAp": 0,
+    "conditionAttribute": [
+      "突",
+      "打"
+    ],
+    "baseValue": 0,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A053-R",
+    "vol": 1,
+    "code": "A053",
+    "rarity": "R",
+    "name": "トルネード",
+    "type": "skill",
+    "effectText": "敵全体を攻撃した後、敵のアクターを変更。",
+    "flavorText": "",
+    "costAp": 6,
+    "conditionAttribute": [
+      "風"
+    ],
+    "baseValue": 4,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A054-R",
+    "vol": 1,
+    "code": "A054",
+    "rarity": "R",
+    "name": "炎霊召喚",
+    "type": "skill",
+    "effectText": "デッキから、条件属性に炎を含むコスト4以下のカードを使用する。",
+    "flavorText": "",
+    "costAp": 6,
+    "conditionAttribute": [
+      "炎"
+    ],
+    "baseValue": 0,
+    "valueType": "support"
+  },
+  {
+    "id": "1-A055-R",
+    "vol": 1,
+    "code": "A055",
+    "rarity": "R",
+    "name": "永久凍土",
+    "type": "skill",
+    "effectText": "敵全体に攻撃。敵のターン終了時まで敵のアクターをロック。",
+    "flavorText": "",
+    "costAp": 5,
+    "conditionAttribute": [
+      "氷",
+      "土"
+    ],
+    "baseValue": 3,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A056-R",
+    "vol": 1,
+    "code": "A056",
+    "rarity": "R",
+    "name": "エンシェントブレス",
+    "type": "skill",
+    "effectText": "敵全体に攻撃。",
+    "flavorText": "",
+    "costAp": 4,
+    "conditionAttribute": [
+      "竜"
+    ],
+    "baseValue": 3,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A057-R",
+    "vol": 1,
+    "code": "A057",
+    "rarity": "R",
+    "name": "インパクトチャージ",
+    "type": "skill",
+    "effectText": "打属性×1ダメージを追加。敵にダメージを与えたら打属性×1枚をデッキの上からチャージ。",
+    "flavorText": "",
+    "costAp": 4,
+    "conditionAttribute": [
+      "打"
+    ],
+    "baseValue": 1,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A058-R",
+    "vol": 1,
+    "code": "A058",
+    "rarity": "R",
+    "name": "テクノウェイブ",
+    "type": "skill",
+    "effectText": "攻撃をした後、敵のAPを-2。",
+    "flavorText": "",
+    "costAp": 4,
+    "conditionAttribute": [
+      "雷"
+    ],
+    "baseValue": 4,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A059-R",
+    "vol": 1,
+    "code": "A059",
+    "rarity": "R",
+    "name": "大裂斬",
+    "type": "skill",
+    "effectText": "斬属性×2ダメージを追加。",
+    "flavorText": "",
+    "costAp": 4,
+    "conditionAttribute": [
+      "斬"
+    ],
+    "baseValue": 1,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A060-R",
+    "vol": 1,
+    "code": "A060",
+    "rarity": "R",
+    "name": "ヴォルケーノスタンプ",
+    "type": "skill",
+    "effectText": "",
+    "flavorText": "",
+    "costAp": 4,
+    "conditionAttribute": [
+      "炎",
+      "土"
+    ],
+    "baseValue": 6,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A061-R",
+    "vol": 1,
+    "code": "A061",
+    "rarity": "R",
+    "name": "掘削砂塵",
+    "type": "skill",
+    "effectText": "敵全体に攻撃。",
+    "flavorText": "",
+    "costAp": 4,
+    "conditionAttribute": [
+      "土",
+      "風"
+    ],
+    "baseValue": 3,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A062-R",
+    "vol": 1,
+    "code": "A062",
+    "rarity": "R",
+    "name": "神の捌き",
+    "type": "skill",
+    "effectText": "",
+    "flavorText": "",
+    "costAp": 4,
+    "conditionAttribute": [
+      "聖",
+      "雷"
+    ],
+    "baseValue": 6,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A063-R",
+    "vol": 1,
+    "code": "A063",
+    "rarity": "R",
+    "name": "スモールバン",
+    "type": "skill",
+    "effectText": "敵のAPを-1。",
+    "flavorText": "",
+    "costAp": 4,
+    "conditionAttribute": [
+      "炎",
+      "氷"
+    ],
+    "baseValue": 4,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A064-R",
+    "vol": 1,
+    "code": "A064",
+    "rarity": "R",
+    "name": "土葬槍操",
+    "type": "skill",
+    "effectText": "戦闘不能の味方キャラクター1枚につき2ダメージを追加。",
+    "flavorText": "",
+    "costAp": 4,
+    "conditionAttribute": [
+      "土",
+      "聖"
+    ],
+    "baseValue": 5,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A065-R",
+    "vol": 1,
+    "code": "A065",
+    "rarity": "R",
+    "name": "スナイプショット",
+    "type": "skill",
+    "effectText": "対象を選択して攻撃。",
+    "flavorText": "",
+    "costAp": 3,
+    "conditionAttribute": [
+      "射"
+    ],
+    "baseValue": 3,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A066-R",
+    "vol": 1,
+    "code": "A066",
+    "rarity": "R",
+    "name": "アイスキャッスル",
+    "type": "skill",
+    "effectText": "氷属性×2ダメージを軽減。",
+    "flavorText": "",
+    "costAp": 3,
+    "conditionAttribute": [
+      "氷"
+    ],
+    "baseValue": 1,
+    "valueType": "guard"
+  },
+  {
+    "id": "1-A067-R",
+    "vol": 1,
+    "code": "A067",
+    "rarity": "R",
+    "name": "雷雲召喚",
+    "type": "skill",
+    "effectText": "敵全体に攻撃。ダメージを与えたキャラクターの数だけ、敵のAPを減少。",
+    "flavorText": "",
+    "costAp": 3,
+    "conditionAttribute": [
+      "雷",
+      "風"
+    ],
+    "baseValue": 3,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A068-R",
+    "vol": 1,
+    "code": "A068",
+    "rarity": "R",
+    "name": "業火斬",
+    "type": "skill",
+    "effectText": "",
+    "flavorText": "",
+    "costAp": 3,
+    "conditionAttribute": [
+      "斬",
+      "炎"
+    ],
+    "baseValue": 5,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A069-R",
+    "vol": 1,
+    "code": "A069",
+    "rarity": "R",
+    "name": "フリージングギャッシュ",
+    "type": "skill",
+    "effectText": "この攻撃でダメージを与えたら、敵のターン終了時まで、敵のアクターをロックする。",
+    "flavorText": "",
+    "costAp": 3,
+    "conditionAttribute": [
+      "斬",
+      "氷"
+    ],
+    "baseValue": 4,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A070-R",
+    "vol": 1,
+    "code": "A070",
+    "rarity": "R",
+    "name": "イノセントレイ",
+    "type": "skill",
+    "effectText": "この攻撃に対して防御スキルを使用できない。",
+    "flavorText": "",
+    "costAp": 3,
+    "conditionAttribute": [
+      "聖",
+      "闇"
+    ],
+    "baseValue": 3,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A071-R",
+    "vol": 1,
+    "code": "A071",
+    "rarity": "R",
+    "name": "ジャッジメントハンマー",
+    "type": "skill",
+    "effectText": "",
+    "flavorText": "",
+    "costAp": 3,
+    "conditionAttribute": [
+      "聖",
+      "打"
+    ],
+    "baseValue": 4,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A072-R",
+    "vol": 1,
+    "code": "A072",
+    "rarity": "R",
+    "name": "シャドウショット",
+    "type": "skill",
+    "effectText": "敵の控え全てに攻撃。",
+    "flavorText": "",
+    "costAp": 3,
+    "conditionAttribute": [
+      "射"
+    ],
+    "baseValue": 2,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A073-R",
+    "vol": 1,
+    "code": "A073",
+    "rarity": "R",
+    "name": "ポイントブレイク",
+    "type": "skill",
+    "effectText": "対象にセットされている装備カードをトラッシュする。",
+    "flavorText": "",
+    "costAp": 3,
+    "conditionAttribute": [
+      "突"
+    ],
+    "baseValue": 3,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A074-R",
+    "vol": 1,
+    "code": "A074",
+    "rarity": "R",
+    "name": "樹化",
+    "type": "skill",
+    "effectText": "自分に木属性×1を追加し、HPを4回復する。",
+    "flavorText": "",
+    "costAp": 2,
+    "conditionAttribute": [
+      "木"
+    ],
+    "baseValue": 0,
+    "valueType": "support"
+  },
+  {
+    "id": "1-A075-R",
+    "vol": 1,
+    "code": "A075",
+    "rarity": "R",
+    "name": "ダークキューブ",
+    "type": "skill",
+    "effectText": "",
+    "flavorText": "",
+    "costAp": 2,
+    "conditionAttribute": [
+      "闇"
+    ],
+    "baseValue": 4,
+    "valueType": "guard"
+  },
+  {
+    "id": "1-A076-R",
+    "vol": 1,
+    "code": "A076",
+    "rarity": "R",
+    "name": "ショットインフォレスト",
+    "type": "skill",
+    "effectText": "このカードは控えのキャラクターから使用することができる。",
+    "flavorText": "",
+    "costAp": 2,
+    "conditionAttribute": [
+      "射",
+      "木"
+    ],
+    "baseValue": 3,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A077-R",
+    "vol": 1,
+    "code": "A077",
+    "rarity": "R",
+    "name": "吸血",
+    "type": "skill",
+    "effectText": "与えたダメージ×1を回復。",
+    "flavorText": "",
+    "costAp": 2,
+    "conditionAttribute": [
+      "闇",
+      "獣"
+    ],
+    "baseValue": 3,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A078-R",
+    "vol": 1,
+    "code": "A078",
+    "rarity": "R",
+    "name": "ジェノサイドブロウ",
+    "type": "skill",
+    "effectText": "対象のHPが5以下なら、+2ダメージ。",
+    "flavorText": "",
+    "costAp": 2,
+    "conditionAttribute": [
+      "打",
+      "闇"
+    ],
+    "baseValue": 3,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A079-R",
+    "vol": 1,
+    "code": "A079",
+    "rarity": "R",
+    "name": "オールディフェンス",
+    "type": "skill",
+    "effectText": "次の自分のターンが始まるまで、アクターをロックし、味方が受けるダメージを-2。",
+    "flavorText": "",
+    "costAp": 2,
+    "conditionAttribute": [
+      "守"
+    ],
+    "baseValue": 1,
+    "valueType": "support"
+  },
+  {
+    "id": "1-A080-R",
+    "vol": 1,
+    "code": "A080",
+    "rarity": "R",
+    "name": "ライトニングセイバー",
+    "type": "skill",
+    "effectText": "敵のAPを-2。",
+    "flavorText": "",
+    "costAp": 2,
+    "conditionAttribute": [
+      "斬",
+      "雷"
+    ],
+    "baseValue": 2,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A081-R",
+    "vol": 1,
+    "code": "A081",
+    "rarity": "R",
+    "name": "竜の血脈",
+    "type": "skill",
+    "effectText": "バトル中、自分に竜属性を1つ追加。",
+    "flavorText": "",
+    "costAp": 1,
+    "conditionAttribute": [
+      "竜"
+    ],
+    "baseValue": 1,
+    "valueType": "support"
+  },
+  {
+    "id": "1-A082-R",
+    "vol": 1,
+    "code": "A082",
+    "rarity": "R",
+    "name": "邪神の呪い",
+    "type": "skill",
+    "effectText": "バトル中、闇属性を2つ追加し自分に2ダメージ。",
+    "flavorText": "",
+    "costAp": 1,
+    "conditionAttribute": [
+      "闇"
+    ],
+    "baseValue": 2,
+    "valueType": "support"
+  },
+  {
+    "id": "1-A083-R",
+    "vol": 1,
+    "code": "A083",
+    "rarity": "R",
+    "name": "神速剣",
+    "type": "skill",
+    "effectText": "これが2ターン目以内なら、コストが0になる。",
+    "flavorText": "",
+    "costAp": 1,
+    "conditionAttribute": [
+      "斬"
+    ],
+    "baseValue": 3,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A084-R",
+    "vol": 1,
+    "code": "A084",
+    "rarity": "R",
+    "name": "聖樹ウィップ",
+    "type": "skill",
+    "effectText": "対象の闇属性×1ダメージを追加。",
+    "flavorText": "",
+    "costAp": 1,
+    "conditionAttribute": [
+      "聖",
+      "木"
+    ],
+    "baseValue": 2,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A085-R",
+    "vol": 1,
+    "code": "A085",
+    "rarity": "R",
+    "name": "ソードエナジー",
+    "type": "skill",
+    "effectText": "バトル中、自分に斬属性*1を追加。",
+    "flavorText": "",
+    "costAp": 0,
+    "conditionAttribute": [
+      "斬",
+      "斬"
+    ],
+    "baseValue": 1,
+    "valueType": "support"
+  },
+  {
+    "id": "1-A086-UC",
+    "vol": 1,
+    "code": "A086",
+    "rarity": "UC",
+    "name": "ハイグレイス",
+    "type": "skill",
+    "effectText": "",
+    "flavorText": "",
+    "costAp": 2,
+    "conditionAttribute": [
+      "聖"
+    ],
+    "baseValue": 5,
+    "valueType": "heal"
+  },
+  {
+    "id": "1-A087-UC",
+    "vol": 1,
+    "code": "A087",
+    "rarity": "UC",
+    "name": "野性開放",
+    "type": "skill",
+    "effectText": "バトル中、自分に獣属性+1を追加。",
+    "flavorText": "",
+    "costAp": 0,
+    "conditionAttribute": [
+      "獣"
+    ],
+    "baseValue": 1,
+    "valueType": "support"
+  },
+  {
+    "id": "1-A088-UC",
+    "vol": 1,
+    "code": "A088",
+    "rarity": "UC",
+    "name": "ガードアクション",
+    "type": "skill",
+    "effectText": "デッキの上から1枚をチャージ。",
+    "flavorText": "",
+    "costAp": 0,
+    "conditionAttribute": [
+      "守"
+    ],
+    "baseValue": 4,
+    "valueType": "guard"
+  },
+  {
+    "id": "1-A089-UC",
+    "vol": 1,
+    "code": "A089",
+    "rarity": "UC",
+    "name": "レインシュート",
+    "type": "skill",
+    "effectText": "敵全体を攻撃。",
+    "flavorText": "",
+    "costAp": 3,
+    "conditionAttribute": [
+      "射"
+    ],
+    "baseValue": 2,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A090-UC",
+    "vol": 1,
+    "code": "A090",
+    "rarity": "UC",
+    "name": "パワーストライク",
+    "type": "skill",
+    "effectText": "",
+    "flavorText": "",
+    "costAp": 4,
+    "conditionAttribute": [
+      "打"
+    ],
+    "baseValue": 6,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A091-UC",
+    "vol": 1,
+    "code": "A091",
+    "rarity": "UC",
+    "name": "ガードタックル",
+    "type": "skill",
+    "effectText": "",
+    "flavorText": "",
+    "costAp": 3,
+    "conditionAttribute": [
+      "守"
+    ],
+    "baseValue": 3,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A092-UC",
+    "vol": 1,
+    "code": "A092",
+    "rarity": "UC",
+    "name": "突風",
+    "type": "skill",
+    "effectText": "攻撃した後、敵のアクターを変更する。",
+    "flavorText": "",
+    "costAp": 3,
+    "conditionAttribute": [
+      "風"
+    ],
+    "baseValue": 4,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A093-UC",
+    "vol": 1,
+    "code": "A093",
+    "rarity": "UC",
+    "name": "スパイラルランス",
+    "type": "skill",
+    "effectText": "突×2ダメージを追加。",
+    "flavorText": "",
+    "costAp": 3,
+    "conditionAttribute": [
+      "突"
+    ],
+    "baseValue": 1,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A094-UC",
+    "vol": 1,
+    "code": "A094",
+    "rarity": "UC",
+    "name": "ドラゴンズアギト",
+    "type": "skill",
+    "effectText": "",
+    "flavorText": "",
+    "costAp": 3,
+    "conditionAttribute": [
+      "竜"
+    ],
+    "baseValue": 5,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A095-UC",
+    "vol": 1,
+    "code": "A095",
+    "rarity": "UC",
+    "name": "ビーストラッシュ",
+    "type": "skill",
+    "effectText": "獣属性×1ダメージを追加。",
+    "flavorText": "",
+    "costAp": 3,
+    "conditionAttribute": [
+      "獣"
+    ],
+    "baseValue": 3,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A096-UC",
+    "vol": 1,
+    "code": "A096",
+    "rarity": "UC",
+    "name": "アストラルショット",
+    "type": "skill",
+    "effectText": "敵のデッキから上4枚をトラッシュ",
+    "flavorText": "",
+    "costAp": 3,
+    "conditionAttribute": [
+      "聖",
+      "射"
+    ],
+    "baseValue": 4,
+    "valueType": "support"
+  },
+  {
+    "id": "1-A097-UC",
+    "vol": 1,
+    "code": "A097",
+    "rarity": "UC",
+    "name": "トラストバーン",
+    "type": "skill",
+    "effectText": "攻撃した後、対象のHPが8以上残っていれば+4ダメージ。",
+    "flavorText": "",
+    "costAp": 3,
+    "conditionAttribute": [
+      "斬",
+      "炎"
+    ],
+    "baseValue": 4,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A098-UC",
+    "vol": 1,
+    "code": "A098",
+    "rarity": "UC",
+    "name": "ランスジェット",
+    "type": "skill",
+    "effectText": "このカードは控えのキャラクターから使用することができる。使用キャラクターをアクターにして攻撃する。",
+    "flavorText": "",
+    "costAp": 3,
+    "conditionAttribute": [
+      "突",
+      "炎"
+    ],
+    "baseValue": 5,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A099-UC",
+    "vol": 1,
+    "code": "A099",
+    "rarity": "UC",
+    "name": "風を集める",
+    "type": "skill",
+    "effectText": "デッキから、このキャラクターが使用条件を満たしており、かつ条件属性に風を含むコスト3以下のカードを使用する。",
+    "flavorText": "",
+    "costAp": 3,
+    "conditionAttribute": [
+      "風"
+    ],
+    "baseValue": 0,
+    "valueType": "support"
+  },
+  {
+    "id": "1-A100-UC",
+    "vol": 1,
+    "code": "A100",
+    "rarity": "UC",
+    "name": "食樹召喚",
+    "type": "skill",
+    "effectText": "木属性×1ダメージを追加。与えたダメージの数だけ、トラッシュエリアの下からデッキに戻す。",
+    "flavorText": "",
+    "costAp": 2,
+    "conditionAttribute": [
+      "木"
+    ],
+    "baseValue": 2,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A101-UC",
+    "vol": 1,
+    "code": "A101",
+    "rarity": "UC",
+    "name": "アースプレス",
+    "type": "skill",
+    "effectText": "",
+    "flavorText": "",
+    "costAp": 2,
+    "conditionAttribute": [
+      "土"
+    ],
+    "baseValue": 4,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A102-UC",
+    "vol": 1,
+    "code": "A102",
+    "rarity": "UC",
+    "name": "全力補給",
+    "type": "skill",
+    "effectText": "デッキの上から4枚をチャージ。",
+    "flavorText": "",
+    "costAp": 2,
+    "conditionAttribute": [
+      "補"
+    ],
+    "baseValue": 4,
+    "valueType": "support"
+  },
+  {
+    "id": "1-A103-UC",
+    "vol": 1,
+    "code": "A103",
+    "rarity": "UC",
+    "name": "スチールスキュアー",
+    "type": "skill",
+    "effectText": "この攻撃に対して防御スキルを使用できない。",
+    "flavorText": "",
+    "costAp": 2,
+    "conditionAttribute": [
+      "土",
+      "雷"
+    ],
+    "baseValue": 4,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A104-UC",
+    "vol": 1,
+    "code": "A104",
+    "rarity": "UC",
+    "name": "ウォール",
+    "type": "skill",
+    "effectText": "",
+    "flavorText": "",
+    "costAp": 2,
+    "conditionAttribute": [
+      "土"
+    ],
+    "baseValue": 6,
+    "valueType": "guard"
+  },
+  {
+    "id": "1-A105-UC",
+    "vol": 1,
+    "code": "A105",
+    "rarity": "UC",
+    "name": "セイントインパクト",
+    "type": "skill",
+    "effectText": "",
+    "flavorText": "",
+    "costAp": 2,
+    "conditionAttribute": [
+      "聖"
+    ],
+    "baseValue": 2,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A106-UC",
+    "vol": 1,
+    "code": "A106",
+    "rarity": "UC",
+    "name": "オールグレイス",
+    "type": "skill",
+    "effectText": "全ての味方のHPを回復。",
+    "flavorText": "",
+    "costAp": 2,
+    "conditionAttribute": [
+      "聖"
+    ],
+    "baseValue": 4,
+    "valueType": "heal"
+  },
+  {
+    "id": "1-A107-UC",
+    "vol": 1,
+    "code": "A107",
+    "rarity": "UC",
+    "name": "作戦会議",
+    "type": "skill",
+    "effectText": "デッキの上から3枚カードを引く。",
+    "flavorText": "",
+    "costAp": 1,
+    "conditionAttribute": [
+      "補"
+    ],
+    "baseValue": 3,
+    "valueType": "support"
+  },
+  {
+    "id": "1-A108-UC",
+    "vol": 1,
+    "code": "A108",
+    "rarity": "UC",
+    "name": "スノウドロップ",
+    "type": "skill",
+    "effectText": "次のターン、敵がドローフェーズに引く枚数を-1。",
+    "flavorText": "",
+    "costAp": 1,
+    "conditionAttribute": [
+      "氷"
+    ],
+    "baseValue": 1,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A109-UC",
+    "vol": 1,
+    "code": "A109",
+    "rarity": "UC",
+    "name": "トロピカルフォレスト",
+    "type": "skill",
+    "effectText": "お互い、デッキの上から2枚をチャージ。",
+    "flavorText": "",
+    "costAp": 0,
+    "conditionAttribute": [
+      "木"
+    ],
+    "baseValue": 2,
+    "valueType": "support"
+  },
+  {
+    "id": "1-A110-UC",
+    "vol": 1,
+    "code": "A110",
+    "rarity": "UC",
+    "name": "アイスクリーム",
+    "type": "skill",
+    "effectText": "デッキの上から1枚をチャージし、自分を1回復。",
+    "flavorText": "",
+    "costAp": 0,
+    "conditionAttribute": [
+      "氷",
+      "補"
+    ],
+    "baseValue": 1,
+    "valueType": "support"
+  },
+  {
+    "id": "1-A111-UC",
+    "vol": 1,
+    "code": "A111",
+    "rarity": "UC",
+    "name": "アサルトオーダー",
+    "type": "skill",
+    "effectText": "デッキからコスト2以下の攻撃スキルカードを探索し、1枚手札に加える。",
+    "flavorText": "",
+    "costAp": 0,
+    "conditionAttribute": [
+      "補"
+    ],
+    "baseValue": 0,
+    "valueType": "support"
+  },
+  {
+    "id": "1-A112-C",
+    "vol": 1,
+    "code": "A112",
+    "rarity": "C",
+    "name": "祈り",
+    "type": "skill",
+    "effectText": "味方全体に聖属性を1つ追加。",
+    "flavorText": "",
+    "costAp": 2,
+    "conditionAttribute": [
+      "聖"
+    ],
+    "baseValue": 1,
+    "valueType": "support"
+  },
+  {
+    "id": "1-A113-C",
+    "vol": 1,
+    "code": "A113",
+    "rarity": "C",
+    "name": "ファイアブラスト",
+    "type": "skill",
+    "effectText": "敵のデッキの上から2枚をトラッシュ。",
+    "flavorText": "",
+    "costAp": 2,
+    "conditionAttribute": [
+      "炎"
+    ],
+    "baseValue": 2,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A114-C",
+    "vol": 1,
+    "code": "A114",
+    "rarity": "C",
+    "name": "コールドブレス",
+    "type": "skill",
+    "effectText": "敵のターン終了時まで敵のアクターをロック。",
+    "flavorText": "",
+    "costAp": 2,
+    "conditionAttribute": [
+      "氷"
+    ],
+    "baseValue": 2,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A115-C",
+    "vol": 1,
+    "code": "A115",
+    "rarity": "C",
+    "name": "スタンショック",
+    "type": "skill",
+    "effectText": "敵のAPを-1。",
+    "flavorText": "",
+    "costAp": 2,
+    "conditionAttribute": [
+      "雷"
+    ],
+    "baseValue": 2,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A116-C",
+    "vol": 1,
+    "code": "A116",
+    "rarity": "C",
+    "name": "ハードスマッシュ",
+    "type": "skill",
+    "effectText": "",
+    "flavorText": "",
+    "costAp": 2,
+    "conditionAttribute": [
+      "打"
+    ],
+    "baseValue": 4,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A117-C",
+    "vol": 1,
+    "code": "A117",
+    "rarity": "C",
+    "name": "エナジーショット",
+    "type": "skill",
+    "effectText": "魔属性×2ダメージを追加。",
+    "flavorText": "",
+    "costAp": 2,
+    "conditionAttribute": [
+      "闇"
+    ],
+    "baseValue": 0,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A118-C",
+    "vol": 1,
+    "code": "A118",
+    "rarity": "C",
+    "name": "ブレス",
+    "type": "skill",
+    "effectText": "敵全体に攻撃。",
+    "flavorText": "",
+    "costAp": 2,
+    "conditionAttribute": [
+      "竜"
+    ],
+    "baseValue": 2,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A119-C",
+    "vol": 1,
+    "code": "A119",
+    "rarity": "C",
+    "name": "グライダーストライク",
+    "type": "skill",
+    "effectText": "",
+    "flavorText": "",
+    "costAp": 2,
+    "conditionAttribute": [
+      "突",
+      "氷"
+    ],
+    "baseValue": 4,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A120-C",
+    "vol": 1,
+    "code": "A120",
+    "rarity": "C",
+    "name": "コンボスタブ",
+    "type": "skill",
+    "effectText": "このターン、既にスキルを使用していればダメージを+1。",
+    "flavorText": "",
+    "costAp": 2,
+    "conditionAttribute": [
+      "突"
+    ],
+    "baseValue": 4,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A121-C",
+    "vol": 1,
+    "code": "A121",
+    "rarity": "C",
+    "name": "ルーツドレイン",
+    "type": "skill",
+    "effectText": "与えたダメージ分を回復。",
+    "flavorText": "",
+    "costAp": 2,
+    "conditionAttribute": [
+      "木"
+    ],
+    "baseValue": 2,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A122-C",
+    "vol": 1,
+    "code": "A122",
+    "rarity": "C",
+    "name": "ラージシールド",
+    "type": "skill",
+    "effectText": "",
+    "flavorText": "",
+    "costAp": 2,
+    "conditionAttribute": [
+      "守"
+    ],
+    "baseValue": 6,
+    "valueType": "guard"
+  },
+  {
+    "id": "1-A123-C",
+    "vol": 1,
+    "code": "A123",
+    "rarity": "C",
+    "name": "パリィ",
+    "type": "skill",
+    "effectText": "",
+    "flavorText": "",
+    "costAp": 1,
+    "conditionAttribute": [
+      "斬"
+    ],
+    "baseValue": 3,
+    "valueType": "guard"
+  },
+  {
+    "id": "1-A124-C",
+    "vol": 1,
+    "code": "A124",
+    "rarity": "C",
+    "name": "サークルパリィ",
+    "type": "skill",
+    "effectText": "",
+    "flavorText": "",
+    "costAp": 1,
+    "conditionAttribute": [
+      "突"
+    ],
+    "baseValue": 4,
+    "valueType": "guard"
+  },
+  {
+    "id": "1-A125-C",
+    "vol": 1,
+    "code": "A125",
+    "rarity": "C",
+    "name": "バードストライク",
+    "type": "skill",
+    "effectText": "",
+    "flavorText": "",
+    "costAp": 1,
+    "conditionAttribute": [
+      "飛",
+      "獣"
+    ],
+    "baseValue": 2,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A126-C",
+    "vol": 1,
+    "code": "A126",
+    "rarity": "C",
+    "name": "フォールキック",
+    "type": "skill",
+    "effectText": "このカードは控えのキャラクターから使用することができる。使用キャラクターをアクターにし、攻撃する。",
+    "flavorText": "",
+    "costAp": 1,
+    "conditionAttribute": [
+      "飛",
+      "打"
+    ],
+    "baseValue": 2,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A127-C",
+    "vol": 1,
+    "code": "A127",
+    "rarity": "C",
+    "name": "ぶん投げる",
+    "type": "skill",
+    "effectText": "敵のアクターを変更する。",
+    "flavorText": "",
+    "costAp": 1,
+    "conditionAttribute": [
+      "打"
+    ],
+    "baseValue": 2,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A128-C",
+    "vol": 1,
+    "code": "A128",
+    "rarity": "C",
+    "name": "裂斬",
+    "type": "skill",
+    "effectText": "斬属性×1ダメージを追加。",
+    "flavorText": "",
+    "costAp": 1,
+    "conditionAttribute": [
+      "斬"
+    ],
+    "baseValue": 1,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A129-C",
+    "vol": 1,
+    "code": "A129",
+    "rarity": "C",
+    "name": "ファストスタブ",
+    "type": "skill",
+    "effectText": "",
+    "flavorText": "",
+    "costAp": 1,
+    "conditionAttribute": [
+      "突"
+    ],
+    "baseValue": 3,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A130-C",
+    "vol": 1,
+    "code": "A130",
+    "rarity": "C",
+    "name": "グレイス",
+    "type": "skill",
+    "effectText": "",
+    "flavorText": "",
+    "costAp": 1,
+    "conditionAttribute": [
+      "聖"
+    ],
+    "baseValue": 3,
+    "valueType": "heal"
+  },
+  {
+    "id": "1-A131-C",
+    "vol": 1,
+    "code": "A131",
+    "rarity": "C",
+    "name": "バーニングランス",
+    "type": "skill",
+    "effectText": "このバトル中、自分に炎属性×1を追加する。",
+    "flavorText": "",
+    "costAp": 1,
+    "conditionAttribute": [
+      "突"
+    ],
+    "baseValue": 0,
+    "valueType": "support"
+  },
+  {
+    "id": "1-A132-C",
+    "vol": 1,
+    "code": "A132",
+    "rarity": "C",
+    "name": "トランクブロウ",
+    "type": "skill",
+    "effectText": "",
+    "flavorText": "",
+    "costAp": 1,
+    "conditionAttribute": [
+      "打",
+      "木"
+    ],
+    "baseValue": 3,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A133-C",
+    "vol": 1,
+    "code": "A133",
+    "rarity": "C",
+    "name": "スイッチ",
+    "type": "skill",
+    "effectText": "次に使うスキルのコストを-2。アクターがロック状態なら解除する。",
+    "flavorText": "",
+    "costAp": 1,
+    "conditionAttribute": [
+      "補"
+    ],
+    "baseValue": 0,
+    "valueType": "support"
+  },
+  {
+    "id": "1-A134-C",
+    "vol": 1,
+    "code": "A134",
+    "rarity": "C",
+    "name": "エレキネット",
+    "type": "skill",
+    "effectText": "敵のAPを-2。",
+    "flavorText": "",
+    "costAp": 1,
+    "conditionAttribute": [
+      "雷"
+    ],
+    "baseValue": 1,
+    "valueType": "guard"
+  },
+  {
+    "id": "1-A135-C",
+    "vol": 1,
+    "code": "A135",
+    "rarity": "C",
+    "name": "射線封じ",
+    "type": "skill",
+    "effectText": "このカードは控えのキャラクターから使用することができる。使用キャラクターをアクターにし、次の自分のターン開始時まで、アクターをロックする。",
+    "flavorText": "",
+    "costAp": 1,
+    "conditionAttribute": [
+      "守"
+    ],
+    "baseValue": 0,
+    "valueType": "support"
+  },
+  {
+    "id": "1-A136-C",
+    "vol": 1,
+    "code": "A136",
+    "rarity": "C",
+    "name": "ジェット飛行",
+    "type": "skill",
+    "effectText": "このカードは控えのキャラクターから使用することができる。使用キャラクターをアクターにし、手札が4枚になるまでデッキからカードを引く。",
+    "flavorText": "",
+    "costAp": 1,
+    "conditionAttribute": [
+      "風",
+      "飛"
+    ],
+    "baseValue": 0,
+    "valueType": "support"
+  },
+  {
+    "id": "1-A137-C",
+    "vol": 1,
+    "code": "A137",
+    "rarity": "C",
+    "name": "飛翔",
+    "type": "skill",
+    "effectText": "自分のアクターを変更する。",
+    "flavorText": "",
+    "costAp": 0,
+    "conditionAttribute": [
+      "飛"
+    ],
+    "baseValue": 0,
+    "valueType": "guard"
+  },
+  {
+    "id": "1-A138-C",
+    "vol": 1,
+    "code": "A138",
+    "rarity": "C",
+    "name": "速射",
+    "type": "skill",
+    "effectText": "",
+    "flavorText": "",
+    "costAp": 0,
+    "conditionAttribute": [
+      "射"
+    ],
+    "baseValue": 2,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A139-C",
+    "vol": 1,
+    "code": "A139",
+    "rarity": "C",
+    "name": "お弁当",
+    "type": "skill",
+    "effectText": "デッキの上から1枚をチャージ。",
+    "flavorText": "",
+    "costAp": 0,
+    "conditionAttribute": [
+      "補"
+    ],
+    "baseValue": 1,
+    "valueType": "support"
+  },
+  {
+    "id": "1-A140-C",
+    "vol": 1,
+    "code": "A140",
+    "rarity": "C",
+    "name": "シールドガード",
+    "type": "skill",
+    "effectText": "",
+    "flavorText": "",
+    "costAp": 0,
+    "conditionAttribute": [
+      "守"
+    ],
+    "baseValue": 4,
+    "valueType": "guard"
+  },
+  {
+    "id": "1-A141-C",
+    "vol": 1,
+    "code": "A141",
+    "rarity": "C",
+    "name": "飛び出る",
+    "type": "skill",
+    "effectText": "このカードは控えのキャラクターから使用することができる。使用キャラクターをアクターにする。",
+    "flavorText": "",
+    "costAp": 0,
+    "conditionAttribute": [
+      "飛"
+    ],
+    "baseValue": 0,
+    "valueType": "support"
+  },
+  {
+    "id": "1-A142-C",
+    "vol": 1,
+    "code": "A142",
+    "rarity": "C",
+    "name": "クロウ",
+    "type": "skill",
+    "effectText": "獣属性×1ダメージを追加。",
+    "flavorText": "",
+    "costAp": 0,
+    "conditionAttribute": [
+      "獣"
+    ],
+    "baseValue": 1,
+    "valueType": "attack"
+  },
+  {
+    "id": "1-A143-C",
+    "vol": 1,
+    "code": "A143",
+    "rarity": "C",
+    "name": "逃走",
+    "type": "skill",
+    "effectText": "デッキの上から1枚カードを引く。",
+    "flavorText": "",
+    "costAp": 0,
+    "conditionAttribute": [
+      "補"
+    ],
+    "baseValue": 1,
+    "valueType": "support"
+  },
+  {
+    "id": "1-A144-C",
+    "vol": 1,
+    "code": "A144",
+    "rarity": "C",
+    "name": "縦横無尽",
+    "type": "skill",
+    "effectText": "控えを一つ飛ばしてアクターを変更する。",
+    "flavorText": "",
+    "costAp": 0,
+    "conditionAttribute": [
+      "飛"
+    ],
+    "baseValue": 0,
+    "valueType": "support"
+  }
+]

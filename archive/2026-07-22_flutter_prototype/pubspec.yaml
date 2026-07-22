@@ -1,0 +1,46 @@
+name: bravers_duel
+description: "A new Flutter project."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+    
+  google_fonts: ^6.1.0
+  flutter_riverpod: ^2.4.0
+  flutter_hooks: ^0.20.0
+  freezed_annotation: ^2.4.1
+  hooks_riverpod: ^2.6.1
+  json_annotation: ^4.8.0
+
+  cupertino_icons: ^1.0.6
+  flutter_screenutil: ^5.9.3
+  uuid: ^4.4.2
+
+
+dev_dependencies:
+  build_runner: ^2.4.6
+  freezed: ^2.4.6
+  json_serializable: ^6.7.1
+  flutter_test:
+    sdk: flutter
+  
+
+  flutter_lints: ^3.0.0
+
+flutter:
+  assets:
+    - lib/assets/card_images/
+    - lib/assets/json/
+    - lib/assets/fonts/
+    - lib/assets/shaders/
+  fonts:
+    - family: AFS
+      fonts:
+        - asset: lib/assets/fonts/AFSMinNovaE.ttf
+  uses-material-design: true
+

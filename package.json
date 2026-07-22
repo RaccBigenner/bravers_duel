@@ -1,0 +1,15 @@
+{
+  "name": "bravers-duel",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "engine",
+    "web"
+  ],
+  "scripts": {
+    "test": "npm --workspace engine run test",
+    "sim": "npm --workspace engine run sim --",
+    "dev": "npm --workspace web run dev",
+    "build": "npm --workspace web run build"
+  }
+}
