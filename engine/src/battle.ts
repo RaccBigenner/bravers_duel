@@ -11,7 +11,14 @@
  */
 import { cardById } from './cards';
 import { containsAll, deckProblems, type DeckList } from './decks';
-import { characterEffectOf, hasEffectImplementation, skillEffectOf, type EffectApi } from './effects';
+import {
+  characterEffectOf,
+  equipmentEffectOf,
+  fieldEffectOf,
+  hasEffectImplementation,
+  skillEffectOf,
+  type EffectApi,
+} from './effects';
 import { mulberry32, shuffled } from './rng';
 import {
   CHARACTER_CARD_HEAL,
@@ -19,6 +26,7 @@ import {
   SECOND_PLAYER_STARTING_AP,
   type Attribute,
   type CharacterCard,
+  type EquipmentCard,
   type SkillCard,
 } from './types';
 
@@ -35,6 +43,7 @@ export interface CharacterInstance {
   attributes: Attribute[];
   addedAttributes: Attribute[];
   damage: number;
+  equipmentCardId: string | null; // 装備カード（1キャラ1個）
 }
 
 export interface PlayerBattle {
@@ -70,6 +79,8 @@ export interface BattleState {
   players: [PlayerBattle, PlayerBattle];
   firstPlayer: PlayerIndex;
   pendingAttack: PendingAttack | null;
+  /** 場のフィールドカード（両者共有・1枚だけ） */
+  field: { cardId: string; owner: PlayerIndex } | null;
   winner: PlayerIndex | null;
   endReason: EndReason | null;
   rngState: number;
@@ -80,6 +91,8 @@ export interface BattleState {
 export type BattleAction =
   | { type: 'playSkill'; handIndex: number; healTargetIndex?: number; targetIndex?: number }
   | { type: 'playCharacter'; handIndex: number }
+  | { type: 'playEquipment'; handIndex: number; targetIndex: number }
+  | { type: 'playField'; handIndex: number }
   | { type: 'endPlay' }
   | { type: 'playGuard'; handIndex: number }
   | { type: 'pass' }
@@ -109,6 +122,9 @@ export function maxHpOf(state: BattleState, player: PlayerIndex, charIndex: numb
   const c = state.players[player].characters[charIndex];
   const eff = characterEffectOf(c.cardId);
   let hp = c.maxHp;
+  if (c.equipmentCardId) {
+    hp += equipmentEffectOf(c.equipmentCardId)?.maxHpDelta ?? 0;
+  }
   if (eff?.maxHpBonus) {
     try {
       hp += eff.maxHpBonus(makeApi(state, player, charIndex));
@@ -137,6 +153,14 @@ export function effectiveAttributes(
   const p = state.players[player];
   const c = p.characters[charIndex];
   const attrs = [...c.attributes, ...c.addedAttributes];
+  if (c.equipmentCardId) {
+    const card = cardById(c.equipmentCardId);
+    if (card.type === 'equipment') attrs.push(...card.addAttribute);
+  }
+  if (state.field) {
+    const grant = fieldEffectOf(state.field.cardId)?.grantAttrAll;
+    if (grant) attrs.push(grant);
+  }
   p.characters.forEach((ally, i) => {
     if (!isCharAlive(state, player, i)) return;
     const grant = characterEffectOf(ally.cardId)?.grantAllyAttribute;
@@ -160,6 +184,13 @@ function nextAliveIndex(state: BattleState, player: PlayerIndex, from: number, s
 
 export function actingPlayer(state: BattleState): PlayerIndex {
   return state.phase === 'guard' ? ((1 - state.active) as PlayerIndex) : state.active;
+}
+
+/** 大乱戦: 3枚生存中のプレイヤーはアクター変更時に1枚飛ばす */
+function rotationSkip(state: BattleState, player: PlayerIndex): number {
+  if (!state.field) return 0;
+  const eff = fieldEffectOf(state.field.cardId);
+  return eff?.rotationSkipWhenFullAlive && aliveCount(state, player) === 3 ? 1 : 0;
 }
 
 function actorLocked(state: BattleState, player: PlayerIndex): boolean {
@@ -363,7 +394,7 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
         return;
       }
       const p = enemy();
-      p.actorIndex = nextAliveIndex(state, enemyIdx, p.actorIndex);
+      p.actorIndex = nextAliveIndex(state, enemyIdx, p.actorIndex, rotationSkip(state, enemyIdx));
       pushLog(state, `相手のアクターが${p.characters[p.actorIndex].name}に変更`);
     },
     changeMyActor: (skip = 0) => {
@@ -399,6 +430,28 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
       }
       pushLog(state, `デッキから${cardById(card).name}を手札に加えた`);
       return true;
+    },
+    selfHasEquipment: () => me().characters[ownerChar].equipmentCardId !== null,
+    destroyTargetEquipment: () => {
+      const t = firstTarget();
+      if (t === null) return;
+      const c = state.players[defenderIdx()].characters[t];
+      if (c.equipmentCardId) {
+        state.players[defenderIdx()].trash.push(c.equipmentCardId);
+        pushLog(state, `${c.name}の装備${cardById(c.equipmentCardId).name}を破壊`);
+        c.equipmentCardId = null;
+      }
+    },
+    handUsableSkillCount: (by) => {
+      const p = me();
+      const ci = by === 'self' ? ownerChar : p.actorIndex;
+      let count = 0;
+      for (const id of p.hand) {
+        const card = cardById(id);
+        if (card.type !== 'skill') continue;
+        if (containsAll(effectiveAttributes(state, owner, ci), card.conditionAttribute)) count++;
+      }
+      return count;
     },
     consumeAllMyAp: () => {
       const p = me();
@@ -542,6 +595,7 @@ export function createBattle(
         attributes: [...card.attribute],
         addedAttributes: [],
         damage: 0,
+        equipmentCardId: null,
       };
     });
     const player: PlayerBattle = {
@@ -570,6 +624,7 @@ export function createBattle(
     players,
     firstPlayer,
     pendingAttack: null,
+    field: null,
     winner: null,
     endReason: null,
     rngState: (seed * 2654435761) >>> 0,
@@ -605,6 +660,7 @@ function beginTurn(state: BattleState): void {
     if (!isCharAlive(state, state.active, i)) return;
     cap += characterEffectOf(c.cardId)?.handRefillBonus ?? 0;
   });
+  if (state.field) cap += fieldEffectOf(state.field.cardId)?.drawBonusAll ?? 0;
 
   const need = Math.max(0, cap - p.hand.length);
   const drawCount = Math.max(0, need + p.nextDrawDelta);
@@ -622,6 +678,18 @@ function beginTurn(state: BattleState): void {
     }
   }
   state.phase = 'play';
+
+  // ターン開始時の常時能力（アニマなど。ドロー後に発動）
+  p.characters.forEach((c, i) => {
+    if (battleOver(state)) return;
+    if (!isCharAlive(state, state.active, i)) return;
+    const eff = characterEffectOf(c.cardId);
+    if (eff?.onOwnTurnStart) {
+      runEffectSafely(state, `${c.name}のターン開始能力`, () =>
+        eff.onOwnTurnStart!(makeApi(state, state.active, i), i === p.actorIndex),
+      );
+    }
+  });
 }
 
 // ---------------------------------------------------------------- スキルの使用判定
@@ -637,6 +705,9 @@ export function effectiveSkillCost(
   const ci = usingChar ?? p.actorIndex;
   let cost = card.costAp;
   cost += characterEffectOf(p.characters[ci].cardId)?.skillCostDelta ?? 0;
+  const equipId = p.characters[ci].equipmentCardId;
+  if (equipId) cost += equipmentEffectOf(equipId)?.skillCostDelta ?? 0;
+  if (state.field) cost += fieldEffectOf(state.field.cardId)?.skillCostDeltaAll ?? 0;
   cost += p.nextSkillCostDelta;
   const eff = skillEffectOf(card.id);
   if (eff?.costDelta) {
@@ -720,6 +791,16 @@ export function legalActions(state: BattleState): BattleAction[] {
       }
       if (card.type === 'character' && canPlayCharacterCard(state, state.active, card)) {
         actions.push({ type: 'playCharacter', handIndex });
+      }
+      if (card.type === 'equipment') {
+        p.characters.forEach((_, i) => {
+          if (isCharAlive(state, state.active, i)) {
+            actions.push({ type: 'playEquipment', handIndex, targetIndex: i });
+          }
+        });
+      }
+      if (card.type === 'field') {
+        actions.push({ type: 'playField', handIndex });
       }
     });
     actions.push({ type: 'endPlay' });
@@ -822,6 +903,42 @@ export function applyAction(state: BattleState, action: BattleAction): void {
       return;
     }
 
+    case 'playEquipment': {
+      requirePhase(state, 'play');
+      const p = state.players[state.active];
+      const card = cardAtHand(p, action.handIndex);
+      if (card.type !== 'equipment') throw new Error(`装備カードではありません: ${card.name}`);
+      const target = p.characters[action.targetIndex];
+      if (!target || !isCharAlive(state, state.active, action.targetIndex)) {
+        throw new Error('装備は生きている味方にだけ付けられます');
+      }
+      // 付け替えOK: 古い装備はトラッシュへ
+      if (target.equipmentCardId) {
+        p.trash.push(target.equipmentCardId);
+        pushLog(state, `${target.name}の${cardById(target.equipmentCardId).name}を外してトラッシュ`);
+      }
+      p.hand.splice(action.handIndex, 1);
+      target.equipmentCardId = card.id;
+      pushLog(state, `${target.name}に${card.name}を装備`);
+      return;
+    }
+
+    case 'playField': {
+      requirePhase(state, 'play');
+      const p = state.players[state.active];
+      const card = cardAtHand(p, action.handIndex);
+      if (card.type !== 'field') throw new Error(`フィールドカードではありません: ${card.name}`);
+      // 上書きOK: 古いフィールドは持ち主のトラッシュへ
+      if (state.field) {
+        state.players[state.field.owner].trash.push(state.field.cardId);
+        pushLog(state, `${cardById(state.field.cardId).name}は上書きされてトラッシュへ`);
+      }
+      p.hand.splice(action.handIndex, 1);
+      state.field = { cardId: card.id, owner: state.active };
+      pushLog(state, `フィールド${card.name}を展開`);
+      return;
+    }
+
     case 'playCharacter': {
       requirePhase(state, 'play');
       const p = state.players[state.active];
@@ -870,6 +987,12 @@ export function applyAction(state: BattleState, action: BattleAction): void {
         if (eff?.onOwnTurnEnd) {
           runEffectSafely(state, `${c.name}のターン終了能力`, () =>
             eff.onOwnTurnEnd!(makeApi(state, state.active, i), i === p.actorIndex),
+          );
+        }
+        const equipEff = c.equipmentCardId ? equipmentEffectOf(c.equipmentCardId) : null;
+        if (equipEff?.onOwnTurnEnd) {
+          runEffectSafely(state, `${c.name}の装備効果`, () =>
+            equipEff.onOwnTurnEnd!(makeApi(state, state.active, i)),
           );
         }
       });
@@ -1018,7 +1141,7 @@ function rotateActorAfterSkill(state: BattleState, player: PlayerIndex): void {
   if (actorLocked(state, player)) return;
   const p = state.players[player];
   const before = p.actorIndex;
-  p.actorIndex = nextAliveIndex(state, player, p.actorIndex);
+  p.actorIndex = nextAliveIndex(state, player, p.actorIndex, rotationSkip(state, player));
   if (p.actorIndex !== before) {
     pushLog(state, `プレイヤー${player + 1}のアクターが${p.characters[p.actorIndex].name}に交代`);
   }

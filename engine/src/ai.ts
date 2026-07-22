@@ -58,6 +58,17 @@ export function simpleAi(options: SimpleAiOptions = {}): BattleAi {
       }
 
       if (state.phase === 'play') {
+        // 0. 装備は無料なので先に付ける（装備していないキャラにだけ。付け替えループ防止）
+        const equipAction = actions.find((a) => {
+          if (a.type !== 'playEquipment') return false;
+          return p.characters[a.targetIndex].equipmentCardId === null;
+        });
+        if (equipAction) return equipAction;
+
+        // 0.5 フィールドが出ていなければ出す（相手のフィールドの上書きもする）
+        const fieldAction = actions.find((a) => a.type === 'playField');
+        if (fieldAction && (state.field === null || state.field.owner !== me)) return fieldAction;
+
         // 1. 使える攻撃スキルのうち、ダメージが一番大きいもの
         let best: { action: BattleAction; value: number } | null = null;
         for (const action of actions) {

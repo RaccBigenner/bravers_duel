@@ -26,6 +26,18 @@ export const VOL1_EFFECTS: Record<string, CardEffect> = {
     },
   },
   '1-A004-USR': { kind: 'character', skillCostDelta: 2 },
+  '1-A006-USR': {
+    // アニマ「自分のターンの最初に、このキャラクターをアクターにできる」
+    // 暫定: バトルAIが使う前提で自動判断（自分の方が使えるスキルが多い時だけアクターになる）
+    kind: 'character',
+    onOwnTurnStart: (api, isActor) => {
+      if (isActor) return;
+      if (api.handUsableSkillCount('self') > api.handUsableSkillCount('actor')) {
+        api.becomeActor();
+        api.log('アニマがアクターになった');
+      }
+    },
+  },
   '1-A007-SSR': {
     kind: 'character',
     onAllyKo: (api) => api.damageEnemyActor(3),
@@ -72,6 +84,29 @@ export const VOL1_EFFECTS: Record<string, CardEffect> = {
     kind: 'character',
     onAllyKo: (api) => api.healAllAllies(2),
   },
+  '1-A024-R': {
+    kind: 'character',
+    maxHpBonus: (api) => (api.selfHasEquipment() ? 3 : 0),
+  },
+
+  // ================================================== 装備
+  '1-A025-SR': { kind: 'equipment', skillCostDelta: 1 },
+  '1-A026-SR': { kind: 'equipment', maxHpDelta: 1 },
+  '1-A027-R': { kind: 'equipment', maxHpDelta: -2 },
+  '1-A028-R': { kind: 'equipment' }, // 属性追加のみ
+  '1-A029-C': {
+    kind: 'equipment',
+    onOwnTurnEnd: (api) => api.healSelf(1),
+  },
+  '1-A030-C': { kind: 'equipment', maxHpDelta: 2 },
+  '1-A031-C': { kind: 'equipment' }, // 属性追加のみ
+  '1-A032-C': { kind: 'equipment' }, // 属性追加のみ
+
+  // ================================================== フィールド
+  '1-A033-SR': { kind: 'field', skillCostDeltaAll: -1 },
+  '1-A034-SR': { kind: 'field', rotationSkipWhenFullAlive: true },
+  '1-A035-R': { kind: 'field', grantAttrAll: '斬' },
+  '1-A036-R': { kind: 'field', drawBonusAll: 1 },
 
   // ================================================== スキル: USR/SSR/SR
   '1-A037-USR': {
@@ -219,7 +254,10 @@ export const VOL1_EFFECTS: Record<string, CardEffect> = {
   },
   '1-A070-R': { kind: 'skill', noGuard: true },
   '1-A072-R': { kind: 'skill', targeting: 'standby' },
-  '1-A073-R': { kind: 'skill' }, // 装備破壊は装備システム実装後
+  '1-A073-R': {
+    kind: 'skill',
+    onAttackResolved: (api) => api.destroyTargetEquipment(),
+  },
   '1-A074-R': {
     kind: 'skill',
     onPlay: (api) => {

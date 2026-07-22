@@ -86,6 +86,12 @@ export interface EffectApi {
   searchDeckToHand(filter: (cardId: string) => boolean): boolean;
   /** 自分のAPを全てトラッシュし、その枚数を返す（無双乱撃） */
   consumeAllMyAp(): number;
+  /** 効果の持ち主キャラが装備を持っているか（ロッソ） */
+  selfHasEquipment(): boolean;
+  /** 攻撃対象の装備をトラッシュする（ポイントブレイク） */
+  destroyTargetEquipment(): void;
+  /** 手札のスキルのうち、属性条件を満たせる枚数を数える（AP無視。アニマの判断用） */
+  handUsableSkillCount(by: 'self' | 'actor'): number;
   /** 効果の持ち主キャラ自身へのダメージ（邪神の呪い） */
   damageSelf(n: number): void;
   /** 簡易版「デッキから使用」: 条件に合う攻撃スキルを1枚探し、基本値ぶんの効果ダメージを
@@ -130,6 +136,8 @@ export interface CharacterEffect {
   /** 最大HPの修正（ドッソ）。apiで状況を見て差分を返す */
   maxHpBonus?(api: EffectApi): number;
   onBattleStart?(api: EffectApi): void;
+  /** 自分のターンの最初に（ドロー後。このキャラが生きていれば） */
+  onOwnTurnStart?(api: EffectApi, isActor: boolean): void;
   /** 自分のターンの終わりに（このキャラが生きていれば） */
   onOwnTurnEnd?(api: EffectApi, isActor: boolean): void;
   /** このキャラが攻撃する時のダメージ修正 */
@@ -142,4 +150,28 @@ export interface CharacterEffect {
   onHealed?(api: EffectApi, amount: number): void;
 }
 
-export type CardEffect = SkillEffect | CharacterEffect;
+/** 装備カードの効果（属性追加はカードデータの addAttribute から自動で効く） */
+export interface EquipmentEffect {
+  kind: 'equipment';
+  /** 付けたキャラの最大HP修正 */
+  maxHpDelta?: number;
+  /** 付けたキャラが使うスキルのコスト修正 */
+  skillCostDelta?: number;
+  /** 自分のターンの終わりに（付けたキャラが生きていれば） */
+  onOwnTurnEnd?(api: EffectApi): void;
+}
+
+/** フィールドカードの効果（場に1枚、両プレイヤーに効く） */
+export interface FieldEffect {
+  kind: 'field';
+  /** 全てのキャラクターが使うスキルのコスト修正 */
+  skillCostDeltaAll?: number;
+  /** 全てのキャラクターに属性を追加 */
+  grantAttrAll?: import('../types').Attribute;
+  /** 全てのプレイヤーのドローフェーズの枚数を増やす */
+  drawBonusAll?: number;
+  /** キャラクター3枚生存中のプレイヤーは、アクター変更時に1枚飛ばす（大乱戦） */
+  rotationSkipWhenFullAlive?: boolean;
+}
+
+export type CardEffect = SkillEffect | CharacterEffect | EquipmentEffect | FieldEffect;

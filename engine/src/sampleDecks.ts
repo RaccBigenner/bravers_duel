@@ -28,7 +28,10 @@ interface ArchetypeSpec {
   quota?: { attack: number; guard: number; support: number; heal: number };
 }
 
-const DEFAULT_QUOTA = { attack: 19, guard: 6, support: 6, heal: 3 };
+// キャラカード6枚 + 装備2枚 + フィールド1枚 + スキル31枚 = 40枚
+const DEFAULT_QUOTA = { attack: 16, guard: 6, support: 6, heal: 3 };
+const EQUIPMENT_COUNT = 2;
+const FIELD_COUNT = 1;
 
 const SPECS: ArchetypeSpec[] = [
   {
@@ -48,21 +51,21 @@ const SPECS: ArchetypeSpec[] = [
     concept: 'セレーナの氷付与とロック・ガードで守り勝つ',
     characterIds: ['1-A008-SSR', '1-A018-R', '1-A013-SR'],
     preferAttrs: ['氷', '守'],
-    quota: { attack: 14, guard: 10, support: 7, heal: 3 },
+    quota: { attack: 11, guard: 10, support: 7, heal: 3 },
   },
   {
     name: '竜の猛攻',
     concept: 'ジエンドの竜3属性で大技を最速で撃つ',
     characterIds: ['1-A002-LSR', '1-A020-R', '1-A014-SR'],
     preferAttrs: ['竜', '闇', '打'],
-    quota: { attack: 20, guard: 4, support: 8, heal: 2 },
+    quota: { attack: 17, guard: 4, support: 8, heal: 2 },
   },
   {
     name: '聖光の癒し',
     concept: 'ハスミールの聖3属性で回復しながら粘り勝つ',
     characterIds: ['1-A019-R', '1-A023-R', '1-A010-SR'],
     preferAttrs: ['聖', '木'],
-    quota: { attack: 15, guard: 6, support: 6, heal: 7 },
+    quota: { attack: 12, guard: 6, support: 6, heal: 7 },
   },
   {
     name: '獣と風',
@@ -81,7 +84,7 @@ const SPECS: ArchetypeSpec[] = [
     concept: 'ビコウの控え無敵とドッソの高HPで受けつつ重い一撃',
     characterIds: ['1-A021-R', '1-A017-R', '1-A015-SR'],
     preferAttrs: ['雷', '土', '打', '守'],
-    quota: { attack: 16, guard: 8, support: 7, heal: 3 },
+    quota: { attack: 13, guard: 8, support: 7, heal: 3 },
   },
 ];
 
@@ -116,6 +119,32 @@ function buildDeck(spec: ArchetypeSpec): DeckList {
 
   // 1. キャラクターカード2枚ずつ（回復札）
   for (const ch of chars) add(ch.id, 2);
+
+  // 1.5 装備2枚（好み属性に合うもの）とフィールド1枚
+  const equips = ALL_CARDS.filter((c) => c.type === 'equipment')
+    .sort((a, b) => {
+      const fit = (e: typeof a) =>
+        e.type === 'equipment' ? e.addAttribute.filter((x) => spec.preferAttrs.includes(x)).length : 0;
+      return fit(b) - fit(a);
+    });
+  let equipTaken = 0;
+  for (const e of equips) {
+    if (equipTaken >= EQUIPMENT_COUNT) break;
+    equipTaken += add(e.id, 1);
+  }
+  const fields = ALL_CARDS.filter((c) => c.type === 'field').sort((a, b) => {
+    const fit = (f: typeof a) => {
+      if (f.id === '1-A035-R' && spec.preferAttrs.includes('斬')) return 10; // 剣の墓場
+      if (f.id === '1-A036-R') return 5; // 激闘（汎用）
+      return 1;
+    };
+    return fit(b) - fit(a);
+  });
+  let fieldTaken = 0;
+  for (const f of fields) {
+    if (fieldTaken >= FIELD_COUNT) break;
+    fieldTaken += add(f.id, 1);
+  }
 
   // 2. 種類ごとに、点数の高い順に3枚ずつ
   for (const [type, want] of Object.entries(quota) as [SkillCard['valueType'], number][]) {

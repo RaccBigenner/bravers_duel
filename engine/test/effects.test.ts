@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { applyAction, createBattle, type BattleState, type PlayerIndex } from '../src/battle';
+import {
+  applyAction,
+  createBattle,
+  effectiveAttributes,
+  isCharAlive,
+  type BattleState,
+  type PlayerIndex,
+} from '../src/battle';
 import { ALL_CARDS, cardById } from '../src/cards';
 import { containsAll, type DeckList } from '../src/decks';
 import { implementedEffectCount } from '../src/effects';
@@ -164,6 +171,89 @@ describe('スキルの効果', () => {
     applyAction(state, { type: 'playSkill', handIndex: 0, targetIndex: 1 }); // 控え(1)を指定
     expect(state.players[1].characters[1].damage).toBe(skill.baseValue);
     expect(state.players[1].characters[0].damage).toBe(0);
+  });
+});
+
+describe('装備カード', () => {
+  it('装備すると属性が増えてスキル条件を満たせる・付け替えで古い装備はトラッシュ', () => {
+    // 崩れかけの宝剣(斬斬) をダダ(雷氷土)に付けると斬スキルが使える
+    const state = battleWith([DADA, OWU], '1-A025-SR', [ORUS, STOMY], VANILLA_ATK);
+    const zanSkill = cardById('1-A123-C') as SkillCard; // パリィ(斬)は使えないはず→装備後に判定が変わることを大裂斬で確認
+    applyAction(state, { type: 'playEquipment', handIndex: 0, targetIndex: 0 });
+    expect(state.players[0].characters[0].equipmentCardId).toBe('1-A025-SR');
+
+    // 付け替え: もう1枚付けると古い方がトラッシュへ
+    applyAction(state, { type: 'playEquipment', handIndex: 0, targetIndex: 0 });
+    expect(state.players[0].trash).toContain('1-A025-SR');
+    expect(zanSkill.conditionAttribute).toContain('斬'); // 前提の確認
+  });
+
+  it('王家の盾でHP+1（最大HPが増える）', () => {
+    const state = battleWith([DADA, OWU], '1-A026-SR', [ORUS, STOMY], VANILLA_ATK);
+    const dada = state.players[0].characters[0];
+    applyAction(state, { type: 'playEquipment', handIndex: 0, targetIndex: 0 });
+    dada.damage = dada.maxHp; // 本来のHPちょうどのダメージ
+    // 王家の盾の+1で、まだ戦闘不能ではない
+    expect(isCharAlive(state, 0, 0)).toBe(true);
+  });
+
+  it('医療セット: ターン終了時に1回復', () => {
+    const state = battleWith([DADA, OWU], '1-A029-C', [ORUS, STOMY], VANILLA_ATK);
+    const dada = state.players[0].characters[0];
+    applyAction(state, { type: 'playEquipment', handIndex: 0, targetIndex: 0 });
+    dada.damage = 3;
+    applyAction(state, { type: 'endPlay' });
+    applyAction(state, { type: 'endTurn' });
+    expect(dada.damage).toBe(2);
+  });
+
+  it('ロッソ: 装備しているとHP+3', () => {
+    const state = battleWith(['1-A024-R', OWU], '1-A028-R', [ORUS, STOMY], VANILLA_ATK);
+    const rosso = state.players[0].characters[0];
+    applyAction(state, { type: 'playEquipment', handIndex: 0, targetIndex: 0 });
+    rosso.damage = rosso.maxHp + 1; // 本来のHP10を超えるダメージ
+    expect(isCharAlive(state, 0, 0)).toBe(true); // 装備+3のHP13でまだ生きている
+    rosso.damage = rosso.maxHp + 3;
+    expect(isCharAlive(state, 0, 0)).toBe(false); // 13ダメージで戦闘不能
+  });
+});
+
+describe('フィールドカード', () => {
+  it('剣の墓場: 全キャラに斬属性が追加される', () => {
+    const state = battleWith([DADA, OWU], '1-A035-R', [ORUS, STOMY], VANILLA_ATK);
+    expect(effectiveAttributes(state, 0, 0)).not.toContain('斬');
+    applyAction(state, { type: 'playField', handIndex: 0 });
+    expect(effectiveAttributes(state, 0, 0)).toContain('斬');
+    expect(effectiveAttributes(state, 1, 0)).toContain('斬'); // 相手にも効く
+  });
+
+  it('フィールドは上書きされて古い方は持ち主のトラッシュへ', () => {
+    const state = battleWith([DADA, OWU], '1-A035-R', [ORUS, STOMY], '1-A036-R');
+    applyAction(state, { type: 'playField', handIndex: 0 });
+    expect(state.field?.cardId).toBe('1-A035-R');
+    // 相手のターンにして相手が激闘を出す
+    applyAction(state, { type: 'endPlay' });
+    applyAction(state, { type: 'endTurn' });
+    applyAction(state, { type: 'playField', handIndex: 0 });
+    expect(state.field?.cardId).toBe('1-A036-R');
+    expect(state.players[0].trash).toContain('1-A035-R'); // 古い方は元の持ち主のトラッシュ
+  });
+
+  it('激闘: ドローフェーズに1枚多く引く（手札6枚まで）', () => {
+    const state = battleWith([DADA, OWU], '1-A036-R', [ORUS, STOMY], VANILLA_ATK);
+    applyAction(state, { type: 'playField', handIndex: 0 });
+    applyAction(state, { type: 'endPlay' });
+    applyAction(state, { type: 'endTurn' });
+    expect(state.players[1].hand).toHaveLength(6); // 5枚 + 激闘の1枚
+  });
+});
+
+describe('アニマ（AI自動判断）', () => {
+  it('自分の方が使えるスキルが多い時、ターン開始時にアクターになる', () => {
+    // 手札は闇スキル(カオスフレア: 闇条件)だらけ。アクターのオルスは使えず、アニマ(闇獣)は使える
+    // → 1ターン目の開始時（バトル作成直後）にもうアクターになっている
+    const state = battleWith([ORUS, '1-A006-USR'], '1-A038-USR', [DADA, OWU], VANILLA_ATK);
+    expect(state.players[0].actorIndex).toBe(1);
   });
 });
 
