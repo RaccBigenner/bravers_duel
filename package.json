@@ -11,5 +11,8 @@
     "sim": "npm --workspace engine run sim --",
     "dev": "npm --workspace web run dev",
     "build": "npm --workspace web run build"
+  },
+  "devDependencies": {
+    "sharp": "^0.35.3"
   }
 }
