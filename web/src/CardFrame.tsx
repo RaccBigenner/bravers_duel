@@ -6,6 +6,7 @@ import type { Card, CharacterCard, EquipmentCard, FieldCard, Rarity, SkillCard }
 import { CSSProperties } from 'react';
 import {
   IMG,
+  IMG_PNG,
   frameImage,
   innerImage,
   isFullArt,
@@ -113,12 +114,13 @@ function AttributeIcons({ attrs, size, gap }: { attrs: string[]; size: number; g
 function DescriptionArea({ effectText, flavorText, w, wide = false }: {
   effectText: string; flavorText: string; w: number; wide?: boolean;
 }) {
+  const inset = w * 0.02; // 左右・下の余白を同じにする
   return (
     <div
       style={{
-        width: wide ? '96%' : '88%',
+        width: `calc(100% - ${inset * 2}px)`,
         height: wide ? w * 0.2134 : w * 0.2667,
-        margin: `${w * 0.013}px auto`,
+        margin: `0 ${inset}px ${inset}px`,
         padding: w * 0.013,
         background: 'rgba(255,255,255,0.25)',
         borderRadius: w * 0.008,
@@ -213,7 +215,7 @@ function CharacterContent({ card, w, h, landscape }: { card: CharacterCard; w: n
 
       {/* HP（右上のハート） */}
       <div style={{ position: 'absolute', top: 0, right: 0, width: w * 0.15, height: w * 0.15 }}>
-        <img src={IMG('heart_material')} style={{ width: '100%', height: '100%', objectFit: 'contain' }} alt="HP" />
+        <img src={IMG_PNG('heart_material')} style={{ width: '100%', height: '100%', objectFit: 'contain', filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.5))' }} alt="HP" />
         <div
           style={{
             position: 'absolute',
@@ -246,14 +248,14 @@ function SkillContent({ card, w, h }: { card: SkillCard; w: number; h: number })
         />
       )}
 
-      {/* 中段のスキル画像（USR以外） */}
+      {/* 中段のスキル画像（USR以外）。枠内の横いっぱいに広げる */}
       {!fullArt && (
         <div
           style={{
             position: 'absolute',
             top: h * 0.153,
-            left: w * 0.03,
-            right: w * 0.03,
+            left: 0,
+            right: 0,
             height: h * 0.422,
             backgroundImage: `url(${IMG(card.id)})`,
             backgroundSize: 'cover',
@@ -274,7 +276,7 @@ function SkillContent({ card, w, h }: { card: SkillCard; w: number; h: number })
         {/* 上段: コスト＋名前＋条件属性 */}
         <div style={{ display: 'flex', alignItems: 'flex-start', padding: w * 0.013, gap: w * 0.013 }}>
           <div style={{ position: 'relative', width: w * 0.134, height: w * 0.134, flexShrink: 0 }}>
-            <img src={IMG('diamond_material')} style={{ width: '100%', height: '100%', objectFit: 'contain' }} alt="コスト" />
+            <img src={IMG_PNG('diamond_material')} style={{ width: '100%', height: '100%', objectFit: 'contain', filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.5))' }} alt="コスト" />
             <div
               style={{
                 position: 'absolute',

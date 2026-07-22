@@ -4,6 +4,8 @@
 import type { Rarity } from '@bravers/engine';
 
 export const IMG = (name: string) => `${import.meta.env.BASE_URL}card_images/${name}.webp`;
+/** AI生成し直した透過PNGのアイコン素材（ハート・ダイヤなど） */
+export const IMG_PNG = (name: string) => `${import.meta.env.BASE_URL}card_images/${name}.png`;
 
 /** レアリティ → 外枠の背景画像 */
 export function frameImage(rarity: Rarity): string {
