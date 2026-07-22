@@ -40,14 +40,18 @@ describe('カードマスターデータ', () => {
     }
   });
 
-  it('キャラクターの属性は0〜4個（0個は[魔神素体]グロウのみ）', () => {
+  it('キャラクターの属性は0〜5個（0個はグロウ、5個はトランザードのみ）', () => {
     const zeroAttr = ALL_CARDS.filter(
       (c) => c.type === 'character' && c.attribute.length === 0,
     );
     expect(zeroAttr.map((c) => c.id)).toEqual(['1-A014-SR']);
+    const fiveAttr = ALL_CARDS.filter(
+      (c) => c.type === 'character' && c.attribute.length >= 5,
+    );
+    expect(fiveAttr.map((c) => c.id)).toEqual(['1-A004-USR']);
     for (const c of ALL_CARDS) {
       if (c.type === 'character') {
-        expect(c.attribute.length).toBeLessThanOrEqual(4);
+        expect(c.attribute.length).toBeLessThanOrEqual(5);
       }
     }
   });

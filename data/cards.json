@@ -42,7 +42,7 @@
     "rarity": "USR",
     "name": "[閃光の勇者]クラウディア",
     "type": "character",
-    "effectText": "バトル開始時、デッキからカードを2枚チャージ。",
+    "effectText": "バトル開始時、デッキからカードを2枚チャージ。攻撃時、APが4以下の時、ダメージを+2。",
     "flavorText": "——正義の剣を振るった先には、平和などないのだろうか。",
     "size": "normal",
     "hp": 9,
@@ -64,6 +64,7 @@
     "size": "normal",
     "hp": 8,
     "attribute": [
+      "闇",
       "闇",
       "闇",
       "闇",
@@ -133,6 +134,7 @@
     "hp": 8,
     "attribute": [
       "氷",
+      "氷",
       "氷"
     ]
   },
@@ -143,7 +145,7 @@
     "rarity": "SR",
     "name": "[狂弾]ヤクビ",
     "type": "character",
-    "effectText": "自分のターンの終わりに、このキャラクターがアクターなら、全ての敵キャラクターに1ダメージを与えて、アクターを変更する。",
+    "effectText": "自分のターンの終わりに、このキャラクターがアクターなら、全ての敵キャラクターに2ダメージを与えて、アクターを変更する。",
     "flavorText": "",
     "size": "normal",
     "hp": 7,
@@ -213,7 +215,7 @@
     "effectText": "このキャラクターがアクターの時、受けたダメージの数だけトラッシュエリアの下からチャージ。",
     "flavorText": "",
     "size": "normal",
-    "hp": 5,
+    "hp": 6,
     "attribute": [
       "炎",
       "氷"
@@ -287,7 +289,7 @@
     "rarity": "R",
     "name": "[鏡の盾]ミルオン",
     "type": "character",
-    "effectText": "ダメージを受けた時、このキャラクターがアクターなら、敵に同じだけダメージを与え、自分のデッキの上から3枚をトラッシュ。",
+    "effectText": "ダメージを受けた時、このキャラクターがアクターなら、敵に同じだけダメージを与え、自分のデッキの上から2枚をトラッシュ。",
     "flavorText": "",
     "size": "normal",
     "hp": 10,
@@ -390,7 +392,7 @@
     "effectText": "このキャラクターに装備カードがセットしてあれば、HPを+3。",
     "flavorText": "",
     "size": "normal",
-    "hp": 9,
+    "hp": 10,
     "attribute": [
       "補"
     ]
@@ -1858,7 +1860,7 @@
     "rarity": "C",
     "name": "エナジーショット",
     "type": "skill",
-    "effectText": "魔属性×2ダメージを追加。",
+    "effectText": "闇属性×2ダメージを追加。",
     "flavorText": "",
     "costAp": 2,
     "conditionAttribute": [
