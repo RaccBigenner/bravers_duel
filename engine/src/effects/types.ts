@@ -94,8 +94,8 @@ export interface EffectApi {
   handUsableSkillCount(by: 'self' | 'actor'): number;
   /** 効果の持ち主キャラ自身へのダメージ（邪神の呪い） */
   damageSelf(n: number): void;
-  /** 簡易版「デッキから使用」: 条件に合う攻撃スキルを1枚探し、基本値ぶんの効果ダメージを
-   * 敵アクターに与えてトラッシュする（ガード割り込みなし） */
+  /** 「デッキから使用」: 条件に合うスキルを1枚探し、コストなしで本当に使用する
+   * （効果・スケーリング込み。奇襲扱いでguard割り込みは不可） */
   castFromDeck(opts: { maxCost: number; attr: import('../types').Attribute }): void;
   /** ログを出す */
   log(message: string): void;
@@ -114,8 +114,8 @@ export interface SkillEffect {
   costDelta?(api: EffectApi): number;
   /** 攻撃の宣言時（ダメージ修正はここで） */
   onAttackDeclare?(api: EffectApi): void;
-  /** 攻撃の解決後。dealt = 実際に与えた合計ダメージ */
-  onAttackResolved?(api: EffectApi, dealt: number): void;
+  /** 攻撃の解決後。dealt = 実際に与えた合計ダメージ、damagedCount = ダメージを与えたキャラの数 */
+  onAttackResolved?(api: EffectApi, dealt: number, damagedCount?: number): void;
   /** プレイ時の追加処理（支援・回復・攻撃の付随効果） */
   onPlay?(api: EffectApi): void;
   /** guardとして割り込んだ時（軽減値の修正や追加処理） */

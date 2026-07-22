@@ -8,7 +8,7 @@ import {
   type PlayerIndex,
 } from '../src/battle';
 import { ALL_CARDS, cardById } from '../src/cards';
-import { containsAll, type DeckList } from '../src/decks';
+import { containsAll, deckProblems, type DeckList } from '../src/decks';
 import { implementedEffectCount } from '../src/effects';
 import { sampleArchetypeDecks } from '../src/sampleDecks';
 import type { CharacterCard, SkillCard } from '../src/types';
@@ -254,6 +254,48 @@ describe('アニマ（AI自動判断）', () => {
     // → 1ターン目の開始時（バトル作成直後）にもうアクターになっている
     const state = battleWith([ORUS, '1-A006-USR'], '1-A038-USR', [DADA, OWU], VANILLA_ATK);
     expect(state.players[0].actorIndex).toBe(1);
+  });
+});
+
+describe('サイズ・雷雲召喚・デッキから使用', () => {
+  it('大型キャラは2枠: ジエンド＋普通2枚は不合格、＋普通1枚は合格', () => {
+    const base = sampleArchetypeDecks()[0].deck;
+    const fourSlots = { ...base, characterIds: ['1-A002-LSR', ORUS, STOMY] }; // 2+1+1=4枠
+    expect(deckProblems(fourSlots).join('')).toContain('大型は2枠');
+    const threeSlots = { ...base, characterIds: ['1-A002-LSR', ORUS] }; // 2+1=3枠
+    expect(deckProblems(threeSlots).filter((p) => p.includes('枠'))).toEqual([]);
+  });
+
+  it('雷雲召喚: ダメージを与えたキャラの数だけ敵APが減る', () => {
+    const skill = cardById('1-A067-R') as SkillCard;
+    const ch = charForSkill('1-A067-R');
+    const state = battleWith([ch.id], '1-A067-R', [DADA, OWU], VANILLA_ATK);
+    giveAp(state, 0, skill.costAp);
+    const apBefore = state.players[1].ap.length; // 後攻補償2枚
+
+    applyAction(state, { type: 'playSkill', handIndex: 0 });
+    // 敵2体にダメージ → AP-2
+    expect(state.players[1].ap).toHaveLength(Math.max(0, apBefore - 2));
+  });
+
+  it('炎霊召喚: デッキから炎スキルを本当に使用する（効果込み）', () => {
+    const skill = cardById('1-A054-R') as SkillCard;
+    const ch = charForSkill('1-A054-R');
+    // デッキを業火斬（斬炎 cost3 base8 バニラ攻撃）で満たしておく
+    const decks: [DeckList, DeckList] = [
+      { characterIds: [ch.id], cardIds: ['1-A054-R', ...Array(19).fill('1-A068-R')] },
+      { characterIds: [ORUS, STOMY], cardIds: Array(20).fill(VANILLA_ATK) },
+    ];
+    const state = createBattle(decks, 7, { firstPlayer: 0, validate: false });
+    giveAp(state, 0, skill.costAp);
+    const idx = state.players[0].hand.indexOf('1-A054-R');
+    if (idx === -1) return; // シャッフルで手札に来なければスキップ（シード7では来る想定）
+
+    const kagou = cardById('1-A068-R') as SkillCard;
+    applyAction(state, { type: 'playSkill', handIndex: idx });
+    // 業火斬がコストなしで発動し、敵アクターに基本値ダメージ
+    expect(state.players[1].characters[0].damage).toBe(kagou.baseValue);
+    expect(state.players[0].trash).toContain('1-A068-R');
   });
 });
 

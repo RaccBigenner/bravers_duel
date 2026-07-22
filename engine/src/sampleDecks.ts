@@ -22,7 +22,7 @@ export interface NamedDeck {
 interface ArchetypeSpec {
   name: string;
   concept: string;
-  characterIds: [string, string, string];
+  characterIds: string[]; // 枠3つぶん（大型は2枠）
   preferAttrs: Attribute[];
   /** 種類ごとの目安枚数（キャラカード6枚を除いた34枚の内訳） */
   quota?: { attack: number; guard: number; support: number; heal: number };
@@ -56,7 +56,7 @@ const SPECS: ArchetypeSpec[] = [
   {
     name: '竜の猛攻',
     concept: 'ジエンドの竜3属性で大技を最速で撃つ',
-    characterIds: ['1-A002-LSR', '1-A020-R', '1-A014-SR'],
+    characterIds: ['1-A002-LSR', '1-A020-R'], // ジエンドは大型で2枠
     preferAttrs: ['竜', '闇', '打'],
     quota: { attack: 17, guard: 4, support: 8, heal: 2 },
   },
@@ -70,7 +70,7 @@ const SPECS: ArchetypeSpec[] = [
   {
     name: '獣と風',
     concept: 'アイのドロー強化と獣・飛のすばやい攻めで手数を出す',
-    characterIds: ['1-A022-R', '1-A006-USR', '1-A001-LSR'],
+    characterIds: ['1-A001-LSR', '1-A022-R'], // アイは大型で2枠
     preferAttrs: ['獣', '風', '飛', '射'],
   },
   {

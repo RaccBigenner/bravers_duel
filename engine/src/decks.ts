@@ -24,6 +24,22 @@ export function deckProblems(deck: DeckList): string[] {
   if (deck.characterIds.length < 1 || deck.characterIds.length > MAX_CHARACTERS) {
     problems.push(`キャラクターは1〜${MAX_CHARACTERS}枚（今: ${deck.characterIds.length}枚）`);
   }
+
+  // 大型（legendaryLarge）はキャラクター枠を2つ使う
+  let slots = 0;
+  for (const id of deck.characterIds) {
+    try {
+      const card = cardById(id);
+      if (card.type === 'character') {
+        slots += card.size === 'legendaryLarge' ? 2 : 1;
+      }
+    } catch {
+      /* 存在しないカードは下で報告される */
+    }
+  }
+  if (slots > MAX_CHARACTERS) {
+    problems.push(`キャラクター枠は${MAX_CHARACTERS}まで（大型は2枠）。今: ${slots}枠`);
+  }
   if (deck.cardIds.length !== DECK_SIZE) {
     problems.push(`デッキは${DECK_SIZE}枚（今: ${deck.cardIds.length}枚）`);
   }
@@ -68,12 +84,16 @@ export function sampleDeck(seed: number): DeckList {
   const characters = ALL_CARDS.filter((c): c is CharacterCard => c.type === 'character');
   const skills = ALL_CARDS.filter((c): c is SkillCard => c.type === 'skill');
 
-  // 1. キャラクター3枚（重複なし）
+  // 1. キャラクターを枠3つぶん選ぶ（大型は2枠）
   const chosen: CharacterCard[] = [];
   const pool = shuffled(characters, rng);
+  let slots = 0;
   for (const c of pool) {
-    if (chosen.length >= MAX_CHARACTERS) break;
+    const need = c.size === 'legendaryLarge' ? 2 : 1;
+    if (slots + need > MAX_CHARACTERS) continue;
     chosen.push(c);
+    slots += need;
+    if (slots >= MAX_CHARACTERS) break;
   }
 
   // 2. 選んだキャラの誰かが条件を満たせるスキルを候補にする

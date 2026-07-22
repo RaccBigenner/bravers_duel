@@ -468,7 +468,7 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
         const card = cardById(id);
         return (
           card.type === 'skill' &&
-          card.valueType === 'attack' &&
+          card.valueType !== 'guard' && // guardは割り込み専用なのでデッキからは使えない
           card.costAp <= maxCost &&
           card.conditionAttribute.includes(attr)
         );
@@ -480,8 +480,14 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
       const [id] = p.deck.splice(idx, 1);
       const card = cardById(id) as SkillCard;
       p.trash.push(id);
-      pushLog(state, `デッキから${card.name}を使用（簡易版: 基本値ダメージ）`);
-      applyDamage(state, enemyIdx, enemy().actorIndex, card.baseValue);
+      pushLog(state, `デッキから${card.name}をコストなしで使用`);
+      // スキルを本当に「使用」する（効果込み）。奇襲扱いでguard割り込みは不可
+      if (card.valueType === 'attack') {
+        beginAttack(state, card, ownerChar, undefined, true);
+      } else {
+        resolveNonAttack(state, card, ownerChar);
+        rotateActorAfterSkill(state, owner);
+      }
     },
     log: (message) => pushLog(state, message),
   };
@@ -1021,7 +1027,13 @@ function cardAtHand(p: PlayerBattle, handIndex: number) {
 
 // ---------------------------------------------------------------- 攻撃の宣言と解決
 
-function beginAttack(state: BattleState, card: SkillCard, usingChar: number, targetIndex?: number): void {
+function beginAttack(
+  state: BattleState,
+  card: SkillCard,
+  usingChar: number,
+  targetIndex?: number,
+  forceNoGuard = false,
+): void {
   const defenderIdx = (1 - state.active) as PlayerIndex;
   const defender = state.players[defenderIdx];
   const eff = skillEffectOf(card.id);
@@ -1050,7 +1062,7 @@ function beginAttack(state: BattleState, card: SkillCard, usingChar: number, tar
     skillName: card.name,
     value: card.baseValue,
     targets,
-    noGuard: eff?.noGuard ?? false,
+    noGuard: forceNoGuard || (eff?.noGuard ?? false),
     attackerChar: usingChar,
   };
 
@@ -1100,17 +1112,20 @@ function resolvePendingAttack(state: BattleState): void {
       : 0;
 
   let dealtTotal = 0;
+  let damagedCount = 0;
   for (const ti of pending.targets) {
-    if (state.phase === 'finished') break;
+    if (battleOver(state)) break;
     if (!isCharAlive(state, defenderIdx, ti)) continue;
-    dealtTotal += applyDamage(state, defenderIdx, ti, Math.max(0, pending.value - reduction));
+    const dealt = applyDamage(state, defenderIdx, ti, Math.max(0, pending.value - reduction));
+    dealtTotal += dealt;
+    if (dealt > 0) damagedCount++;
   }
 
-  if (state.phase !== 'finished') {
+  if (!battleOver(state)) {
     const eff = skillEffectOf(pending.skillId);
     if (eff?.onAttackResolved) {
       runEffectSafely(state, `${pending.skillName}の攻撃後効果`, () =>
-        eff.onAttackResolved!(makeApi(state, attackerIdx, pending.attackerChar), dealtTotal),
+        eff.onAttackResolved!(makeApi(state, attackerIdx, pending.attackerChar), dealtTotal, damagedCount),
       );
     }
   }
