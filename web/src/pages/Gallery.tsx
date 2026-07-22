@@ -1,7 +1,7 @@
 import { ALL_CARDS, ATTRIBUTES, RARITIES, type Card } from '@bravers/engine';
 import { useMemo, useState } from 'react';
-import { CardFrame } from './CardFrame';
-import { IMG } from './cardAssets';
+import { CardFrame } from '../CardFrame';
+import { IMG } from '../cardAssets';
 
 const TYPES = [
   { key: 'character', label: 'キャラクター' },
@@ -38,7 +38,7 @@ function sortValue(card: Card, key: SortKey): number | string {
   }
 }
 
-export function App() {
+export function Gallery({ onBack }: { onBack?: () => void }) {
   const [types, setTypes] = useState<Set<string>>(new Set());
   const [rarities, setRarities] = useState<Set<string>>(new Set());
   const [attrs, setAttrs] = useState<Set<string>>(new Set());
@@ -75,7 +75,14 @@ export function App() {
   return (
     <div className="page">
       <header className="toolbar">
-        <h1>BRAVER'S DUEL カード一覧</h1>
+        <h1>
+          {onBack && (
+            <button className="chip" onClick={onBack} style={{ marginRight: 10 }}>
+              ← ホーム
+            </button>
+          )}
+          BRAVER'S DUEL カード一覧
+        </h1>
 
         <div className="filter-row">
           <span className="filter-label">種類</span>
