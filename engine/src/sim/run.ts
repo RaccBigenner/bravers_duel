@@ -7,7 +7,7 @@
  *   npm run sim -- --mode chaos       # ランダム生成デッキ + randomAI（耐久テスト）
  */
 import { randomAi, simpleAi, type BattleAi } from '../ai';
-import { sampleDeck } from '../decks';
+import { DEFAULT_DECK_RULES, sampleDeck, type DeckRules } from '../decks';
 import { runBattle } from '../runner';
 import { sampleArchetypeDecks } from '../sampleDecks';
 
@@ -18,13 +18,19 @@ function argValue(name: string): string | undefined {
 
 const mode = argValue('mode') ?? 'archetype';
 const baseSeed = Number(argValue('seed') ?? 1);
+const deckRules: DeckRules = {
+  deckSize: Number(argValue('deckSize') ?? DEFAULT_DECK_RULES.deckSize),
+  maxCopies: Number(argValue('maxCopies') ?? DEFAULT_DECK_RULES.maxCopies),
+};
 
 const pct = (n: number, total: number) => (total === 0 ? '-' : `${((100 * n) / total).toFixed(1)}%`);
 
 if (mode === 'archetype') {
   const per = Number(argValue('per') ?? 50);
-  const decks = sampleArchetypeDecks();
-  console.log(`アーキタイプ総当たり戦: ${decks.length}デッキ × 各組み合わせ${per}戦`);
+  const decks = sampleArchetypeDecks(deckRules);
+  console.log(
+    `アーキタイプ総当たり戦: ${decks.length}デッキ × 各組み合わせ${per}戦（デッキ${deckRules.deckSize}枚・同名${deckRules.maxCopies}枚まで）`,
+  );
 
   interface DeckStats {
     games: number;
@@ -56,6 +62,7 @@ if (mode === 'archetype') {
           [decks[i].deck, decks[j].deck],
           [simpleAi({ keepHand: 2 }), simpleAi({ keepHand: 2 })],
           seed,
+          { deckRules },
         );
         totalGames++;
         totalTurns += result.turns;

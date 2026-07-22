@@ -11,7 +11,7 @@ import { ALL_CARDS, cardById } from '../src/cards';
 import { containsAll, deckProblems, type DeckList } from '../src/decks';
 import { implementedEffectCount } from '../src/effects';
 import { sampleArchetypeDecks } from '../src/sampleDecks';
-import type { CharacterCard, SkillCard } from '../src/types';
+import { DECK_SIZE, type CharacterCard, type SkillCard } from '../src/types';
 
 const VANILLA_ATK = '1-A129-C'; // ファストスタブ cost1 base4 [突]
 const ORUS = '1-A005-USR'; // バニラキャラ 斬突打 HP13
@@ -308,7 +308,7 @@ describe('効果レジストリとサンプルデッキ', () => {
     const decks = sampleArchetypeDecks();
     expect(decks).toHaveLength(8);
     for (const d of decks) {
-      expect(d.deck.cardIds).toHaveLength(40);
+      expect(d.deck.cardIds).toHaveLength(DECK_SIZE);
     }
   });
 });

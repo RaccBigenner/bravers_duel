@@ -10,7 +10,7 @@ import {
   type PlayerIndex,
 } from './battle';
 import type { BattleAi } from './ai';
-import type { DeckList } from './decks';
+import type { DeckList, DeckRules } from './decks';
 
 export interface BattleResult {
   winner: PlayerIndex | null;
@@ -23,6 +23,7 @@ export interface BattleResult {
 export interface RunBattleOptions {
   maxTurns?: number; // これを超えたら引き分け扱い
   firstPlayer?: PlayerIndex;
+  deckRules?: DeckRules;
 }
 
 export function runBattle(
@@ -32,7 +33,7 @@ export function runBattle(
   options: RunBattleOptions = {},
 ): BattleResult {
   const maxTurns = options.maxTurns ?? 200;
-  const state = createBattle(decks, seed, { firstPlayer: options.firstPlayer });
+  const state = createBattle(decks, seed, { firstPlayer: options.firstPlayer, deckRules: options.deckRules });
 
   let safety = 0;
   while (state.phase !== 'finished') {

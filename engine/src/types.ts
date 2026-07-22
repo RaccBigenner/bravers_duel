@@ -59,9 +59,9 @@ export interface FieldCard extends CardBase {
 export type Card = CharacterCard | SkillCard | EquipmentCard | FieldCard;
 
 /** デッキ構築ルール（docs/GAME_RULES.md 4章） */
-export const DECK_SIZE = 40;
+export const DECK_SIZE = 50; // 2026-07-22 社長決定（40→50。山札切れ偏重の調整）
 export const MAX_CHARACTERS = 3;
-export const MAX_COPIES_PER_CARD = 3;
+export const MAX_COPIES_PER_CARD = 4; // 2026-07-22 社長決定（3→4）
 
 /** バトルルールの定数（docs/GAME_RULES.md 5章） */
 export const HAND_REFILL_TO = 5;

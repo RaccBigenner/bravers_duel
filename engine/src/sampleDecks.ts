@@ -4,7 +4,7 @@
  * 構成は決定的（ランダム無し）なので、テスト・シミュレーションの再現ができる。
  */
 import { ALL_CARDS, cardById } from './cards';
-import { containsAll, deckProblems, type DeckList } from './decks';
+import { containsAll, deckProblems, DEFAULT_DECK_RULES, type DeckList, type DeckRules } from './decks';
 import {
   DECK_SIZE,
   MAX_COPIES_PER_CARD,
@@ -28,8 +28,8 @@ interface ArchetypeSpec {
   quota?: { attack: number; guard: number; support: number; heal: number };
 }
 
-// キャラカード6枚 + 装備2枚 + フィールド1枚 + スキル31枚 = 40枚
-const DEFAULT_QUOTA = { attack: 16, guard: 6, support: 6, heal: 3 };
+// キャラカード6枚 + 装備2枚 + フィールド1枚 + スキル41枚 = 50枚
+const DEFAULT_QUOTA = { attack: 23, guard: 8, support: 7, heal: 3 };
 const EQUIPMENT_COUNT = 2;
 const FIELD_COUNT = 1;
 
@@ -51,21 +51,21 @@ const SPECS: ArchetypeSpec[] = [
     concept: 'セレーナの氷付与とロック・ガードで守り勝つ',
     characterIds: ['1-A008-SSR', '1-A018-R', '1-A013-SR'],
     preferAttrs: ['氷', '守'],
-    quota: { attack: 11, guard: 10, support: 7, heal: 3 },
+    quota: { attack: 16, guard: 13, support: 9, heal: 3 },
   },
   {
     name: '竜の猛攻',
     concept: 'ジエンドの竜3属性で大技を最速で撃つ',
     characterIds: ['1-A002-LSR', '1-A020-R'], // ジエンドは大型で2枠
     preferAttrs: ['竜', '闇', '打'],
-    quota: { attack: 17, guard: 4, support: 8, heal: 2 },
+    quota: { attack: 24, guard: 5, support: 10, heal: 2 },
   },
   {
     name: '聖光の癒し',
     concept: 'ハスミールの聖3属性で回復しながら粘り勝つ',
     characterIds: ['1-A019-R', '1-A023-R', '1-A010-SR'],
     preferAttrs: ['聖', '木'],
-    quota: { attack: 12, guard: 6, support: 6, heal: 7 },
+    quota: { attack: 17, guard: 8, support: 8, heal: 8 },
   },
   {
     name: '獣と風',
@@ -84,11 +84,11 @@ const SPECS: ArchetypeSpec[] = [
     concept: 'ビコウの控え無敵とドッソの高HPで受けつつ重い一撃',
     characterIds: ['1-A021-R', '1-A017-R', '1-A015-SR'],
     preferAttrs: ['雷', '土', '打', '守'],
-    quota: { attack: 13, guard: 8, support: 7, heal: 3 },
+    quota: { attack: 18, guard: 11, support: 9, heal: 3 },
   },
 ];
 
-function buildDeck(spec: ArchetypeSpec): DeckList {
+function buildDeck(spec: ArchetypeSpec, rules: DeckRules): DeckList {
   const chars = spec.characterIds.map((id) => cardById(id) as CharacterCard);
   const skills = ALL_CARDS.filter((c): c is SkillCard => c.type === 'skill');
   const quota = spec.quota ?? DEFAULT_QUOTA;
@@ -109,7 +109,7 @@ function buildDeck(spec: ArchetypeSpec): DeckList {
     let added = 0;
     for (let i = 0; i < copies; i++) {
       const n = counts.get(id) ?? 0;
-      if (n >= MAX_COPIES_PER_CARD || cardIds.length >= DECK_SIZE) break;
+      if (n >= rules.maxCopies || cardIds.length >= rules.deckSize) break;
       counts.set(id, n + 1);
       cardIds.push(id);
       added++;
@@ -152,15 +152,15 @@ function buildDeck(spec: ArchetypeSpec): DeckList {
     let taken = 0;
     for (const s of pool) {
       if (taken >= want) break;
-      taken += add(s.id, Math.min(3, want - taken));
+      taken += add(s.id, Math.min(rules.maxCopies, want - taken));
     }
   }
 
   // 3. 足りなければ使えるスキルから、それでも足りなければ全スキルから補充
   const fillFrom = (pool: SkillCard[]) => {
     for (const s of pool.sort((a, b) => score(b) - score(a))) {
-      if (cardIds.length >= DECK_SIZE) break;
-      add(s.id, 3);
+      if (cardIds.length >= rules.deckSize) break;
+      add(s.id, rules.maxCopies);
     }
   };
   fillFrom([...usable]);
@@ -171,16 +171,18 @@ function buildDeck(spec: ArchetypeSpec): DeckList {
 
 let cache: NamedDeck[] | null = null;
 
-/** アーキタイプ別サンプルデッキ（8種、すべてルール検証済み） */
-export function sampleArchetypeDecks(): NamedDeck[] {
-  if (cache) return cache;
-  cache = SPECS.map((spec) => {
-    const deck = buildDeck(spec);
-    const problems = deckProblems(deck);
+/** アーキタイプ別サンプルデッキ（8種、すべてルール検証済み）。rules指定で実験用構築もできる */
+export function sampleArchetypeDecks(rules: DeckRules = DEFAULT_DECK_RULES): NamedDeck[] {
+  const isDefault = rules.deckSize === DEFAULT_DECK_RULES.deckSize && rules.maxCopies === DEFAULT_DECK_RULES.maxCopies;
+  if (isDefault && cache) return cache;
+  const decks = SPECS.map((spec) => {
+    const deck = buildDeck(spec, rules);
+    const problems = deckProblems(deck, rules);
     if (problems.length > 0) {
       throw new Error(`サンプルデッキ「${spec.name}」が不正: ${problems.join(' / ')}`);
     }
     return { name: spec.name, concept: spec.concept, deck };
   });
-  return cache;
+  if (isDefault) cache = decks;
+  return decks;
 }

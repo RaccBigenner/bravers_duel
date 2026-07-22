@@ -51,11 +51,11 @@ describe('デッキのルール', () => {
     }
   });
 
-  it('枚数違い・同名4枚は不合格', () => {
+  it('枚数違い・同名5枚は不合格', () => {
     const deck = sampleDeck(1);
     expect(deckProblems({ ...deck, cardIds: deck.cardIds.slice(1) })).not.toEqual([]);
-    const fourCopies = [...deck.cardIds.slice(4), deck.cardIds[0], deck.cardIds[0], deck.cardIds[0], deck.cardIds[0]];
-    expect(deckProblems({ ...deck, cardIds: fourCopies }).join('')).toContain('3枚まで');
+    const fiveCopies = [...deck.cardIds.slice(5), ...Array(5).fill(deck.cardIds[0])];
+    expect(deckProblems({ ...deck, cardIds: fiveCopies }).join('')).toContain('4枚まで');
   });
 
   it('属性の多重集合チェック', () => {

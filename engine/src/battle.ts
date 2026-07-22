@@ -10,7 +10,7 @@
  * 未実装: 装備・フィールドカードのプレイ（ルール未決定）、選択が必要な一部の効果
  */
 import { cardById } from './cards';
-import { containsAll, deckProblems, type DeckList } from './decks';
+import { containsAll, deckProblems, DEFAULT_DECK_RULES, type DeckList, type DeckRules } from './decks';
 import {
   characterEffectOf,
   equipmentEffectOf,
@@ -570,6 +570,8 @@ function healCharacter(state: BattleState, player: PlayerIndex, charIndex: numbe
 export interface CreateBattleOptions {
   firstPlayer?: PlayerIndex;
   validate?: boolean;
+  /** 実験用のデッキ構築ルール（省略時は公式ルール） */
+  deckRules?: DeckRules;
 }
 
 export function createBattle(
@@ -581,7 +583,7 @@ export function createBattle(
 
   if (options.validate !== false) {
     decks.forEach((deck, i) => {
-      const problems = deckProblems(deck);
+      const problems = deckProblems(deck, options.deckRules ?? DEFAULT_DECK_RULES);
       if (problems.length > 0) {
         throw new Error(`プレイヤー${i + 1}のデッキが不正です: ${problems.join(' / ')}`);
       }

@@ -17,8 +17,19 @@ export interface DeckList {
   cardIds: string[];
 }
 
+/** デッキ構築ルール（実験用に変えられる。既定は公式ルール） */
+export interface DeckRules {
+  deckSize: number;
+  maxCopies: number;
+}
+
+export const DEFAULT_DECK_RULES: DeckRules = {
+  deckSize: DECK_SIZE,
+  maxCopies: MAX_COPIES_PER_CARD,
+};
+
 /** デッキがルールに合っているか調べて、問題の一覧を返す（空なら合格） */
-export function deckProblems(deck: DeckList): string[] {
+export function deckProblems(deck: DeckList, rules: DeckRules = DEFAULT_DECK_RULES): string[] {
   const problems: string[] = [];
 
   if (deck.characterIds.length < 1 || deck.characterIds.length > MAX_CHARACTERS) {
@@ -40,8 +51,8 @@ export function deckProblems(deck: DeckList): string[] {
   if (slots > MAX_CHARACTERS) {
     problems.push(`キャラクター枠は${MAX_CHARACTERS}まで（大型は2枠）。今: ${slots}枠`);
   }
-  if (deck.cardIds.length !== DECK_SIZE) {
-    problems.push(`デッキは${DECK_SIZE}枚（今: ${deck.cardIds.length}枚）`);
+  if (deck.cardIds.length !== rules.deckSize) {
+    problems.push(`デッキは${rules.deckSize}枚（今: ${deck.cardIds.length}枚）`);
   }
 
   for (const id of [...deck.characterIds, ...deck.cardIds]) {
@@ -67,8 +78,8 @@ export function deckProblems(deck: DeckList): string[] {
     counts.set(id, (counts.get(id) ?? 0) + 1);
   }
   for (const [id, n] of counts) {
-    if (n > MAX_COPIES_PER_CARD) {
-      problems.push(`同名カードは${MAX_COPIES_PER_CARD}枚まで: ${id} が${n}枚`);
+    if (n > rules.maxCopies) {
+      problems.push(`同名カードは${rules.maxCopies}枚まで: ${id} が${n}枚`);
     }
   }
 
