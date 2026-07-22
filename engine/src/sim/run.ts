@@ -26,8 +26,22 @@ if (mode === 'archetype') {
   const decks = sampleArchetypeDecks();
   console.log(`アーキタイプ総当たり戦: ${decks.length}デッキ × 各組み合わせ${per}戦`);
 
-  const wins = new Map<string, number>();
-  const games = new Map<string, number>();
+  interface DeckStats {
+    games: number;
+    winWipeout: number; // 相手を全滅させて勝ち
+    winDeckout: number; // 相手が山札切れで勝ち
+    loseWipeout: number; // 全滅して負け
+    loseDeckout: number; // 自分が山札切れで負け
+  }
+  const stats = new Map<string, DeckStats>();
+  const statOf = (name: string): DeckStats => {
+    let s = stats.get(name);
+    if (!s) {
+      s = { games: 0, winWipeout: 0, winDeckout: 0, loseWipeout: 0, loseDeckout: 0 };
+      stats.set(name, s);
+    }
+    return s;
+  };
   const reasons = new Map<string, number>();
   let totalTurns = 0;
   let totalGames = 0;
@@ -46,25 +60,35 @@ if (mode === 'archetype') {
         totalGames++;
         totalTurns += result.turns;
         reasons.set(result.reason, (reasons.get(result.reason) ?? 0) + 1);
-        games.set(decks[i].name, (games.get(decks[i].name) ?? 0) + 1);
-        games.set(decks[j].name, (games.get(decks[j].name) ?? 0) + 1);
+        statOf(decks[i].name).games++;
+        statOf(decks[j].name).games++;
         if (result.winner !== null) {
           decided++;
           if (result.winner === result.firstPlayer) firstPlayerWins++;
           const winName = result.winner === 0 ? decks[i].name : decks[j].name;
-          wins.set(winName, (wins.get(winName) ?? 0) + 1);
+          const loseName = result.winner === 0 ? decks[j].name : decks[i].name;
+          if (result.reason === 'wipeout') {
+            statOf(winName).winWipeout++;
+            statOf(loseName).loseWipeout++;
+          } else {
+            statOf(winName).winDeckout++;
+            statOf(loseName).loseDeckout++;
+          }
         }
       }
     }
   }
 
   console.log('');
-  console.log('デッキ別勝率:');
+  console.log('デッキ別勝率（内訳: 全滅勝ち/山札切れ勝ち | 全滅負け/山札切れ負け）:');
   const ranked = decks
-    .map((d) => ({ name: d.name, concept: d.concept, w: wins.get(d.name) ?? 0, g: games.get(d.name) ?? 0 }))
-    .sort((a, b) => b.w / b.g - a.w / a.g);
-  for (const r of ranked) {
-    console.log(`  ${pct(r.w, r.g).padStart(6)}  ${r.name}（${r.concept}）`);
+    .map((d) => ({ name: d.name, s: statOf(d.name) }))
+    .sort((a, b) => (b.s.winWipeout + b.s.winDeckout) / b.s.games - (a.s.winWipeout + a.s.winDeckout) / a.s.games);
+  for (const { name, s } of ranked) {
+    const w = s.winWipeout + s.winDeckout;
+    console.log(
+      `  ${pct(w, s.games).padStart(6)}  ${name.padEnd(8, '　')} 勝ち[全滅${s.winWipeout} 山切${s.winDeckout}] 負け[全滅${s.loseWipeout} 山切${s.loseDeckout}]`,
+    );
   }
   console.log('');
   console.log(`合計${totalGames}戦 / 平均ターン数: ${(totalTurns / totalGames).toFixed(1)} / 先攻勝率: ${pct(firstPlayerWins, decided)}`);
