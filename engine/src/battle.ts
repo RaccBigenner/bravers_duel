@@ -2,13 +2,16 @@
  * バトルエンジン本体。
  * ルールの正しい情報源は docs/GAME_RULES.md（v0.4）。
  *
- * まだ実装していないこと（ルール未決定 or 今後の作業）:
- * - カードの効果文（effectText）の個別効果
- * - 装備カード・フィールドカードのプレイ（ルール未決定のためプレイ不可。APチャージには使える）
- * - support スキルの共通効果（今は場に影響しない）
+ * カード効果は effects/ の静的レジストリから引く。
+ * - 効果はバトル状態に保持しない（カードが増えてもバトルのメモリは増えない）
+ * - 効果の実行はスナップショット保護付き（エラー時は巻き戻してスキップ）
+ * - ログは上限つき（長期戦でもメモリが伸び続けない）
+ *
+ * 未実装: 装備・フィールドカードのプレイ（ルール未決定）、選択が必要な一部の効果
  */
 import { cardById } from './cards';
 import { containsAll, deckProblems, type DeckList } from './decks';
+import { characterEffectOf, hasEffectImplementation, skillEffectOf, type EffectApi } from './effects';
 import { mulberry32, shuffled } from './rng';
 import {
   CHARACTER_CARD_HEAL,
@@ -21,106 +24,492 @@ import {
 
 export type PlayerIndex = 0 | 1;
 
+const MAX_LOG_ENTRIES = 300;
+const MAX_EFFECT_DEPTH = 8;
+const MAX_ADDED_ATTRIBUTES = 20;
+
 export interface CharacterInstance {
   cardId: string;
   name: string;
-  maxHp: number;
-  attributes: Attribute[]; // カード本来の属性
-  addedAttributes: Attribute[]; // 効果などで追加された属性
-  damage: number; // 累積ダメージ（HP以上で戦闘不能）
+  maxHp: number; // カード本来のHP（効果による増減は maxHpOf で計算）
+  attributes: Attribute[];
+  addedAttributes: Attribute[];
+  damage: number;
 }
 
 export interface PlayerBattle {
   deck: string[]; // 先頭が山札の一番上
   hand: string[];
-  trash: string[];
+  trash: string[]; // 末尾が一番上（「下から」= 先頭から）
   ap: string[];
-  characters: CharacterInstance[]; // 並び順 = アクターの交代順
+  characters: CharacterInstance[];
   actorIndex: number;
+  skillsUsedThisTurn: number;
+  nextSkillCostDelta: number; // スイッチ等（マイナス値）。次のスキル使用で消費
+  nextDrawDelta: number; // スノウドロップ等（マイナス値）。次のドローで消費
+  actorLockUntilTurn: number; // state.turn がこの値以下の間、アクター変更不可
+  incomingDamageReduction: { value: number; untilTurn: number } | null;
 }
 
-/**
- * guard = 攻撃への割り込み待ちフェーズ（行動するのは攻撃されている側）
- */
 export type Phase = 'play' | 'guard' | 'charge' | 'finished';
 export type EndReason = 'wipeout' | 'deckout' | 'turnLimit';
 
-/** 解決待ちの攻撃（guard フェーズの間だけ存在する） */
 export interface PendingAttack {
+  skillId: string;
   skillName: string;
-  value: number; // ガードで軽減された後の今のダメージ値
+  value: number;
+  targets: number[]; // 防御側キャラの番号
+  noGuard: boolean;
+  attackerChar: number; // 使用キャラの番号
 }
 
 export interface BattleState {
-  turn: number; // 1始まりの通しターン数
-  active: PlayerIndex; // ターンを進めているプレイヤー
+  turn: number;
+  active: PlayerIndex;
   phase: Phase;
   players: [PlayerBattle, PlayerBattle];
   firstPlayer: PlayerIndex;
   pendingAttack: PendingAttack | null;
   winner: PlayerIndex | null;
   endReason: EndReason | null;
+  rngState: number;
+  effectDepth: number;
   log: string[];
 }
 
 export type BattleAction =
-  | { type: 'playSkill'; handIndex: number; healTargetIndex?: number }
+  | { type: 'playSkill'; handIndex: number; healTargetIndex?: number; targetIndex?: number }
   | { type: 'playCharacter'; handIndex: number }
   | { type: 'endPlay' }
-  | { type: 'playGuard'; handIndex: number } // 攻撃への割り込み（攻撃されている側）
-  | { type: 'pass' } // 割り込みしないで攻撃を受ける
+  | { type: 'playGuard'; handIndex: number }
+  | { type: 'pass' }
   | { type: 'charge'; handIndex: number }
   | { type: 'endTurn' };
 
-// ---------------------------------------------------------------- ヘルパー
+// ---------------------------------------------------------------- 基本ヘルパー
 
-export function isAlive(c: CharacterInstance): boolean {
-  return c.damage < c.maxHp;
+function pushLog(state: BattleState, message: string): void {
+  state.log.push(message);
+  if (state.log.length > MAX_LOG_ENTRIES) {
+    state.log.splice(0, state.log.length - MAX_LOG_ENTRIES);
+  }
 }
 
-export function aliveCount(p: PlayerBattle): number {
-  return p.characters.filter(isAlive).length;
+/** 状態内の乱数を1歩進める（再現可能・直列化可能） */
+function stepRng(state: BattleState): number {
+  state.rngState = (state.rngState + 0x6d2b79f5) >>> 0;
+  let t = state.rngState;
+  t = Math.imul(t ^ (t >>> 15), t | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 }
 
-/** 今行動を選ぶべきプレイヤー（guardフェーズだけは攻撃されている側） */
-export function actingPlayer(state: BattleState): PlayerIndex {
-  return state.phase === 'guard' ? ((1 - state.active) as PlayerIndex) : state.active;
+/** 効果込みの最大HP */
+export function maxHpOf(state: BattleState, player: PlayerIndex, charIndex: number): number {
+  const c = state.players[player].characters[charIndex];
+  const eff = characterEffectOf(c.cardId);
+  let hp = c.maxHp;
+  if (eff?.maxHpBonus) {
+    try {
+      hp += eff.maxHpBonus(makeApi(state, player, charIndex));
+    } catch {
+      /* 効果エラーは無視 */
+    }
+  }
+  return hp;
 }
 
-/** from の次から順番に見て、最初の生きているキャラの番号を返す（1→2→3→1） */
-function nextAliveIndex(p: PlayerBattle, from: number): number {
-  for (let step = 1; step <= p.characters.length; step++) {
+export function isCharAlive(state: BattleState, player: PlayerIndex, charIndex: number): boolean {
+  const c = state.players[player].characters[charIndex];
+  return c.damage < maxHpOf(state, player, charIndex);
+}
+
+export function aliveCount(state: BattleState, player: PlayerIndex): number {
+  return state.players[player].characters.filter((_, i) => isCharAlive(state, player, i)).length;
+}
+
+/** 効果込みの属性一覧（追加属性＋セレーナ等の味方付与） */
+export function effectiveAttributes(
+  state: BattleState,
+  player: PlayerIndex,
+  charIndex: number,
+): Attribute[] {
+  const p = state.players[player];
+  const c = p.characters[charIndex];
+  const attrs = [...c.attributes, ...c.addedAttributes];
+  p.characters.forEach((ally, i) => {
+    if (!isCharAlive(state, player, i)) return;
+    const grant = characterEffectOf(ally.cardId)?.grantAllyAttribute;
+    if (grant) attrs.push(grant);
+  });
+  return attrs;
+}
+
+function nextAliveIndex(state: BattleState, player: PlayerIndex, from: number, skip = 0): number {
+  const p = state.players[player];
+  let found = 0;
+  for (let step = 1; step <= p.characters.length * 2; step++) {
     const i = (from + step) % p.characters.length;
-    if (isAlive(p.characters[i])) return i;
+    if (isCharAlive(state, player, i)) {
+      if (found >= skip) return i;
+      found++;
+    }
   }
   return from;
 }
 
-function actorOf(p: PlayerBattle): CharacterInstance {
-  return p.characters[p.actorIndex];
+export function actingPlayer(state: BattleState): PlayerIndex {
+  return state.phase === 'guard' ? ((1 - state.active) as PlayerIndex) : state.active;
 }
 
-/** アクターの属性（本来の属性＋追加された属性） */
-function actorAttributes(p: PlayerBattle): Attribute[] {
-  const actor = actorOf(p);
-  return [...actor.attributes, ...actor.addedAttributes];
+function actorLocked(state: BattleState, player: PlayerIndex): boolean {
+  return state.turn <= state.players[player].actorLockUntilTurn;
+}
+
+/** バトルが終了したか（効果処理の途中で決着した場合の検出用。TSの型絞り込みを避けるため関数にしている） */
+function battleOver(state: BattleState): boolean {
+  return state.phase === 'finished';
 }
 
 function finish(state: BattleState, winner: PlayerIndex | null, reason: EndReason): void {
   state.phase = 'finished';
   state.winner = winner;
   state.endReason = reason;
-  state.log.push(
-    winner === null ? `決着つかず（${reason}）` : `プレイヤー${winner + 1}の勝ち（${reason}）`,
-  );
+  state.pendingAttack = null;
+  pushLog(state, winner === null ? `決着つかず（${reason}）` : `プレイヤー${winner + 1}の勝ち（${reason}）`);
+}
+
+// ---------------------------------------------------------------- 効果の安全実行
+
+/**
+ * 効果をスナップショット保護つきで実行する。
+ * 効果が例外を投げたら、状態を実行前に巻き戻してログを残し、バトルを続行する。
+ */
+function runEffectSafely(state: BattleState, label: string, fn: () => void): void {
+  if (state.phase === 'finished') return;
+  if (state.effectDepth >= MAX_EFFECT_DEPTH) {
+    pushLog(state, `効果の連鎖が深すぎるためスキップ: ${label}`);
+    return;
+  }
+  const backup = structuredClone({
+    turn: state.turn,
+    active: state.active,
+    phase: state.phase,
+    players: state.players,
+    pendingAttack: state.pendingAttack,
+    winner: state.winner,
+    endReason: state.endReason,
+    rngState: state.rngState,
+  });
+  state.effectDepth++;
+  try {
+    fn();
+  } catch (e) {
+    Object.assign(state, backup);
+    pushLog(state, `効果でエラーが起きたためスキップ: ${label}（${e instanceof Error ? e.message : e}）`);
+  } finally {
+    state.effectDepth--;
+  }
+}
+
+// ---------------------------------------------------------------- EffectApi 実装
+
+function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): EffectApi {
+  const me = () => state.players[owner];
+  const enemyIdx = (1 - owner) as PlayerIndex;
+  const enemy = () => state.players[enemyIdx];
+  const clampN = (n: number) => Math.max(0, Math.floor(n));
+  const firstTarget = () => {
+    const t = state.pendingAttack?.targets[0];
+    return t === undefined ? null : t;
+  };
+  // 攻撃効果の「対象」は防御側（= pendingAttack がある時の active の相手）
+  const defenderIdx = () => (1 - state.active) as PlayerIndex;
+
+  const api: EffectApi = {
+    turn: () => state.turn,
+    myApCount: () => me().ap.length,
+    myTrashCount: () => me().trash.length,
+    myAttrCount: (attr) =>
+      effectiveAttributes(state, owner, ownerChar).filter((a) => a === attr).length,
+    targetAttrCount: (attr) => {
+      const t = firstTarget();
+      if (t === null) return 0;
+      return effectiveAttributes(state, defenderIdx(), t).filter((a) => a === attr).length;
+    },
+    targetHp: () => {
+      const t = firstTarget();
+      if (t === null) return 0;
+      const c = state.players[defenderIdx()].characters[t];
+      return Math.max(0, maxHpOf(state, defenderIdx(), t) - c.damage);
+    },
+    targetMaxHp: () => {
+      const t = firstTarget();
+      return t === null ? 0 : maxHpOf(state, defenderIdx(), t);
+    },
+    myDamage: () => me().characters[ownerChar].damage,
+    myKoCount: () => me().characters.filter((_, i) => !isCharAlive(state, owner, i)).length,
+    skillsUsedThisTurn: () => me().skillsUsedThisTurn,
+
+    addDamage: (n) => {
+      if (state.pendingAttack) state.pendingAttack.value += clampN(n);
+    },
+    setDamage: (n) => {
+      if (state.pendingAttack) state.pendingAttack.value = clampN(n);
+    },
+    addGuardValue: (n) => {
+      if (state.pendingAttack) state.pendingAttack.value = Math.max(0, state.pendingAttack.value - clampN(n));
+    },
+
+    chargeFromDeck: (who, n) => {
+      const p = who === 'me' ? me() : enemy();
+      const moved = p.deck.splice(0, clampN(n));
+      p.ap.push(...moved);
+      if (moved.length > 0) pushLog(state, `デッキから${moved.length}枚チャージ（AP: ${p.ap.length}）`);
+    },
+    chargeAllHand: () => {
+      const p = me();
+      p.ap.push(...p.hand.splice(0));
+    },
+    chargeFromTrashBottom: (n) => {
+      const p = me();
+      const moved = p.trash.splice(0, clampN(n));
+      p.ap.push(...moved);
+    },
+    drawCards: (who, n) => {
+      const p = who === 'me' ? me() : enemy();
+      p.hand.push(...p.deck.splice(0, clampN(n)));
+    },
+    discardHandAll: () => {
+      const p = me();
+      p.trash.push(...p.hand.splice(0));
+    },
+    millDeck: (who, n) => {
+      const p = who === 'me' ? me() : enemy();
+      const moved = p.deck.splice(0, clampN(n));
+      p.trash.push(...moved);
+      if (moved.length > 0) pushLog(state, `デッキから${moved.length}枚トラッシュ`);
+    },
+    discardEnemyAp: (n) => {
+      const p = enemy();
+      p.trash.push(...p.ap.splice(0, clampN(n)));
+    },
+    damageEnemyActor: (n) => {
+      applyDamage(state, enemyIdx, enemy().actorIndex, clampN(n));
+    },
+    damageAllEnemies: (n) => {
+      const targets = enemy().characters.map((_, i) => i);
+      for (const i of targets) {
+        if (state.phase === 'finished') return;
+        if (isCharAlive(state, enemyIdx, i)) applyDamage(state, enemyIdx, i, clampN(n));
+      }
+    },
+    damageTarget: (n) => {
+      const t = firstTarget();
+      if (t !== null) applyDamage(state, defenderIdx(), t, clampN(n));
+    },
+    healSelf: (n) => healCharacter(state, owner, ownerChar, clampN(n)),
+    healMyActor: (n) => healCharacter(state, owner, me().actorIndex, clampN(n)),
+    healAllAllies: (n) => {
+      me().characters.forEach((_, i) => {
+        if (isCharAlive(state, owner, i)) healCharacter(state, owner, i, clampN(n));
+      });
+    },
+    reviveAlly: (hp) => {
+      const p = me();
+      let best = -1;
+      p.characters.forEach((c, i) => {
+        if (!isCharAlive(state, owner, i)) {
+          if (best === -1 || c.maxHp > p.characters[best].maxHp) best = i;
+        }
+      });
+      if (best === -1) return;
+      const c = p.characters[best];
+      c.damage = Math.max(0, maxHpOf(state, owner, best) - Math.max(1, hp));
+      pushLog(state, `${c.name}が復活（HP${Math.max(1, hp)}）`);
+    },
+    addAttributeToSelf: (attr, n = 1) => {
+      const c = me().characters[ownerChar];
+      for (let i = 0; i < n && c.addedAttributes.length < MAX_ADDED_ATTRIBUTES; i++) {
+        c.addedAttributes.push(attr);
+      }
+      pushLog(state, `${c.name}に${attr}属性を追加`);
+    },
+    addAttributeToAllAllies: (attr) => {
+      me().characters.forEach((c, i) => {
+        if (isCharAlive(state, owner, i) && c.addedAttributes.length < MAX_ADDED_ATTRIBUTES) {
+          c.addedAttributes.push(attr);
+        }
+      });
+    },
+    returnTrashBottomToDeck: (n) => {
+      const p = me();
+      const moved = p.trash.splice(0, clampN(n));
+      p.deck.push(...moved); // デッキの下に戻す
+    },
+    lockEnemyActor: () => {
+      enemy().actorLockUntilTurn = state.turn + 1;
+      pushLog(state, `相手のアクターをロック（ターン${state.turn + 1}終了まで）`);
+    },
+    lockMyActor: () => {
+      me().actorLockUntilTurn = state.turn + 1;
+    },
+    unlockMyActor: () => {
+      me().actorLockUntilTurn = 0;
+    },
+    forceChangeEnemyActor: () => {
+      if (actorLocked(state, enemyIdx)) {
+        pushLog(state, 'アクターがロックされていて変更できない');
+        return;
+      }
+      const p = enemy();
+      p.actorIndex = nextAliveIndex(state, enemyIdx, p.actorIndex);
+      pushLog(state, `相手のアクターが${p.characters[p.actorIndex].name}に変更`);
+    },
+    changeMyActor: (skip = 0) => {
+      if (actorLocked(state, owner)) {
+        pushLog(state, 'アクターがロックされていて変更できない');
+        return;
+      }
+      const p = me();
+      p.actorIndex = nextAliveIndex(state, owner, p.actorIndex, skip);
+    },
+    becomeActor: () => {
+      if (isCharAlive(state, owner, ownerChar)) me().actorIndex = ownerChar;
+    },
+    reduceNextSkillCost: (n) => {
+      me().nextSkillCostDelta -= clampN(n);
+    },
+    reduceEnemyNextDraw: (n) => {
+      enemy().nextDrawDelta -= clampN(n);
+    },
+    reduceIncomingDamage: (n) => {
+      me().incomingDamageReduction = { value: clampN(n), untilTurn: state.turn + 1 };
+    },
+    searchDeckToHand: (filter) => {
+      const p = me();
+      const idx = p.deck.findIndex(filter);
+      if (idx === -1) return false;
+      const [card] = p.deck.splice(idx, 1);
+      p.hand.push(card);
+      // 見たのでシャッフル
+      for (let i = p.deck.length - 1; i > 0; i--) {
+        const j = Math.floor(stepRng(state) * (i + 1));
+        [p.deck[i], p.deck[j]] = [p.deck[j], p.deck[i]];
+      }
+      pushLog(state, `デッキから${cardById(card).name}を手札に加えた`);
+      return true;
+    },
+    consumeAllMyAp: () => {
+      const p = me();
+      const n = p.ap.length;
+      p.trash.push(...p.ap.splice(0));
+      return n;
+    },
+    damageSelf: (n) => {
+      applyDamage(state, owner, ownerChar, clampN(n));
+    },
+    castFromDeck: ({ maxCost, attr }) => {
+      const p = me();
+      const idx = p.deck.findIndex((id) => {
+        const card = cardById(id);
+        return (
+          card.type === 'skill' &&
+          card.valueType === 'attack' &&
+          card.costAp <= maxCost &&
+          card.conditionAttribute.includes(attr)
+        );
+      });
+      if (idx === -1) {
+        pushLog(state, 'デッキに条件に合うカードが無かった');
+        return;
+      }
+      const [id] = p.deck.splice(idx, 1);
+      const card = cardById(id) as SkillCard;
+      p.trash.push(id);
+      pushLog(state, `デッキから${card.name}を使用（簡易版: 基本値ダメージ）`);
+      applyDamage(state, enemyIdx, enemy().actorIndex, card.baseValue);
+    },
+    log: (message) => pushLog(state, message),
+  };
+  return api;
+}
+
+// ---------------------------------------------------------------- ダメージ・回復の共通処理
+
+/** ダメージ適用（効果ダメージ・攻撃解決の両方が通る唯一の道） */
+function applyDamage(state: BattleState, player: PlayerIndex, charIndex: number, amount: number): number {
+  if (state.phase === 'finished' || amount <= 0) return 0;
+  const p = state.players[player];
+  const c = p.characters[charIndex];
+  if (!isCharAlive(state, player, charIndex)) return 0;
+
+  // ビコウ: 控えにいる時はダメージを受けない
+  const eff = characterEffectOf(c.cardId);
+  if (eff?.standbyImmune && charIndex !== p.actorIndex) {
+    pushLog(state, `${c.name}は控えのためダメージを受けない`);
+    return 0;
+  }
+
+  const maxHp = maxHpOf(state, player, charIndex);
+  const actual = Math.min(amount, maxHp - c.damage);
+  c.damage += actual;
+  pushLog(state, `${c.name}に${actual}ダメージ（残りHP: ${maxHp - c.damage}）`);
+
+  // 被ダメージ時の常時能力（ミルオン・ボーダン）
+  if (actual > 0 && eff?.onDamaged && isCharAlive(state, player, charIndex)) {
+    runEffectSafely(state, `${c.name}の被ダメージ能力`, () =>
+      eff.onDamaged!(makeApi(state, player, charIndex), actual, charIndex === p.actorIndex),
+    );
+  }
+
+  // 戦闘不能処理
+  if (!isCharAlive(state, player, charIndex)) {
+    pushLog(state, `${c.name}は戦闘不能`);
+    // 味方戦闘不能時の常時能力（レオン・ソーベルト。倒れた本人も発動する）
+    p.characters.forEach((ally, i) => {
+      const allyEff = characterEffectOf(ally.cardId);
+      if (!allyEff?.onAllyKo) return;
+      if (i !== charIndex && !isCharAlive(state, player, i)) return;
+      runEffectSafely(state, `${ally.name}の能力`, () => allyEff.onAllyKo!(makeApi(state, player, i)));
+    });
+    if (battleOver(state)) return actual;
+    if (aliveCount(state, player) === 0) {
+      finish(state, (1 - player) as PlayerIndex, 'wipeout');
+      return actual;
+    }
+    // アクターが倒れたら強制交代（ロックより優先）
+    if (charIndex === p.actorIndex) {
+      p.actorIndex = nextAliveIndex(state, player, p.actorIndex);
+      pushLog(state, `アクターが${p.characters[p.actorIndex].name}に強制交代`);
+    }
+  }
+  return actual;
+}
+
+function healCharacter(state: BattleState, player: PlayerIndex, charIndex: number, amount: number): number {
+  if (state.phase === 'finished' || amount <= 0) return 0;
+  const p = state.players[player];
+  const c = p.characters[charIndex];
+  if (!isCharAlive(state, player, charIndex)) return 0; // 戦闘不能は通常回復できない
+  const healed = Math.min(amount, c.damage);
+  c.damage -= healed;
+  if (healed > 0) {
+    pushLog(state, `${c.name}を${healed}回復`);
+    const eff = characterEffectOf(c.cardId);
+    if (eff?.onHealed) {
+      runEffectSafely(state, `${c.name}の回復時能力`, () =>
+        eff.onHealed!(makeApi(state, player, charIndex), healed),
+      );
+    }
+  }
+  return healed;
 }
 
 // ---------------------------------------------------------------- バトル作成
 
 export interface CreateBattleOptions {
-  /** テスト用: 先攻を固定する（省略時はランダム） */
   firstPlayer?: PlayerIndex;
-  /** テスト用: デッキ検証を飛ばす（省略時は検証する） */
   validate?: boolean;
 }
 
@@ -162,11 +551,15 @@ export function createBattle(
       ap: [],
       characters,
       actorIndex: 0,
+      skillsUsedThisTurn: 0,
+      nextSkillCostDelta: 0,
+      nextDrawDelta: 0,
+      actorLockUntilTurn: 0,
+      incomingDamageReduction: null,
     };
     return player;
   }) as [PlayerBattle, PlayerBattle];
 
-  // 後攻はデッキの上から2枚をチャージした状態で始める（後攻の補償）
   const second = players[(1 - firstPlayer) as PlayerIndex];
   second.ap.push(...second.deck.splice(0, SECOND_PLAYER_STARTING_AP));
 
@@ -179,8 +572,22 @@ export function createBattle(
     pendingAttack: null,
     winner: null,
     endReason: null,
+    rngState: (seed * 2654435761) >>> 0,
+    effectDepth: 0,
     log: [`バトル開始。先攻: プレイヤー${firstPlayer + 1}`],
   };
+
+  // バトル開始時の常時能力（先攻側から）
+  for (const pIdx of [firstPlayer, (1 - firstPlayer) as PlayerIndex]) {
+    state.players[pIdx].characters.forEach((c, i) => {
+      const eff = characterEffectOf(c.cardId);
+      if (eff?.onBattleStart) {
+        runEffectSafely(state, `${c.name}のバトル開始能力`, () =>
+          eff.onBattleStart!(makeApi(state, pIdx, i)),
+        );
+      }
+    });
+  }
 
   beginTurn(state);
   return state;
@@ -188,41 +595,89 @@ export function createBattle(
 
 // ---------------------------------------------------------------- ターン進行
 
-/** ドローフェーズ（自動処理）: 手札が5枚になるまで引く。引けなければ負け */
 function beginTurn(state: BattleState): void {
   const p = state.players[state.active];
-  const need = HAND_REFILL_TO - p.hand.length;
-  if (need > 0) {
-    if (p.deck.length < need) {
-      state.log.push(`プレイヤー${state.active + 1}は山札切れで手札を${HAND_REFILL_TO}枚にできない`);
+  p.skillsUsedThisTurn = 0;
+
+  // 手札上限（アイ: +1）
+  let cap = HAND_REFILL_TO;
+  p.characters.forEach((c, i) => {
+    if (!isCharAlive(state, state.active, i)) return;
+    cap += characterEffectOf(c.cardId)?.handRefillBonus ?? 0;
+  });
+
+  const need = Math.max(0, cap - p.hand.length);
+  const drawCount = Math.max(0, need + p.nextDrawDelta);
+  p.nextDrawDelta = 0;
+
+  if (drawCount > 0) {
+    const drawn = Math.min(drawCount, p.deck.length);
+    p.hand.push(...p.deck.splice(0, drawn));
+    if (drawn > 0) pushLog(state, `プレイヤー${state.active + 1}が${drawn}枚ドロー`);
+    // 山札切れで手札を5枚にできなければ負け
+    if (p.hand.length < HAND_REFILL_TO && p.deck.length === 0 && drawn < drawCount) {
+      pushLog(state, `プレイヤー${state.active + 1}は山札切れで手札を${HAND_REFILL_TO}枚にできない`);
       finish(state, (1 - state.active) as PlayerIndex, 'deckout');
       return;
     }
-    p.hand.push(...p.deck.splice(0, need));
-    state.log.push(`プレイヤー${state.active + 1}が${need}枚ドロー`);
   }
   state.phase = 'play';
 }
 
-// ---------------------------------------------------------------- 判定
+// ---------------------------------------------------------------- スキルの使用判定
 
-/** このスキルのAPと属性条件を満たしているか（属性は自分のアクターで判定） */
-export function canPlaySkill(state: BattleState, player: PlayerIndex, skill: SkillCard): boolean {
+/** スキルの実際の消費AP（キャラ能力・スイッチ・カード自身の修正込み） */
+export function effectiveSkillCost(
+  state: BattleState,
+  player: PlayerIndex,
+  card: SkillCard,
+  usingChar?: number,
+): number {
   const p = state.players[player];
-  if (p.ap.length < skill.costAp) return false;
-  return containsAll(actorAttributes(p), skill.conditionAttribute);
+  const ci = usingChar ?? p.actorIndex;
+  let cost = card.costAp;
+  cost += characterEffectOf(p.characters[ci].cardId)?.skillCostDelta ?? 0;
+  cost += p.nextSkillCostDelta;
+  const eff = skillEffectOf(card.id);
+  if (eff?.costDelta) {
+    try {
+      cost += eff.costDelta(makeApi(state, player, ci));
+    } catch {
+      /* 無視 */
+    }
+  }
+  return Math.max(0, cost);
 }
 
-/** このキャラクターカードを今プレイできるか（同名の生きた味方がいるか） */
+/** このスキルを使うキャラの番号を返す（使えなければ null） */
+export function resolveUsingChar(state: BattleState, player: PlayerIndex, card: SkillCard): number | null {
+  const p = state.players[player];
+  const eff = skillEffectOf(card.id);
+  const candidates = eff?.anyCharacterCanUse
+    ? p.characters.map((_, i) => i).filter((i) => isCharAlive(state, player, i))
+    : [p.actorIndex];
+  for (const ci of candidates) {
+    if (containsAll(effectiveAttributes(state, player, ci), card.conditionAttribute)) return ci;
+  }
+  return null;
+}
+
+export function canPlaySkill(state: BattleState, player: PlayerIndex, skill: SkillCard): boolean {
+  const ci = resolveUsingChar(state, player, skill);
+  if (ci === null) return false;
+  return state.players[player].ap.length >= effectiveSkillCost(state, player, skill, ci);
+}
+
 export function canPlayCharacterCard(
   state: BattleState,
   player: PlayerIndex,
   card: CharacterCard,
 ): boolean {
-  return state.players[player].characters.some((c) => c.name === card.name && isAlive(c));
+  return state.players[player].characters.some(
+    (c, i) => c.name === card.name && isCharAlive(state, player, i),
+  );
 }
 
-/** 攻撃されている側が今使える guard スキルの手札番号 */
 function guardOptions(state: BattleState, defender: PlayerIndex): number[] {
   const p = state.players[defender];
   const options: number[] = [];
@@ -235,19 +690,29 @@ function guardOptions(state: BattleState, defender: PlayerIndex): number[] {
   return options;
 }
 
-/** 今行動を選ぶべきプレイヤーができる行動をすべて列挙する */
 export function legalActions(state: BattleState): BattleAction[] {
   if (state.phase === 'finished') return [];
   const actions: BattleAction[] = [];
 
   if (state.phase === 'play') {
     const p = state.players[state.active];
+    const enemyIdx = (1 - state.active) as PlayerIndex;
+    const enemy = state.players[enemyIdx];
     p.hand.forEach((id, handIndex) => {
       const card = cardById(id);
       if (card.type === 'skill' && card.valueType !== 'guard' && canPlaySkill(state, state.active, card)) {
+        const eff = skillEffectOf(card.id);
         if (card.valueType === 'heal') {
           p.characters.forEach((c, i) => {
-            if (isAlive(c)) actions.push({ type: 'playSkill', handIndex, healTargetIndex: i });
+            if (isCharAlive(state, state.active, i)) {
+              actions.push({ type: 'playSkill', handIndex, healTargetIndex: i });
+            }
+          });
+        } else if (card.valueType === 'attack' && eff?.targeting === 'choose') {
+          enemy.characters.forEach((_, i) => {
+            if (isCharAlive(state, enemyIdx, i)) {
+              actions.push({ type: 'playSkill', handIndex, targetIndex: i });
+            }
           });
         } else {
           actions.push({ type: 'playSkill', handIndex });
@@ -261,16 +726,14 @@ export function legalActions(state: BattleState): BattleAction[] {
   }
 
   if (state.phase === 'guard') {
-    const defender = actingPlayer(state);
-    for (const handIndex of guardOptions(state, defender)) {
+    for (const handIndex of guardOptions(state, actingPlayer(state))) {
       actions.push({ type: 'playGuard', handIndex });
     }
     actions.push({ type: 'pass' });
   }
 
   if (state.phase === 'charge') {
-    const p = state.players[state.active];
-    p.hand.forEach((_, handIndex) => actions.push({ type: 'charge', handIndex }));
+    state.players[state.active].hand.forEach((_, handIndex) => actions.push({ type: 'charge', handIndex }));
     actions.push({ type: 'endTurn' });
   }
 
@@ -291,23 +754,26 @@ export function applyAction(state: BattleState, action: BattleAction): void {
       if (card.valueType === 'guard') {
         throw new Error(`guardスキルは攻撃された時にだけ使えます: ${card.name}`);
       }
-      if (!canPlaySkill(state, state.active, card)) {
-        throw new Error(`スキルを使う条件を満たしていません: ${card.name}`);
-      }
+      const usingChar = resolveUsingChar(state, state.active, card);
+      if (usingChar === null) throw new Error(`属性の条件を満たしていません: ${card.name}`);
+      const cost = effectiveSkillCost(state, state.active, card, usingChar);
+      if (p.ap.length < cost) throw new Error(`APが足りません: ${card.name}`);
 
-      // コスト支払い: APエリアの先頭からコスト分をトラッシュへ。スキルカードもトラッシュへ
-      p.trash.push(...p.ap.splice(0, card.costAp));
+      p.trash.push(...p.ap.splice(0, cost));
       p.hand.splice(action.handIndex, 1);
       p.trash.push(card.id);
-      if (card.effectText !== '') {
-        state.log.push(`※${card.name}の効果文は未実装: 「${card.effectText}」`);
+      p.skillsUsedThisTurn++;
+      p.nextSkillCostDelta = 0; // コスト修正は1回で消費
+      pushLog(state, `${p.characters[usingChar].name}が${card.name}を使用`);
+      if (card.effectText !== '' && !hasEffectImplementation(card.id)) {
+        pushLog(state, `※${card.name}の効果は未実装: 「${card.effectText}」`);
       }
 
       if (card.valueType === 'attack') {
-        beginAttack(state, card);
+        beginAttack(state, card, usingChar, action.targetIndex);
       } else {
-        resolveNonAttack(state, card, action.healTargetIndex);
-        rotateActor(state, state.active); // 自分のターンにスキルを使うとアクター交代
+        resolveNonAttack(state, card, usingChar, action.healTargetIndex);
+        if (!battleOver(state)) rotateActorAfterSkill(state, state.active);
       }
       return;
     }
@@ -326,20 +792,25 @@ export function applyAction(state: BattleState, action: BattleAction): void {
       const pending = state.pendingAttack;
       if (!pending) throw new Error('割り込む攻撃がありません');
 
-      p.trash.push(...p.ap.splice(0, card.costAp));
+      const cost = effectiveSkillCost(state, defender, card);
+      p.trash.push(...p.ap.splice(0, cost));
       p.hand.splice(action.handIndex, 1);
       p.trash.push(card.id);
-      if (card.effectText !== '') {
-        state.log.push(`※${card.name}の効果文は未実装: 「${card.effectText}」`);
+      if (card.effectText !== '' && !hasEffectImplementation(card.id)) {
+        pushLog(state, `※${card.name}の効果は未実装: 「${card.effectText}」`);
       }
 
-      const reduced = Math.min(card.baseValue, pending.value);
-      pending.value -= reduced;
-      state.log.push(`${card.name}で割り込み（${reduced}軽減 → 残りダメージ${pending.value}）`);
-      // 相手ターン中のスキル使用ではアクターは交代しない
+      const before = pending.value;
+      pending.value = Math.max(0, pending.value - card.baseValue);
+      const eff = skillEffectOf(card.id);
+      if (eff?.onGuardDeclare) {
+        runEffectSafely(state, `${card.name}のguard効果`, () =>
+          eff.onGuardDeclare!(makeApi(state, defender, p.actorIndex)),
+        );
+      }
+      pushLog(state, `${card.name}で割り込み（${before} → 残りダメージ${state.pendingAttack?.value ?? 0}）`);
 
-      // もう割り込めるguardがなければ自動で攻撃を解決する
-      if (guardOptions(state, defender).length === 0) {
+      if (state.phase === 'guard' && guardOptions(state, defender).length === 0) {
         resolvePendingAttack(state);
       }
       return;
@@ -359,14 +830,16 @@ export function applyAction(state: BattleState, action: BattleAction): void {
       if (!canPlayCharacterCard(state, state.active, card)) {
         throw new Error(`同名の生きているキャラクターがいません: ${card.name}`);
       }
-      // 同名の生きた味方1枚を2回復（一番ダメージが大きいもの）
-      const targets = p.characters.filter((c) => c.name === card.name && isAlive(c));
-      const target = targets.sort((a, b) => b.damage - a.damage)[0];
-      const healed = Math.min(CHARACTER_CARD_HEAL, target.damage);
-      target.damage -= healed;
+      let best = -1;
+      p.characters.forEach((c, i) => {
+        if (c.name === card.name && isCharAlive(state, state.active, i)) {
+          if (best === -1 || c.damage > p.characters[best].damage) best = i;
+        }
+      });
       p.hand.splice(action.handIndex, 1);
       p.trash.push(card.id);
-      state.log.push(`${card.name}のカードで${target.name}を${healed}回復`);
+      pushLog(state, `${card.name}のカードを使用`);
+      healCharacter(state, state.active, best, CHARACTER_CARD_HEAL);
       return;
     }
 
@@ -382,15 +855,29 @@ export function applyAction(state: BattleState, action: BattleAction): void {
       const card = cardAtHand(p, action.handIndex);
       p.hand.splice(action.handIndex, 1);
       p.ap.push(card.id);
-      state.log.push(`プレイヤー${state.active + 1}が${card.name}をチャージ（AP: ${p.ap.length}）`);
+      pushLog(state, `プレイヤー${state.active + 1}が${card.name}をチャージ（AP: ${p.ap.length}）`);
       return;
     }
 
     case 'endTurn': {
       requirePhase(state, 'charge');
+      // ターン終了時の常時能力（ジエンド・ヤクビ・グロウ）
+      const p = state.players[state.active];
+      p.characters.forEach((c, i) => {
+        if (battleOver(state)) return;
+        if (!isCharAlive(state, state.active, i)) return;
+        const eff = characterEffectOf(c.cardId);
+        if (eff?.onOwnTurnEnd) {
+          runEffectSafely(state, `${c.name}のターン終了能力`, () =>
+            eff.onOwnTurnEnd!(makeApi(state, state.active, i), i === p.actorIndex),
+          );
+        }
+      });
+      if (battleOver(state)) return;
+
       state.active = (1 - state.active) as PlayerIndex;
       state.turn += 1;
-      state.log.push(`--- ターン${state.turn}: プレイヤー${state.active + 1} ---`);
+      pushLog(state, `--- ターン${state.turn}: プレイヤー${state.active + 1} ---`);
       beginTurn(state);
       return;
     }
@@ -409,78 +896,130 @@ function cardAtHand(p: PlayerBattle, handIndex: number) {
   return cardById(id);
 }
 
-// ---------------------------------------------------------------- スキル解決
+// ---------------------------------------------------------------- 攻撃の宣言と解決
 
-/** 攻撃を開始する。相手が割り込める時は guard フェーズへ、できなければ即解決 */
-function beginAttack(state: BattleState, skill: SkillCard): void {
-  const defender = (1 - state.active) as PlayerIndex;
-  state.pendingAttack = { skillName: skill.name, value: skill.baseValue };
+function beginAttack(state: BattleState, card: SkillCard, usingChar: number, targetIndex?: number): void {
+  const defenderIdx = (1 - state.active) as PlayerIndex;
+  const defender = state.players[defenderIdx];
+  const eff = skillEffectOf(card.id);
 
-  if (guardOptions(state, defender).length > 0) {
+  let targets: number[];
+  switch (eff?.targeting) {
+    case 'all':
+      targets = defender.characters.map((_, i) => i).filter((i) => isCharAlive(state, defenderIdx, i));
+      break;
+    case 'standby':
+      targets = defender.characters
+        .map((_, i) => i)
+        .filter((i) => i !== defender.actorIndex && isCharAlive(state, defenderIdx, i));
+      break;
+    case 'choose': {
+      const t = targetIndex ?? defender.actorIndex;
+      targets = isCharAlive(state, defenderIdx, t) ? [t] : [defender.actorIndex];
+      break;
+    }
+    default:
+      targets = [defender.actorIndex];
+  }
+
+  state.pendingAttack = {
+    skillId: card.id,
+    skillName: card.name,
+    value: card.baseValue,
+    targets,
+    noGuard: eff?.noGuard ?? false,
+    attackerChar: usingChar,
+  };
+
+  // ダメージ修正（スキル効果 → 使用キャラの常時能力の順）
+  if (eff?.onAttackDeclare) {
+    runEffectSafely(state, `${card.name}の攻撃効果`, () =>
+      eff.onAttackDeclare!(makeApi(state, state.active, usingChar)),
+    );
+  }
+  const charEff = characterEffectOf(state.players[state.active].characters[usingChar].cardId);
+  if (charEff?.onAttackDeclare) {
+    runEffectSafely(state, `使用キャラの攻撃能力`, () =>
+      charEff.onAttackDeclare!(makeApi(state, state.active, usingChar)),
+    );
+  }
+  // プレイ時の付随効果（属性追加・アクター化など）
+  if (eff?.onPlay) {
+    runEffectSafely(state, `${card.name}のプレイ効果`, () =>
+      eff.onPlay!(makeApi(state, state.active, usingChar)),
+    );
+  }
+  if (state.phase === 'finished') return;
+
+  const pending = state.pendingAttack;
+  if (!pending) return;
+
+  if (!pending.noGuard && guardOptions(state, defenderIdx).length > 0) {
     state.phase = 'guard';
-    state.log.push(`${skill.name}で攻撃 → 相手は割り込みできる（ダメージ${skill.baseValue}）`);
+    pushLog(state, `${card.name}で攻撃 → 相手は割り込みできる（ダメージ${pending.value}）`);
   } else {
+    if (pending.noGuard) pushLog(state, `${card.name}は防御で割り込めない攻撃`);
     resolvePendingAttack(state);
   }
 }
 
-/** 割り込みが終わった攻撃を実際に解決する */
 function resolvePendingAttack(state: BattleState): void {
   const pending = state.pendingAttack;
   if (!pending) throw new Error('解決する攻撃がありません');
+  const attackerIdx = state.active;
+  const defenderIdx = (1 - state.active) as PlayerIndex;
+  const defender = state.players[defenderIdx];
+
+  // オールディフェンス等の被ダメージ軽減
+  const reduction =
+    defender.incomingDamageReduction && state.turn <= defender.incomingDamageReduction.untilTurn
+      ? defender.incomingDamageReduction.value
+      : 0;
+
+  let dealtTotal = 0;
+  for (const ti of pending.targets) {
+    if (state.phase === 'finished') break;
+    if (!isCharAlive(state, defenderIdx, ti)) continue;
+    dealtTotal += applyDamage(state, defenderIdx, ti, Math.max(0, pending.value - reduction));
+  }
+
+  if (state.phase !== 'finished') {
+    const eff = skillEffectOf(pending.skillId);
+    if (eff?.onAttackResolved) {
+      runEffectSafely(state, `${pending.skillName}の攻撃後効果`, () =>
+        eff.onAttackResolved!(makeApi(state, attackerIdx, pending.attackerChar), dealtTotal),
+      );
+    }
+  }
+
   state.pendingAttack = null;
-
-  const enemy = state.players[(1 - state.active) as PlayerIndex];
-  const target = actorOf(enemy);
-  target.damage = Math.min(target.maxHp, target.damage + pending.value);
-  state.log.push(
-    `${pending.skillName}で${target.name}に${pending.value}ダメージ（残りHP: ${target.maxHp - target.damage}）`,
-  );
-
-  if (!isAlive(target)) {
-    state.log.push(`${target.name}は戦闘不能`);
-    if (aliveCount(enemy) === 0) {
-      finish(state, state.active, 'wipeout');
-      return;
-    }
-    // アクターが戦闘不能になったら次の生きているキャラに強制交代
-    enemy.actorIndex = nextAliveIndex(enemy, enemy.actorIndex);
-    state.log.push(`相手のアクターが${actorOf(enemy).name}に強制交代`);
-  }
-
+  if (state.phase === 'finished') return;
   state.phase = 'play';
-  rotateActor(state, state.active); // 攻撃側はスキルを使ったのでアクター交代
+  rotateActorAfterSkill(state, attackerIdx);
 }
 
-/** 攻撃以外のスキル（heal / support）の解決 */
-function resolveNonAttack(state: BattleState, skill: SkillCard, healTargetIndex?: number): void {
+function resolveNonAttack(state: BattleState, card: SkillCard, usingChar: number, healTargetIndex?: number): void {
   const me = state.players[state.active];
-
-  switch (skill.valueType) {
-    case 'heal': {
-      const target = me.characters[healTargetIndex ?? me.actorIndex];
-      if (!target || !isAlive(target)) throw new Error('回復対象が正しくありません');
-      const healed = Math.min(skill.baseValue, target.damage);
-      target.damage -= healed;
-      state.log.push(`${skill.name}で${target.name}を${healed}回復`);
-      break;
+  if (card.valueType === 'heal') {
+    const target = healTargetIndex ?? me.actorIndex;
+    if (isCharAlive(state, state.active, target)) {
+      healCharacter(state, state.active, target, card.baseValue);
     }
-    case 'support': {
-      // 共通効果なし。効果文の個別実装はこれから
-      state.log.push(`${skill.name}を使用（supportの効果は未実装）`);
-      break;
-    }
-    default:
-      break;
+  }
+  const eff = skillEffectOf(card.id);
+  if (eff?.onPlay) {
+    runEffectSafely(state, `${card.name}の効果`, () =>
+      eff.onPlay!(makeApi(state, state.active, usingChar)),
+    );
   }
 }
 
-/** 自分のターンにスキルを使った時のアクター交代（1→2→3→1で次の生きているキャラへ） */
-function rotateActor(state: BattleState, player: PlayerIndex): void {
+function rotateActorAfterSkill(state: BattleState, player: PlayerIndex): void {
+  if (actorLocked(state, player)) return;
   const p = state.players[player];
   const before = p.actorIndex;
-  p.actorIndex = nextAliveIndex(p, p.actorIndex);
+  p.actorIndex = nextAliveIndex(state, player, p.actorIndex);
   if (p.actorIndex !== before) {
-    state.log.push(`プレイヤー${player + 1}のアクターが${actorOf(p).name}に交代`);
+    pushLog(state, `プレイヤー${player + 1}のアクターが${p.characters[p.actorIndex].name}に交代`);
   }
 }
