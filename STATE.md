@@ -24,10 +24,12 @@
 
 ## 進行中のアクション
 
-- カード一覧ページ完成（`web/`）。旧プロトタイプのカードデザインを React で再現し、
+- カード一覧ページ完成・公開済み（`web/`）。旧プロトタイプのカードデザインを React で再現し、
   種類・レアリティ・属性・スキル種のフィルター、検索、並び替え（コスト/基本値/HP）、サイズ変更つき。
-  `npm run dev` → http://localhost:5173 で閲覧。バランス調整の一覧性ツールを兼ねる。
-- 公開ホスティング先は社長に確認中。
+- **公開URL: https://raccbigenner.github.io/bravers_duel/ **（GitHub Pages）
+- GitHub リポジトリ: https://github.com/RaccBigenner/bravers_duel （公開）。
+  main に push すると GitHub Actions が自動でテスト→ビルド→デプロイする。
+- ローカル確認は `npm run dev` → http://localhost:5173
 
 ## 中断ポイント
 

@@ -2,6 +2,9 @@
 
 2人対戦のカードゲーム。TypeScript でルールエンジンを作り、Web ブラウザで遊べるようにする。
 
+- **カード一覧（公開ページ）**: https://raccbigenner.github.io/bravers_duel/
+- main ブランチに push すると GitHub Actions が自動でテスト→ビルド→デプロイする
+
 ## フォルダの説明
 
 | 場所 | 中身 |
