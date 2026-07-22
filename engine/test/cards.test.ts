@@ -24,6 +24,22 @@ describe('カードマスターデータ', () => {
     expect(() => cardById('存在しないID')).toThrow();
   });
 
+  it('効果なしスキルの基本値は (コスト+1)×2（バランス調整v1のルール）', () => {
+    for (const c of ALL_CARDS) {
+      if (c.type === 'skill' && c.effectText === '') {
+        expect(c.baseValue, `${c.id} ${c.name}`).toBe((c.costAp + 1) * 2);
+      }
+    }
+  });
+
+  it('supportスキルの基本値は0（効果文が能力の全て）', () => {
+    for (const c of ALL_CARDS) {
+      if (c.type === 'skill' && c.valueType === 'support') {
+        expect(c.baseValue, `${c.id} ${c.name}`).toBe(0);
+      }
+    }
+  });
+
   it('キャラクターの属性は0〜4個（0個は[魔神素体]グロウのみ）', () => {
     const zeroAttr = ALL_CARDS.filter(
       (c) => c.type === 'character' && c.attribute.length === 0,

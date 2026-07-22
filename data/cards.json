@@ -553,7 +553,7 @@
       "竜",
       "竜"
     ],
-    "baseValue": 0,
+    "baseValue": 2,
     "valueType": "attack"
   },
   {
@@ -569,7 +569,7 @@
     "conditionAttribute": [
       "闇"
     ],
-    "baseValue": 1,
+    "baseValue": 2,
     "valueType": "attack"
   },
   {
@@ -620,7 +620,7 @@
     "conditionAttribute": [
       "炎"
     ],
-    "baseValue": 9,
+    "baseValue": 14,
     "valueType": "attack"
   },
   {
@@ -636,7 +636,7 @@
     "conditionAttribute": [
       "竜"
     ],
-    "baseValue": 6,
+    "baseValue": 11,
     "valueType": "attack"
   },
   {
@@ -652,7 +652,7 @@
     "conditionAttribute": [
       "射"
     ],
-    "baseValue": 6,
+    "baseValue": 9,
     "valueType": "attack"
   },
   {
@@ -668,7 +668,7 @@
     "conditionAttribute": [
       "突"
     ],
-    "baseValue": 0,
+    "baseValue": 4,
     "valueType": "attack"
   },
   {
@@ -685,7 +685,7 @@
       "木",
       "雷"
     ],
-    "baseValue": 4,
+    "baseValue": 3,
     "valueType": "attack"
   },
   {
@@ -702,7 +702,7 @@
       "斬",
       "闇"
     ],
-    "baseValue": 1,
+    "baseValue": 5,
     "valueType": "attack"
   },
   {
@@ -718,7 +718,7 @@
     "conditionAttribute": [
       "獣"
     ],
-    "baseValue": 3,
+    "baseValue": 7,
     "valueType": "attack"
   },
   {
@@ -735,7 +735,7 @@
       "斬",
       "聖"
     ],
-    "baseValue": 3,
+    "baseValue": 7,
     "valueType": "attack"
   },
   {
@@ -769,7 +769,7 @@
       "炎",
       "補"
     ],
-    "baseValue": 4,
+    "baseValue": 0,
     "valueType": "support"
   },
   {
@@ -883,7 +883,7 @@
     "conditionAttribute": [
       "打"
     ],
-    "baseValue": 1,
+    "baseValue": 6,
     "valueType": "attack"
   },
   {
@@ -899,7 +899,7 @@
     "conditionAttribute": [
       "雷"
     ],
-    "baseValue": 4,
+    "baseValue": 6,
     "valueType": "attack"
   },
   {
@@ -915,7 +915,7 @@
     "conditionAttribute": [
       "斬"
     ],
-    "baseValue": 1,
+    "baseValue": 6,
     "valueType": "attack"
   },
   {
@@ -932,7 +932,7 @@
       "炎",
       "土"
     ],
-    "baseValue": 6,
+    "baseValue": 10,
     "valueType": "attack"
   },
   {
@@ -966,7 +966,7 @@
       "聖",
       "雷"
     ],
-    "baseValue": 6,
+    "baseValue": 10,
     "valueType": "attack"
   },
   {
@@ -983,7 +983,7 @@
       "炎",
       "氷"
     ],
-    "baseValue": 4,
+    "baseValue": 8,
     "valueType": "attack"
   },
   {
@@ -1000,7 +1000,7 @@
       "土",
       "聖"
     ],
-    "baseValue": 5,
+    "baseValue": 8,
     "valueType": "attack"
   },
   {
@@ -1016,7 +1016,7 @@
     "conditionAttribute": [
       "射"
     ],
-    "baseValue": 3,
+    "baseValue": 5,
     "valueType": "attack"
   },
   {
@@ -1032,7 +1032,7 @@
     "conditionAttribute": [
       "氷"
     ],
-    "baseValue": 1,
+    "baseValue": 4,
     "valueType": "guard"
   },
   {
@@ -1049,7 +1049,7 @@
       "雷",
       "風"
     ],
-    "baseValue": 3,
+    "baseValue": 2,
     "valueType": "attack"
   },
   {
@@ -1066,7 +1066,7 @@
       "斬",
       "炎"
     ],
-    "baseValue": 5,
+    "baseValue": 8,
     "valueType": "attack"
   },
   {
@@ -1083,7 +1083,7 @@
       "斬",
       "氷"
     ],
-    "baseValue": 4,
+    "baseValue": 5,
     "valueType": "attack"
   },
   {
@@ -1100,7 +1100,7 @@
       "聖",
       "闇"
     ],
-    "baseValue": 3,
+    "baseValue": 6,
     "valueType": "attack"
   },
   {
@@ -1117,7 +1117,7 @@
       "聖",
       "打"
     ],
-    "baseValue": 4,
+    "baseValue": 8,
     "valueType": "attack"
   },
   {
@@ -1133,7 +1133,7 @@
     "conditionAttribute": [
       "射"
     ],
-    "baseValue": 2,
+    "baseValue": 4,
     "valueType": "attack"
   },
   {
@@ -1149,7 +1149,7 @@
     "conditionAttribute": [
       "突"
     ],
-    "baseValue": 3,
+    "baseValue": 6,
     "valueType": "attack"
   },
   {
@@ -1181,7 +1181,7 @@
     "conditionAttribute": [
       "闇"
     ],
-    "baseValue": 4,
+    "baseValue": 6,
     "valueType": "guard"
   },
   {
@@ -1198,7 +1198,7 @@
       "射",
       "木"
     ],
-    "baseValue": 3,
+    "baseValue": 4,
     "valueType": "attack"
   },
   {
@@ -1215,7 +1215,7 @@
       "闇",
       "獣"
     ],
-    "baseValue": 3,
+    "baseValue": 4,
     "valueType": "attack"
   },
   {
@@ -1232,7 +1232,7 @@
       "打",
       "闇"
     ],
-    "baseValue": 3,
+    "baseValue": 5,
     "valueType": "attack"
   },
   {
@@ -1248,7 +1248,7 @@
     "conditionAttribute": [
       "守"
     ],
-    "baseValue": 1,
+    "baseValue": 0,
     "valueType": "support"
   },
   {
@@ -1281,7 +1281,7 @@
     "conditionAttribute": [
       "竜"
     ],
-    "baseValue": 1,
+    "baseValue": 0,
     "valueType": "support"
   },
   {
@@ -1297,7 +1297,7 @@
     "conditionAttribute": [
       "闇"
     ],
-    "baseValue": 2,
+    "baseValue": 0,
     "valueType": "support"
   },
   {
@@ -1347,7 +1347,7 @@
       "斬",
       "斬"
     ],
-    "baseValue": 1,
+    "baseValue": 0,
     "valueType": "support"
   },
   {
@@ -1363,7 +1363,7 @@
     "conditionAttribute": [
       "聖"
     ],
-    "baseValue": 5,
+    "baseValue": 6,
     "valueType": "heal"
   },
   {
@@ -1379,7 +1379,7 @@
     "conditionAttribute": [
       "獣"
     ],
-    "baseValue": 1,
+    "baseValue": 0,
     "valueType": "support"
   },
   {
@@ -1395,7 +1395,7 @@
     "conditionAttribute": [
       "守"
     ],
-    "baseValue": 4,
+    "baseValue": 1,
     "valueType": "guard"
   },
   {
@@ -1427,7 +1427,7 @@
     "conditionAttribute": [
       "打"
     ],
-    "baseValue": 6,
+    "baseValue": 10,
     "valueType": "attack"
   },
   {
@@ -1443,7 +1443,7 @@
     "conditionAttribute": [
       "守"
     ],
-    "baseValue": 3,
+    "baseValue": 8,
     "valueType": "attack"
   },
   {
@@ -1459,7 +1459,7 @@
     "conditionAttribute": [
       "風"
     ],
-    "baseValue": 4,
+    "baseValue": 5,
     "valueType": "attack"
   },
   {
@@ -1475,7 +1475,7 @@
     "conditionAttribute": [
       "突"
     ],
-    "baseValue": 1,
+    "baseValue": 4,
     "valueType": "attack"
   },
   {
@@ -1491,7 +1491,7 @@
     "conditionAttribute": [
       "竜"
     ],
-    "baseValue": 5,
+    "baseValue": 8,
     "valueType": "attack"
   },
   {
@@ -1507,7 +1507,7 @@
     "conditionAttribute": [
       "獣"
     ],
-    "baseValue": 3,
+    "baseValue": 6,
     "valueType": "attack"
   },
   {
@@ -1524,7 +1524,7 @@
       "聖",
       "射"
     ],
-    "baseValue": 4,
+    "baseValue": 0,
     "valueType": "support"
   },
   {
@@ -1541,7 +1541,7 @@
       "斬",
       "炎"
     ],
-    "baseValue": 4,
+    "baseValue": 6,
     "valueType": "attack"
   },
   {
@@ -1590,7 +1590,7 @@
     "conditionAttribute": [
       "木"
     ],
-    "baseValue": 2,
+    "baseValue": 3,
     "valueType": "attack"
   },
   {
@@ -1606,7 +1606,7 @@
     "conditionAttribute": [
       "土"
     ],
-    "baseValue": 4,
+    "baseValue": 6,
     "valueType": "attack"
   },
   {
@@ -1622,7 +1622,7 @@
     "conditionAttribute": [
       "補"
     ],
-    "baseValue": 4,
+    "baseValue": 0,
     "valueType": "support"
   },
   {
@@ -1671,7 +1671,7 @@
     "conditionAttribute": [
       "聖"
     ],
-    "baseValue": 2,
+    "baseValue": 6,
     "valueType": "attack"
   },
   {
@@ -1687,7 +1687,7 @@
     "conditionAttribute": [
       "聖"
     ],
-    "baseValue": 4,
+    "baseValue": 2,
     "valueType": "heal"
   },
   {
@@ -1703,7 +1703,7 @@
     "conditionAttribute": [
       "補"
     ],
-    "baseValue": 3,
+    "baseValue": 0,
     "valueType": "support"
   },
   {
@@ -1719,7 +1719,7 @@
     "conditionAttribute": [
       "氷"
     ],
-    "baseValue": 1,
+    "baseValue": 2,
     "valueType": "attack"
   },
   {
@@ -1735,7 +1735,7 @@
     "conditionAttribute": [
       "木"
     ],
-    "baseValue": 2,
+    "baseValue": 0,
     "valueType": "support"
   },
   {
@@ -1752,7 +1752,7 @@
       "氷",
       "補"
     ],
-    "baseValue": 1,
+    "baseValue": 0,
     "valueType": "support"
   },
   {
@@ -1784,7 +1784,7 @@
     "conditionAttribute": [
       "聖"
     ],
-    "baseValue": 1,
+    "baseValue": 0,
     "valueType": "support"
   },
   {
@@ -1800,7 +1800,7 @@
     "conditionAttribute": [
       "炎"
     ],
-    "baseValue": 2,
+    "baseValue": 4,
     "valueType": "attack"
   },
   {
@@ -1816,7 +1816,7 @@
     "conditionAttribute": [
       "氷"
     ],
-    "baseValue": 2,
+    "baseValue": 3,
     "valueType": "attack"
   },
   {
@@ -1832,7 +1832,7 @@
     "conditionAttribute": [
       "雷"
     ],
-    "baseValue": 2,
+    "baseValue": 4,
     "valueType": "attack"
   },
   {
@@ -1848,7 +1848,7 @@
     "conditionAttribute": [
       "打"
     ],
-    "baseValue": 4,
+    "baseValue": 6,
     "valueType": "attack"
   },
   {
@@ -1864,7 +1864,7 @@
     "conditionAttribute": [
       "闇"
     ],
-    "baseValue": 0,
+    "baseValue": 2,
     "valueType": "attack"
   },
   {
@@ -1897,7 +1897,7 @@
       "突",
       "氷"
     ],
-    "baseValue": 4,
+    "baseValue": 6,
     "valueType": "attack"
   },
   {
@@ -1913,7 +1913,7 @@
     "conditionAttribute": [
       "突"
     ],
-    "baseValue": 4,
+    "baseValue": 5,
     "valueType": "attack"
   },
   {
@@ -1929,7 +1929,7 @@
     "conditionAttribute": [
       "木"
     ],
-    "baseValue": 2,
+    "baseValue": 4,
     "valueType": "attack"
   },
   {
@@ -1961,7 +1961,7 @@
     "conditionAttribute": [
       "斬"
     ],
-    "baseValue": 3,
+    "baseValue": 4,
     "valueType": "guard"
   },
   {
@@ -1994,7 +1994,7 @@
       "飛",
       "獣"
     ],
-    "baseValue": 2,
+    "baseValue": 4,
     "valueType": "attack"
   },
   {
@@ -2027,7 +2027,7 @@
     "conditionAttribute": [
       "打"
     ],
-    "baseValue": 2,
+    "baseValue": 1,
     "valueType": "attack"
   },
   {
@@ -2043,7 +2043,7 @@
     "conditionAttribute": [
       "斬"
     ],
-    "baseValue": 1,
+    "baseValue": 2,
     "valueType": "attack"
   },
   {
@@ -2059,7 +2059,7 @@
     "conditionAttribute": [
       "突"
     ],
-    "baseValue": 3,
+    "baseValue": 4,
     "valueType": "attack"
   },
   {
@@ -2075,7 +2075,7 @@
     "conditionAttribute": [
       "聖"
     ],
-    "baseValue": 3,
+    "baseValue": 4,
     "valueType": "heal"
   },
   {
@@ -2108,7 +2108,7 @@
       "打",
       "木"
     ],
-    "baseValue": 3,
+    "baseValue": 4,
     "valueType": "attack"
   },
   {
@@ -2140,7 +2140,7 @@
     "conditionAttribute": [
       "雷"
     ],
-    "baseValue": 1,
+    "baseValue": 0,
     "valueType": "guard"
   },
   {
@@ -2221,7 +2221,7 @@
     "conditionAttribute": [
       "補"
     ],
-    "baseValue": 1,
+    "baseValue": 0,
     "valueType": "support"
   },
   {
@@ -2237,7 +2237,7 @@
     "conditionAttribute": [
       "守"
     ],
-    "baseValue": 4,
+    "baseValue": 2,
     "valueType": "guard"
   },
   {
@@ -2285,7 +2285,7 @@
     "conditionAttribute": [
       "補"
     ],
-    "baseValue": 1,
+    "baseValue": 0,
     "valueType": "support"
   },
   {
