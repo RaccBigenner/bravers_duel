@@ -23,7 +23,8 @@ type Targeting =
   | null
   | { kind: 'enemy'; handIndex: number }
   | { kind: 'allyHeal'; handIndex: number }
-  | { kind: 'allyEquip'; handIndex: number };
+  | { kind: 'allyEquip'; handIndex: number }
+  | { kind: 'allyUse'; handIndex: number }; // 控えから使うスキルの使用キャラ選択
 
 /** 画面の高さ（リサイズ追従） */
 function useViewportHeight(): number {
@@ -53,6 +54,43 @@ interface Flight {
 
 let flightKey = 1;
 
+/** 長押し（500ms）でコールバック。発火したら直後のclickは無視される */
+function longPressHandlers(onLong: () => void) {
+  let timer: number | null = null;
+  let fired = false;
+  const start = () => {
+    fired = false;
+    timer = window.setTimeout(() => {
+      fired = true;
+      onLong();
+    }, 500);
+  };
+  const cancel = () => {
+    if (timer) window.clearTimeout(timer);
+    timer = null;
+  };
+  return {
+    onPointerDown: start,
+    onPointerUp: cancel,
+    onPointerLeave: cancel,
+    onClickCapture: (e: React.MouseEvent) => {
+      if (fired) {
+        e.stopPropagation();
+        e.preventDefault();
+      }
+    },
+  };
+}
+
+/** 表示状態には仮ID（'charged'）が混ざることがあるので安全に引く */
+function safeCard(id: string) {
+  try {
+    return cardById(id);
+  } catch {
+    return null;
+  }
+}
+
 export function Battle({ setup, onExit, onRematch }: {
   setup: BattleSetup;
   onExit: () => void;
@@ -60,6 +98,8 @@ export function Battle({ setup, onExit, onRematch }: {
 }) {
   const { state, view, busy, current, pops, koShown, perform, myActions, isMyTurn } = useBattle(setup.playerDeck, setup.enemy.deck);
   const [previewHand, setPreviewHand] = useState<number | null>(null);
+  const [zoomCard, setZoomCard] = useState<string | null>(null); // 読み取り専用の拡大表示（カードID）
+  const [pileList, setPileList] = useState<{ title: string; cards: string[] } | null>(null);
   const [chargeSel, setChargeSel] = useState<Set<number>>(new Set());
   const [targeting, setTargeting] = useState<Targeting>(null);
   const [confirmExit, setConfirmExit] = useState(false);
@@ -207,6 +247,13 @@ export function Battle({ setup, onExit, onRematch }: {
     setPreviewHand(null);
     if (card.type === 'skill') {
       const eff = skillEffectOf(card.id);
+      if (eff?.anyCharacterCanUse) {
+        const eligible = myActions.filter(
+          (a) => a.type === 'playSkill' && a.handIndex === handIndex && a.usingIndex !== undefined,
+        );
+        if (eligible.length > 1) return setTargeting({ kind: 'allyUse', handIndex });
+        if (eligible.length === 1) return act(eligible[0]);
+      }
       if (card.valueType === 'heal') return setTargeting({ kind: 'allyHeal', handIndex });
       if (card.valueType === 'attack' && eff?.targeting === 'choose') {
         return setTargeting({ kind: 'enemy', handIndex });
@@ -231,6 +278,12 @@ export function Battle({ setup, onExit, onRematch }: {
     }
     if (targeting.kind === 'allyEquip' && side === PLAYER && isCharAlive(state, PLAYER, index)) {
       act({ type: 'playEquipment', handIndex: targeting.handIndex, targetIndex: index });
+    }
+    if (targeting.kind === 'allyUse' && side === PLAYER) {
+      const match = myActions.find(
+        (a) => a.type === 'playSkill' && a.handIndex === targeting.handIndex && a.usingIndex === index,
+      );
+      if (match) act(match);
     }
   }
 
@@ -288,10 +341,16 @@ export function Battle({ setup, onExit, onRematch }: {
 
           {/* 相手エリア: 左にゾーン（鏡写し）、右に陣形 */}
           <div className="area enemy-area">
-            <ZoneCol side={ENEMY} p={foe} deckRef={deckRefE} apRef={apRefE} trashRef={trashRefE} />
+            <ZoneCol
+              side={ENEMY} p={foe} deckRef={deckRefE} apRef={apRefE} trashRef={trashRefE}
+              onOpenPile={(kind) => {
+                if (kind === 'trash') setPileList({ title: '相手のトラッシュ', cards: foe.trash });
+              }}
+            />
             <Formation
               side={ENEMY} state={view} pops={pops} targeting={targeting}
               onTap={tapChar} koShown={koShown} cardW={cardW} vfxList={vfxList}
+              onZoom={setZoomCard}
             />
           </div>
 
@@ -310,8 +369,15 @@ export function Battle({ setup, onExit, onRematch }: {
             <Formation
               side={PLAYER} state={view} pops={pops} targeting={targeting}
               onTap={tapChar} koShown={koShown} cardW={cardW} vfxList={vfxList}
+              onZoom={setZoomCard}
             />
-            <ZoneCol side={PLAYER} p={me} deckRef={deckRefP} apRef={apRefP} trashRef={trashRefP} />
+            <ZoneCol
+              side={PLAYER} p={me} deckRef={deckRefP} apRef={apRefP} trashRef={trashRefP}
+              onOpenPile={(kind) => {
+                if (kind === 'trash') setPileList({ title: '自分のトラッシュ', cards: me.trash });
+                if (kind === 'ap') setPileList({ title: '自分のAPエリア', cards: me.ap });
+              }}
+            />
           </div>
         </div>
       </div>
@@ -333,6 +399,7 @@ export function Battle({ setup, onExit, onRematch }: {
               ].join(' ')}
               style={{ marginLeft: i === 0 ? 0 : -Math.round(handW * 0.37), zIndex: i }}
               onClick={() => tapHand(i)}
+              {...longPressHandlers(() => setZoomCard(id))}
             >
               <CardFrame card={card} width={handW} upright />
               {picked && <span className="pick-badge">⚡</span>}
@@ -348,7 +415,11 @@ export function Battle({ setup, onExit, onRematch }: {
         ) : targeting ? (
           <>
             <span className="hint">
-              {targeting.kind === 'enemy' ? '攻撃する相手を選んでください' : '対象の味方を選んでください'}
+              {targeting.kind === 'enemy'
+                ? '攻撃する相手を選んでください'
+                : targeting.kind === 'allyUse'
+                  ? 'このスキルを使うキャラを選んでください'
+                  : '対象の味方を選んでください'}
             </span>
             <button className="chip" onClick={() => setTargeting(null)}>やめる</button>
           </>
@@ -357,7 +428,18 @@ export function Battle({ setup, onExit, onRematch }: {
         ) : !isMyTurn || finished ? (
           <span className="hint">{finished ? 'バトル終了' : '相手のターン…'}</span>
         ) : state.phase === 'play' ? (
-          <button className="chip" onClick={() => act({ type: 'endPlay' })}>チャージへ →</button>
+          <>
+            {myActions.filter((a) => a.type === 'turnStartAbility').map((a) => {
+              const ci = (a as { charIndex: number }).charIndex;
+              const name = me.characters[ci]?.name ?? '';
+              return (
+                <button key={ci} className="big-btn slim" onClick={() => act(a)}>
+                  {name.replace(/^\[.*\]/, '')}をアクターにする
+                </button>
+              );
+            })}
+            <button className="chip" onClick={() => act({ type: 'endPlay' })}>チャージへ →</button>
+          </>
         ) : (
           <>
             {chargeSel.size > 0 ? (
@@ -422,6 +504,36 @@ export function Battle({ setup, onExit, onRematch }: {
         </div>
       )}
 
+      {/* 読み取り専用の拡大表示（盤面キャラ・装備・トラッシュなど） */}
+      {zoomCard && safeCard(zoomCard) && (
+        <div className="overlay preview" onClick={() => setZoomCard(null)}>
+          <div className="preview-inner" onClick={(e) => e.stopPropagation()}>
+            <CardFrame card={safeCard(zoomCard)!} width={Math.min(300, Math.max(230, window.innerWidth * 0.72))} upright />
+            <button className="chip" onClick={() => setZoomCard(null)}>とじる</button>
+          </div>
+        </div>
+      )}
+
+      {/* トラッシュ・APのリスト表示 */}
+      {pileList && (
+        <div className="overlay" onClick={() => setPileList(null)}>
+          <div className="dialog pile-dialog" onClick={(e) => e.stopPropagation()}>
+            <h3>{pileList.title}（{pileList.cards.length}枚）</h3>
+            <div className="pile-grid">
+              {pileList.cards.length === 0 && <p className="hint">まだカードがありません</p>}
+              {[...pileList.cards].reverse().map((id, i) =>
+                safeCard(id) ? (
+                  <div key={`${id}-${i}`} className="pile-grid-card" onClick={() => setZoomCard(id)}>
+                    <CardFrame card={safeCard(id)!} width={72} upright />
+                  </div>
+                ) : null,
+              )}
+            </div>
+            <button className="chip" onClick={() => setPileList(null)}>とじる</button>
+          </div>
+        </div>
+      )}
+
       {/* ルール説明 */}
       {showRules && <RulesModal onClose={() => setShowRules(false)} />}
 
@@ -451,7 +563,7 @@ export function Battle({ setup, onExit, onRematch }: {
  * キャラをホイール上に等間隔で配置し、アクター交代時はホイールごと回転して
  * リボルバーのように入れ替わる。アクター位置（中央側）のカードは大きく表示。
  */
-function Formation({ side, state, pops, targeting, onTap, koShown, cardW, vfxList }: {
+function Formation({ side, state, pops, targeting, onTap, koShown, cardW, vfxList, onZoom }: {
   side: 0 | 1;
   state: BattleState;
   pops: DamagePop[];
@@ -460,6 +572,7 @@ function Formation({ side, state, pops, targeting, onTap, koShown, cardW, vfxLis
   koShown: Set<string>;
   cardW: number;
   vfxList: { key: number; side: 0 | 1; charIndex: number; img: string; delay: number }[];
+  onZoom?: (cardId: string) => void;
 }) {
   const p = state.players[side];
   const n = p.characters.length;
@@ -519,10 +632,22 @@ function Formation({ side, state, pops, targeting, onTap, koShown, cardW, vfxLis
               transform: `translate(-50%, -50%) rotate(${A}deg) translateY(${-r}px) rotate(${-A}deg) scale(${scale})`,
             }}
             onClick={() => onTap(side, i)}
+            {...longPressHandlers(() => onZoom?.(c.cardId))}
           >
             <CardFrame card={cardById(c.cardId)} width={frontW} />
             {koVisible && <img src={IMG('back')} className="ko-back" />}
-            {c.equipmentCardId && <span className="equip-dot" title="装備あり">⚙</span>}
+            {c.equipmentCardId && (
+              <span
+                className="equip-thumb"
+                title="装備（タップで拡大）"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onZoom?.(c.equipmentCardId!);
+                }}
+              >
+                <img src={IMG(c.equipmentCardId)} alt="装備" />
+              </span>
+            )}
             {alive && (
               <div className="char-status">
                 <div className="hp-bar">
@@ -580,12 +705,13 @@ function extraAttributes(state: BattleState, side: 0 | 1, i: number): string[] {
 
 // ---------------------------------------------------------------- ゾーン（縦積み・山札が端）
 
-function ZoneCol({ side, p, deckRef, apRef, trashRef }: {
+function ZoneCol({ side, p, deckRef, apRef, trashRef, onOpenPile }: {
   side: 0 | 1;
   p: BattleState['players'][number];
   deckRef: React.RefObject<HTMLDivElement>;
   apRef: React.RefObject<HTMLDivElement>;
   trashRef: React.RefObject<HTMLDivElement>;
+  onOpenPile: (kind: 'ap' | 'trash') => void;
 }) {
   const deck = (
     <div className="pile deck" ref={deckRef} key="deck">
@@ -595,14 +721,14 @@ function ZoneCol({ side, p, deckRef, apRef, trashRef }: {
     </div>
   );
   const ap = (
-    <div className="pile ap" ref={apRef} key="ap">
+    <div className="pile ap" ref={apRef} key="ap" onClick={() => onOpenPile('ap')}>
       <img src={IMG('back')} className="pile-card sideways" />
       <span className="pile-count gold">{p.ap.length}</span>
       <span className="pile-label">AP</span>
     </div>
   );
   const trash = (
-    <div className="pile trash" ref={trashRef} key="trash">
+    <div className="pile trash" ref={trashRef} key="trash" onClick={() => onOpenPile('trash')}>
       {p.trash.length > 0 ? (
         <div className="pile-card trash-top" style={{ backgroundImage: `url(${IMG(p.trash[p.trash.length - 1])})` }} />
       ) : (

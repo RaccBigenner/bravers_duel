@@ -83,6 +83,8 @@ export interface BattleState {
   pendingAttack: PendingAttack | null;
   /** 効果が明示的にアクターを動かしたプレイヤー（そのプレイヤーの直後の自動交代をスキップ） */
   skipRotationFor: PlayerIndex | null;
+  /** 任意能力を手動発動にするプレイヤー（人間側） */
+  manualFor: PlayerIndex | null;
   /** 場のフィールドカード（両者共有・1枚だけ） */
   field: { cardId: string; owner: PlayerIndex } | null;
   winner: PlayerIndex | null;
@@ -95,10 +97,11 @@ export interface BattleState {
 }
 
 export type BattleAction =
-  | { type: 'playSkill'; handIndex: number; healTargetIndex?: number; targetIndex?: number }
+  | { type: 'playSkill'; handIndex: number; healTargetIndex?: number; targetIndex?: number; usingIndex?: number }
   | { type: 'playCharacter'; handIndex: number }
   | { type: 'playEquipment'; handIndex: number; targetIndex: number }
   | { type: 'playField'; handIndex: number }
+  | { type: 'turnStartAbility'; charIndex: number } // アニマ等の任意能力（手動）
   | { type: 'endPlay' }
   | { type: 'playGuard'; handIndex: number }
   | { type: 'pass' }
@@ -337,6 +340,15 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
     damageEnemyActor: (n) => {
       applyDamage(state, enemyIdx, enemy().actorIndex, clampN(n));
     },
+    damageAttacker: (n) => {
+      const pending = state.pendingAttack;
+      if (pending && enemyIdx === state.active) {
+        // 攻撃中で、自分（効果の持ち主）が防御側なら、攻撃してきた使用キャラ本人へ
+        applyDamage(state, state.active, pending.attackerChar, clampN(n));
+      } else {
+        applyDamage(state, enemyIdx, enemy().actorIndex, clampN(n));
+      }
+    },
     damageAllEnemies: (n) => {
       const targets = enemy().characters.map((_, i) => i);
       const judgedActor = enemy().actorIndex; // 途中の強制交代に影響されない
@@ -367,14 +379,14 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
       if (best === -1) return;
       const c = p.characters[best];
       c.damage = Math.max(0, maxHpOf(state, owner, best) - Math.max(1, hp));
-      pushLog(state, `${c.name}が復活（HP${Math.max(1, hp)}）`);
+      pushLog(state, `P${owner + 1}の${c.name}が復活（HP${Math.max(1, hp)}）`);
     },
     addAttributeToSelf: (attr, n = 1) => {
       const c = me().characters[ownerChar];
       for (let i = 0; i < n && c.addedAttributes.length < MAX_ADDED_ATTRIBUTES; i++) {
         c.addedAttributes.push(attr);
       }
-      pushLog(state, `${c.name}に${attr}属性を追加`);
+      pushLog(state, `P${owner + 1}の${c.name}に${attr}属性を追加`);
     },
     addAttributeToAllAllies: (attr) => {
       me().characters.forEach((c, i) => {
@@ -454,7 +466,7 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
       const c = state.players[defenderIdx()].characters[t];
       if (c.equipmentCardId) {
         state.players[defenderIdx()].trash.push(c.equipmentCardId);
-        pushLog(state, `${c.name}の装備${cardById(c.equipmentCardId).name}を破壊`);
+        pushLog(state, `P${defenderIdx() + 1}の${c.name}の装備${cardById(c.equipmentCardId).name}を破壊`);
         c.equipmentCardId = null;
       }
     },
@@ -535,14 +547,14 @@ function applyDamage(
   // ビコウ: 控えにいる時はダメージを受けない
   const eff = characterEffectOf(c.cardId);
   if (eff?.standbyImmune && charIndex !== actorRef) {
-    pushLog(state, `${c.name}は控えのためダメージを受けない`);
+    pushLog(state, `P${player + 1}の${c.name}は控えのためダメージを受けない`);
     return 0;
   }
 
   const maxHp = maxHpOf(state, player, charIndex);
   const actual = Math.min(amount, maxHp - c.damage);
   c.damage += actual;
-  pushLog(state, `${c.name}に${actual}ダメージ（残りHP: ${maxHp - c.damage}）`);
+  pushLog(state, `P${player + 1}の${c.name}に${actual}ダメージ（残りHP: ${maxHp - c.damage}）`);
 
   // 被ダメージ時の常時能力（ミルオン・ボーダン）。アクター判定は攻撃列の開始時点で行う
   if (actual > 0 && eff?.onDamaged && isCharAlive(state, player, charIndex)) {
@@ -553,7 +565,7 @@ function applyDamage(
 
   // 戦闘不能処理
   if (!isCharAlive(state, player, charIndex)) {
-    pushLog(state, `${c.name}は戦闘不能`);
+    pushLog(state, `P${player + 1}の${c.name}は戦闘不能`);
     // 味方戦闘不能時の常時能力（レオン・ソーベルト。倒れた本人も発動する）
     p.characters.forEach((ally, i) => {
       const allyEff = characterEffectOf(ally.cardId);
@@ -569,7 +581,7 @@ function applyDamage(
     // アクターが倒れたら強制交代（ロックより優先）
     if (charIndex === p.actorIndex) {
       p.actorIndex = nextAliveIndex(state, player, p.actorIndex);
-      pushLog(state, `アクターが${p.characters[p.actorIndex].name}に強制交代`);
+      pushLog(state, `P${player + 1}のアクターが${p.characters[p.actorIndex].name}に強制交代`);
     }
   }
   return actual;
@@ -583,7 +595,7 @@ function healCharacter(state: BattleState, player: PlayerIndex, charIndex: numbe
   const healed = Math.min(amount, c.damage);
   c.damage -= healed;
   if (healed > 0) {
-    pushLog(state, `${c.name}を${healed}回復`);
+    pushLog(state, `P${player + 1}の${c.name}を${healed}回復`);
     const eff = characterEffectOf(c.cardId);
     if (eff?.onHealed) {
       runEffectSafely(state, `${c.name}の回復時能力`, () =>
@@ -601,6 +613,8 @@ export interface CreateBattleOptions {
   validate?: boolean;
   /** 実験用のデッキ構築ルール（省略時は公式ルール） */
   deckRules?: DeckRules;
+  /** このプレイヤーの任意能力（アニマ等）は自動発動せず、手動アクションで発動する */
+  manualFor?: PlayerIndex;
 }
 
 export function createBattle(
@@ -662,6 +676,7 @@ export function createBattle(
     firstPlayer,
     pendingAttack: null,
     skipRotationFor: null,
+    manualFor: options.manualFor ?? null,
     field: null,
     winner: null,
     endReason: null,
@@ -719,15 +734,16 @@ function beginTurn(state: BattleState): void {
   state.phase = 'play';
 
   // ターン開始時の常時能力（アニマなど。ドロー後に発動）
+  // 手動プレイヤー（人間）の任意能力は自動発動せず、turnStartAbility アクションで発動する
   p.characters.forEach((c, i) => {
     if (battleOver(state)) return;
     if (!isCharAlive(state, state.active, i)) return;
     const eff = characterEffectOf(c.cardId);
-    if (eff?.onOwnTurnStart) {
-      runEffectSafely(state, `${c.name}のターン開始能力`, () =>
-        eff.onOwnTurnStart!(makeApi(state, state.active, i), i === p.actorIndex),
-      );
-    }
+    if (!eff?.onOwnTurnStart) return;
+    if (state.manualFor === state.active && eff.turnStartAction) return;
+    runEffectSafely(state, `${c.name}のターン開始能力`, () =>
+      eff.onOwnTurnStart!(makeApi(state, state.active, i), i === p.actorIndex),
+    );
   });
 }
 
@@ -759,17 +775,26 @@ export function effectiveSkillCost(
   return Math.max(0, cost);
 }
 
-/** このスキルを使うキャラの番号を返す（使えなければ null） */
-export function resolveUsingChar(state: BattleState, player: PlayerIndex, card: SkillCard): number | null {
+/** このスキルを使えるキャラの候補一覧 */
+export function eligibleUsingChars(state: BattleState, player: PlayerIndex, card: SkillCard): number[] {
   const p = state.players[player];
   const eff = skillEffectOf(card.id);
   const candidates = eff?.anyCharacterCanUse
     ? p.characters.map((_, i) => i).filter((i) => isCharAlive(state, player, i))
     : [p.actorIndex];
-  for (const ci of candidates) {
-    if (containsAll(effectiveAttributes(state, player, ci), card.conditionAttribute)) return ci;
-  }
-  return null;
+  return candidates.filter((ci) => containsAll(effectiveAttributes(state, player, ci), card.conditionAttribute));
+}
+
+/** このスキルを使うキャラの番号を返す（使えなければ null）。requested で使用キャラを指定できる */
+export function resolveUsingChar(
+  state: BattleState,
+  player: PlayerIndex,
+  card: SkillCard,
+  requested?: number,
+): number | null {
+  const eligible = eligibleUsingChars(state, player, card);
+  if (requested !== undefined) return eligible.includes(requested) ? requested : null;
+  return eligible.length > 0 ? eligible[0] : null;
 }
 
 export function canPlaySkill(state: BattleState, player: PlayerIndex, skill: SkillCard): boolean {
@@ -812,7 +837,12 @@ export function legalActions(state: BattleState): BattleAction[] {
       const card = cardById(id);
       if (card.type === 'skill' && card.valueType !== 'guard' && canPlaySkill(state, state.active, card)) {
         const eff = skillEffectOf(card.id);
-        if (card.valueType === 'heal') {
+        if (eff?.anyCharacterCanUse) {
+          // 使用キャラを選べる（控えからも使えるスキル）
+          for (const ci of eligibleUsingChars(state, state.active, card)) {
+            actions.push({ type: 'playSkill', handIndex, usingIndex: ci });
+          }
+        } else if (card.valueType === 'heal') {
           p.characters.forEach((c, i) => {
             if (isCharAlive(state, state.active, i)) {
               actions.push({ type: 'playSkill', handIndex, healTargetIndex: i });
@@ -842,6 +872,15 @@ export function legalActions(state: BattleState): BattleAction[] {
         actions.push({ type: 'playField', handIndex });
       }
     });
+    // 任意のターン開始能力（アニマ等・手動プレイヤーのみ・そのターン最初の行動として）
+    if (state.manualFor === state.active && p.skillsUsedThisTurn === 0) {
+      p.characters.forEach((c, i) => {
+        if (!isCharAlive(state, state.active, i) || i === p.actorIndex) return;
+        if (characterEffectOf(c.cardId)?.turnStartAction) {
+          actions.push({ type: 'turnStartAbility', charIndex: i });
+        }
+      });
+    }
     actions.push({ type: 'endPlay' });
   }
 
@@ -877,7 +916,7 @@ export function applyAction(state: BattleState, action: BattleAction): void {
       if (card.valueType === 'guard') {
         throw new Error(`guardスキルは攻撃された時にだけ使えます: ${card.name}`);
       }
-      const usingChar = resolveUsingChar(state, state.active, card);
+      const usingChar = resolveUsingChar(state, state.active, card, action.usingIndex);
       if (usingChar === null) throw new Error(`属性の条件を満たしていません: ${card.name}`);
       const cost = effectiveSkillCost(state, state.active, card, usingChar);
       if (p.ap.length < cost) throw new Error(`APが足りません: ${card.name}`);
@@ -957,11 +996,11 @@ export function applyAction(state: BattleState, action: BattleAction): void {
       // 付け替えOK: 古い装備はトラッシュへ
       if (target.equipmentCardId) {
         p.trash.push(target.equipmentCardId);
-        pushLog(state, `${target.name}の${cardById(target.equipmentCardId).name}を外してトラッシュ`);
+        pushLog(state, `P${state.active + 1}の${target.name}の${cardById(target.equipmentCardId).name}を外してトラッシュ`);
       }
       p.hand.splice(action.handIndex, 1);
       target.equipmentCardId = card.id;
-      pushLog(state, `${target.name}に${card.name}を装備`);
+      pushLog(state, `P${state.active + 1}の${target.name}に${card.name}を装備`);
       return;
     }
 
@@ -999,6 +1038,22 @@ export function applyAction(state: BattleState, action: BattleAction): void {
       p.trash.push(card.id);
       pushLog(state, `${card.name}のカードを使用`);
       healCharacter(state, state.active, best, CHARACTER_CARD_HEAL);
+      return;
+    }
+
+    case 'turnStartAbility': {
+      requirePhase(state, 'play');
+      const p = state.players[state.active];
+      const c = p.characters[action.charIndex];
+      if (!c || !isCharAlive(state, state.active, action.charIndex)) {
+        throw new Error('そのキャラクターは能力を使えません');
+      }
+      const eff = characterEffectOf(c.cardId);
+      if (!eff?.turnStartAction) throw new Error('任意のターン開始能力がありません');
+      if (p.skillsUsedThisTurn > 0) throw new Error('ターンの最初にだけ使えます');
+      runEffectSafely(state, `${c.name}のターン開始能力`, () =>
+        eff.turnStartAction!(makeApi(state, state.active, action.charIndex)),
+      );
       return;
     }
 

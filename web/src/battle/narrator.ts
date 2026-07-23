@@ -42,6 +42,17 @@ function findChar(state: BattleState, name: string, preferSide: 0 | 1): [0 | 1, 
   return preferred ?? hits[0];
 }
 
+/** 側が確定しているログ（P1/P2つき）からキャラ位置を引く */
+function charOnSide(state: BattleState, side: 0 | 1, name: string): number | undefined {
+  const i = state.players[side].characters.findIndex((c) => c.name === name);
+  return i >= 0 ? i : undefined;
+}
+
+/** 側つきの名前表示（相手側には「相手の」を付ける） */
+function sideName(side: 0 | 1, name: string): string {
+  return side === 1 ? `相手の${name}` : name;
+}
+
 /**
  * ログ1行を演出イベントに変換する。null なら表示しない。
  * actor = この行動を起こした側（ダメージの対象側の推定などに使う）
@@ -84,29 +95,29 @@ export function classify(state: BattleState, line: string, actor: 0 | 1): NarrEv
   if ((m = line.match(/^(.+)は防御で割り込めない攻撃$/))) {
     return ev({ kind: 'attack', text: `「${m[1]}」はガード不可の攻撃！`, duration: 1200 });
   }
-  if ((m = line.match(/^(.+)に(\d+)ダメージ（残りHP: (\d+)）$/))) {
-    const hit = findChar(state, m[1], (1 - actor) as 0 | 1);
+  if ((m = line.match(/^P(\d)の(.+)に(\d+)ダメージ（残りHP: (\d+)）$/))) {
+    const side = (Number(m[1]) - 1) as 0 | 1;
     return ev({
       kind: 'damage',
-      text: `${m[1]}に${m[2]}ダメージ！`,
-      side: hit?.[0], charIndex: hit?.[1], amount: Number(m[2]), duration: 1125,
+      text: `${sideName(side, m[2])}に${m[3]}ダメージ！`,
+      side, charIndex: charOnSide(state, side, m[2]), amount: Number(m[3]), duration: 1125,
     });
   }
-  if ((m = line.match(/^(.+)を(\d+)回復$/))) {
-    const hit = findChar(state, m[1], actor);
-    return ev({ kind: 'heal', text: `${m[1]}が${m[2]}回復`, side: hit?.[0], charIndex: hit?.[1], amount: Number(m[2]), duration: 1125 });
+  if ((m = line.match(/^P(\d)の(.+)を(\d+)回復$/))) {
+    const side = (Number(m[1]) - 1) as 0 | 1;
+    return ev({ kind: 'heal', text: `${sideName(side, m[2])}が${m[3]}回復`, side, charIndex: charOnSide(state, side, m[2]), amount: Number(m[3]), duration: 1125 });
   }
-  if ((m = line.match(/^(.+)は戦闘不能$/))) {
-    const hit = findChar(state, m[1], (1 - actor) as 0 | 1);
-    return ev({ kind: 'ko', text: `${m[1]}は戦闘不能！`, side: hit?.[0], charIndex: hit?.[1], duration: 1425 });
+  if ((m = line.match(/^P(\d)の(.+)は戦闘不能$/))) {
+    const side = (Number(m[1]) - 1) as 0 | 1;
+    return ev({ kind: 'ko', text: `${sideName(side, m[2])}は戦闘不能！`, side, charIndex: charOnSide(state, side, m[2]), duration: 1425 });
   }
-  if ((m = line.match(/^(.+)が復活（HP(\d+)）$/))) {
-    const hit = findChar(state, m[1], actor);
-    return ev({ kind: 'revive', text: `${m[1]}が復活！`, side: hit?.[0], charIndex: hit?.[1], amount: Number(m[2]), duration: 1425 });
+  if ((m = line.match(/^P(\d)の(.+)が復活（HP(\d+)）$/))) {
+    const side = (Number(m[1]) - 1) as 0 | 1;
+    return ev({ kind: 'revive', text: `${sideName(side, m[2])}が復活！`, side, charIndex: charOnSide(state, side, m[2]), amount: Number(m[3]), duration: 1425 });
   }
-  if ((m = line.match(/^アクターが(.+)に強制交代$/))) {
-    const hit = findChar(state, m[1], (1 - actor) as 0 | 1);
-    return ev({ kind: 'actor', text: `アクターは${m[1]}に強制交代`, charName: m[1], side: hit?.[0], charIndex: hit?.[1], duration: 1125 });
+  if ((m = line.match(/^P(\d)のアクターが(.+)に強制交代$/))) {
+    const side = (Number(m[1]) - 1) as 0 | 1;
+    return ev({ kind: 'actor', text: `${side === 1 ? '相手の' : ''}アクターは${m[2]}に強制交代`, charName: m[2], side, charIndex: charOnSide(state, side, m[2]), duration: 1125 });
   }
   if ((m = line.match(/^プレイヤー(\d)のアクターが(.+)に交代$/))) {
     const side = (Number(m[1]) - 1) as 0 | 1;
@@ -120,16 +131,17 @@ export function classify(state: BattleState, line: string, actor: 0 | 1): NarrEv
   if ((m = line.match(/^発動:(.+)$/))) {
     return ev({ kind: 'ability', text: `${m[1]}！`, duration: 1200 });
   }
-  if ((m = line.match(/^(.+)に(.+)を装備$/))) {
-    const card = CARD_BY_NAME.get(m[2]);
-    const hit = findChar(state, m[1], actor);
-    return ev({ kind: 'equip', text: `${m[1]}に「${m[2]}」を装備`, card, charName: m[1], side: hit?.[0], charIndex: hit?.[1], duration: 1500 });
+  if ((m = line.match(/^P(\d)の(.+)に(.+)を装備$/))) {
+    const side = (Number(m[1]) - 1) as 0 | 1;
+    const card = CARD_BY_NAME.get(m[3]);
+    return ev({ kind: 'equip', text: `${sideName(side, m[2])}に「${m[3]}」を装備`, card, charName: m[2], side, charIndex: charOnSide(state, side, m[2]), duration: 1500 });
   }
-  if ((m = line.match(/^(.+)の(.+)を外してトラッシュ$/))) {
-    return ev({ kind: 'info', text: `${m[1]}の「${m[2]}」は外れた`, duration: 1050 });
+  if ((m = line.match(/^P(\d)の(.+)の(.+)を外してトラッシュ$/))) {
+    return ev({ kind: 'info', text: `${m[2]}の「${m[3]}」は外れた`, duration: 1050 });
   }
-  if ((m = line.match(/^(.+)の装備(.+)を破壊$/))) {
-    return ev({ kind: 'equip', text: `${m[1]}の装備「${m[2]}」を破壊！`, duration: 1275 });
+  if ((m = line.match(/^P(\d)の(.+)の装備(.+)を破壊$/))) {
+    const side = (Number(m[1]) - 1) as 0 | 1;
+    return ev({ kind: 'equip', text: `${sideName(side, m[2])}の装備「${m[3]}」を破壊！`, duration: 1275 });
   }
   if ((m = line.match(/^フィールド(.+)を展開$/))) {
     const card = CARD_BY_NAME.get(m[1]);
@@ -148,9 +160,9 @@ export function classify(state: BattleState, line: string, actor: 0 | 1): NarrEv
   if ((m = line.match(/^デッキから(\d+)枚トラッシュ$/))) {
     return ev({ kind: 'mill', text: `デッキから${m[1]}枚トラッシュ`, amount: Number(m[1]), duration: 1125 });
   }
-  if ((m = line.match(/^(.+)に(.)属性を追加$/))) {
-    const hit = findChar(state, m[1], actor);
-    return ev({ kind: 'attr', text: `${m[1]}に${m[2]}属性を追加`, charName: m[1], attr: m[2], side: hit?.[0], charIndex: hit?.[1], duration: 1125 });
+  if ((m = line.match(/^P(\d)の(.+)に(.)属性を追加$/))) {
+    const side = (Number(m[1]) - 1) as 0 | 1;
+    return ev({ kind: 'attr', text: `${sideName(side, m[2])}に${m[3]}属性を追加`, charName: m[2], attr: m[3], side, charIndex: charOnSide(state, side, m[2]), duration: 1125 });
   }
   if ((m = line.match(/^デッキから(.+)を手札に加えた$/))) {
     return ev({ kind: 'search', text: `デッキから「${m[1]}」を手札に！`, duration: 1275 });
@@ -162,8 +174,9 @@ export function classify(state: BattleState, line: string, actor: 0 | 1): NarrEv
   if (line.includes('ロックされていて変更できない')) {
     return ev({ kind: 'lock', text: 'ロック中で交代できない！', duration: 1125 });
   }
-  if (line.includes('控えのためダメージを受けない')) {
-    return ev({ kind: 'info', text: line, duration: 1200 });
+  if ((m = line.match(/^P(\d)の(.+)は控えのためダメージを受けない$/))) {
+    const side = (Number(m[1]) - 1) as 0 | 1;
+    return ev({ kind: 'info', text: `${sideName(side, m[2])}は控えのため無傷！`, duration: 1200 });
   }
   if ((m = line.match(/^プレイヤー(\d)は山札切れで/))) {
     const side = (Number(m[1]) - 1) as 0 | 1;

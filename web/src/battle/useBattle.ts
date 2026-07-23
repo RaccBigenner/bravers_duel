@@ -144,7 +144,7 @@ export function useBattle(playerDeck: DeckList, enemyDeck: DeckList) {
   const stateRef = useRef<BattleState | null>(null);
   const viewRef = useRef<BattleState | null>(null);
   if (stateRef.current === null) {
-    stateRef.current = createBattle([playerDeck, enemyDeck], Math.floor(Math.random() * 1e9));
+    stateRef.current = createBattle([playerDeck, enemyDeck], Math.floor(Math.random() * 1e9), { manualFor: PLAYER }); // 人間側の任意能力は手動発動
     viewRef.current = structuredClone(stateRef.current);
   }
   const state = stateRef.current;

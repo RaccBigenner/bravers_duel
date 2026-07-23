@@ -28,14 +28,16 @@ export const VOL1_EFFECTS: Record<string, CardEffect> = {
   '1-A004-USR': { kind: 'character', skillCostDelta: 2 },
   '1-A006-USR': {
     // アニマ「自分のターンの最初に、このキャラクターをアクターにできる」
-    // 暫定: バトルAIが使う前提で自動判断（自分の方が使えるスキルが多い時だけアクターになる）
+    // 人間プレイヤー: turnStartAction をボタンから任意発動 / AI: onOwnTurnStart の自動判断
     kind: 'character',
     onOwnTurnStart: (api, isActor) => {
       if (isActor) return;
       if (api.handUsableSkillCount('self') > api.handUsableSkillCount('actor')) {
         api.becomeActor();
-        api.log('アニマがアクターになった');
       }
+    },
+    turnStartAction: (api) => {
+      api.becomeActor();
     },
   },
   '1-A007-SSR': {
@@ -75,7 +77,7 @@ export const VOL1_EFFECTS: Record<string, CardEffect> = {
     kind: 'character',
     onDamaged: (api, amount, isActor) => {
       if (isActor) {
-        api.damageEnemyActor(amount);
+        api.damageAttacker(amount); // 攻撃してきた使用キャラ本人に跳ね返す
         api.millDeck('me', 2);
       }
     },

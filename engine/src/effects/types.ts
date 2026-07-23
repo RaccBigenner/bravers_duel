@@ -51,6 +51,8 @@ export interface EffectApi {
   discardEnemyAp(n: number): void;
   /** 効果ダメージ（ガード割り込み不可）。敵アクターへ */
   damageEnemyActor(n: number): void;
+  /** 攻撃してきた「使用キャラ本人」への効果ダメージ（反射用）。攻撃中でなければ敵アクターへ */
+  damageAttacker(n: number): void;
   /** 効果ダメージ。敵全員へ */
   damageAllEnemies(n: number): void;
   /** 攻撃対象に追加の効果ダメージ */
@@ -136,8 +138,10 @@ export interface CharacterEffect {
   /** 最大HPの修正（ドッソ）。apiで状況を見て差分を返す */
   maxHpBonus?(api: EffectApi): number;
   onBattleStart?(api: EffectApi): void;
-  /** 自分のターンの最初に（ドロー後。このキャラが生きていれば） */
+  /** 自分のターンの最初に（ドロー後。このキャラが生きていれば）。AI用の自動判断 */
   onOwnTurnStart?(api: EffectApi, isActor: boolean): void;
+  /** 「〜できる」系の任意能力。人間プレイヤーはこれをボタンから発動する（AIは onOwnTurnStart の自動判断） */
+  turnStartAction?(api: EffectApi): void;
   /** 自分のターンの終わりに（このキャラが生きていれば） */
   onOwnTurnEnd?(api: EffectApi, isActor: boolean): void;
   /** このキャラが攻撃する時のダメージ修正 */
