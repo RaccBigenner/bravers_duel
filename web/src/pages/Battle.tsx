@@ -1,23 +1,29 @@
 import {
   cardById,
+  effectiveAttributes,
   isCharAlive,
   maxHpOf,
   skillEffectOf,
   type BattleAction,
   type BattleState,
-  type Card,
 } from '@bravers/engine';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { BattleSetup } from '../App';
 import { CardFrame } from '../CardFrame';
-import { IMG, IMG_PNG } from '../cardAssets';
-import { useBattle, type DamagePop } from '../battle/useBattle';
+import { IMG } from '../cardAssets';
 import type { NarrEvent } from '../battle/narrator';
+import { useBattle, type DamagePop } from '../battle/useBattle';
 import { RulesModal } from './RulesModal';
 import '../battle.css';
 
 const PLAYER = 0 as const;
 const ENEMY = 1 as const;
+
+type Targeting =
+  | null
+  | { kind: 'enemy'; handIndex: number }
+  | { kind: 'allyHeal'; handIndex: number }
+  | { kind: 'allyEquip'; handIndex: number };
 
 /** 画面の高さ（リサイズ追従） */
 function useViewportHeight(): number {
@@ -30,19 +36,22 @@ function useViewportHeight(): number {
   return vh;
 }
 
-/** 1画面に収まるカード幅を高さから決める */
 function cardWidthFor(vh: number): number {
-  if (vh >= 840) return 92;
-  if (vh >= 760) return 82;
-  if (vh >= 700) return 74;
-  return 66;
+  if (vh >= 840) return 84;
+  if (vh >= 760) return 76;
+  if (vh >= 700) return 68;
+  return 62;
 }
 
-type Targeting =
-  | null
-  | { kind: 'enemy'; handIndex: number } // 対象を選んで攻撃
-  | { kind: 'allyHeal'; handIndex: number } // 回復対象
-  | { kind: 'allyEquip'; handIndex: number }; // 装備対象
+/** 飛んでいくカードの演出 */
+interface Flight {
+  key: number;
+  from: { x: number; y: number };
+  to: { x: number; y: number };
+  faceCardId?: string;
+}
+
+let flightKey = 1;
 
 export function Battle({ setup, onExit, onRematch }: {
   setup: BattleSetup;
@@ -51,19 +60,90 @@ export function Battle({ setup, onExit, onRematch }: {
 }) {
   const { state, busy, current, pops, koShown, perform, myActions, isMyTurn } = useBattle(setup.playerDeck, setup.enemy.deck);
   const [selectedHand, setSelectedHand] = useState<number | null>(null);
+  const [chargeSel, setChargeSel] = useState<Set<number>>(new Set());
   const [targeting, setTargeting] = useState<Targeting>(null);
   const [confirmExit, setConfirmExit] = useState(false);
   const [showRules, setShowRules] = useState(false);
   const [guideOn, setGuideOn] = useState(true);
+  const [flights, setFlights] = useState<Flight[]>([]);
 
   const vh = useViewportHeight();
   const cardW = cardWidthFor(vh);
   const me = state.players[PLAYER];
   const foe = state.players[ENEMY];
   const finished = state.phase === 'finished';
-  const guardPhase = state.phase === 'guard' && isMyTurn && !busy; // 自分が割り込む側（演出が終わってから）
+  const guardPhase = state.phase === 'guard' && isMyTurn && !busy;
 
-  // 手札ごとの「できること」
+  // 飛翔演出のアンカー
+  const deckRefP = useRef<HTMLDivElement>(null);
+  const deckRefE = useRef<HTMLDivElement>(null);
+  const apRefP = useRef<HTMLDivElement>(null);
+  const apRefE = useRef<HTMLDivElement>(null);
+  const trashRefP = useRef<HTMLDivElement>(null);
+  const trashRefE = useRef<HTMLDivElement>(null);
+  const handRefP = useRef<HTMLDivElement>(null);
+  const handRefE = useRef<HTMLDivElement>(null);
+  const boardRef = useRef<HTMLDivElement>(null);
+  const deckRefs = [deckRefP, deckRefE];
+  const apRefs = [apRefP, apRefE];
+  const trashRefs = [trashRefP, trashRefE];
+  const handRefs = [handRefP, handRefE];
+
+  function centerOf(el: HTMLElement | null): { x: number; y: number } | null {
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  }
+
+  function spawnFlight(fromEl: HTMLElement | null, toEl: HTMLElement | null, count = 1, faceCardId?: string) {
+    const from = centerOf(fromEl);
+    const to = centerOf(toEl);
+    if (!from || !to) return;
+    for (let i = 0; i < Math.min(count, 3); i++) {
+      const f: Flight = { key: flightKey++, from, to, faceCardId };
+      window.setTimeout(() => {
+        setFlights((prev) => [...prev, f]);
+        window.setTimeout(() => setFlights((prev) => prev.filter((x) => x.key !== f.key)), 700);
+      }, i * 130);
+    }
+  }
+
+  // ナレーションイベントに合わせて「カードが飛ぶ」物理演出
+  useEffect(() => {
+    if (!current) return;
+    const s = (current.side ?? PLAYER) as 0 | 1;
+    switch (current.kind) {
+      case 'draw':
+        spawnFlight(deckRefs[s].current, handRefs[s].current, current.amount ?? 1);
+        break;
+      case 'charge':
+        spawnFlight(handRefs[s].current, apRefs[s].current, 1);
+        break;
+      case 'chargeDeck':
+        spawnFlight(deckRefs[s].current, apRefs[s].current, current.amount ?? 1);
+        break;
+      case 'mill':
+        spawnFlight(deckRefs[s].current, trashRefs[s].current, current.amount ?? 1);
+        break;
+      case 'play':
+      case 'guard':
+        // カットインのあと、使ったカードがトラッシュへ飛ぶ
+        window.setTimeout(() => {
+          spawnFlight(boardRef.current, trashRefs[s].current, 1, current.card?.id);
+        }, Math.max(0, current.duration - 420));
+        break;
+      default:
+        break;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current?.key]);
+
+  // フェーズが変わったら選択状態をリセット
+  useEffect(() => {
+    setChargeSel(new Set());
+    setSelectedHand(null);
+  }, [state.phase, isMyTurn]);
+
   const handPlayable = useMemo(() => {
     const map = new Map<number, BattleAction[]>();
     for (const a of myActions) {
@@ -86,20 +166,14 @@ export function Battle({ setup, onExit, onRematch }: {
     }
   }
 
-  /** 手札カードの「使う」ボタン */
   function playSelected() {
     if (selectedHand === null) return;
-    const id = me.hand[selectedHand];
-    const card = cardById(id);
+    const card = cardById(me.hand[selectedHand]);
     if (card.type === 'skill') {
       const eff = skillEffectOf(card.id);
-      if (card.valueType === 'heal') {
-        setTargeting({ kind: 'allyHeal', handIndex: selectedHand });
-        return;
-      }
+      if (card.valueType === 'heal') return setTargeting({ kind: 'allyHeal', handIndex: selectedHand });
       if (card.valueType === 'attack' && eff?.targeting === 'choose') {
-        setTargeting({ kind: 'enemy', handIndex: selectedHand });
-        return;
+        return setTargeting({ kind: 'enemy', handIndex: selectedHand });
       }
       act({ type: 'playSkill', handIndex: selectedHand });
     } else if (card.type === 'character') {
@@ -127,76 +201,103 @@ export function Battle({ setup, onExit, onRematch }: {
   function tapHand(i: number) {
     if (finished || !isMyTurn || busy) return;
     if (state.phase === 'charge') {
-      act({ type: 'charge', handIndex: i });
+      // まとめて選択 → あとで確定
+      setChargeSel((prev) => {
+        const next = new Set(prev);
+        if (next.has(i)) next.delete(i);
+        else next.add(i);
+        return next;
+      });
       return;
     }
     setTargeting(null);
     setSelectedHand(selectedHand === i ? null : i);
   }
 
+  /** 選んだカードをまとめてチャージ（番号がずれないよう大きい方から） */
+  function chargeSelected() {
+    const indexes = [...chargeSel].sort((a, b) => b - a);
+    setChargeSel(new Set());
+    for (const i of indexes) {
+      try {
+        perform({ type: 'charge', handIndex: i });
+      } catch (e) {
+        console.warn(e);
+      }
+    }
+  }
+
   const fieldCard = state.field ? cardById(state.field.cardId) : null;
-  const lastLogs = state.log.slice(-2);
 
   return (
     <div className="battle-root">
-      {/* 相手情報バー */}
+      {/* 相手情報バー（表層UI） */}
       <div className="info-bar">
         <span className="deck-name">{setup.enemy.name}</span>
         <span className="turn-label">ターン{state.turn}・{isMyTurn ? 'あなた' : '相手'}</span>
         <button className="chip small" onClick={() => setConfirmExit(true)}>投了</button>
       </div>
 
-      {/* 相手の手札（裏向きの扇） */}
-      <div className="enemy-hand">
-        {foe.hand.map((_, i) => (
-          <img key={i} src={IMG('back')} className="hand-back" style={{ marginLeft: i === 0 ? 0 : -26 }} />
-        ))}
+      {/* 盤面（3Dに傾くテーブル） */}
+      <div className="board-wrap">
+        <div className="board" ref={boardRef}>
+          {/* 相手の手札（裏向きの扇） */}
+          <div className="enemy-hand" ref={handRefE}>
+            {foe.hand.map((_, i) => (
+              <img key={i} src={IMG('back')} className="hand-back" style={{ marginLeft: i === 0 ? 0 : -22 }} />
+            ))}
+          </div>
+
+          {/* 相手エリア: 左にゾーン（鏡写し）、右に陣形 */}
+          <div className="area enemy-area">
+            <ZoneCol side={ENEMY} p={foe} deckRef={deckRefE} apRef={apRefE} trashRef={trashRefE} />
+            <Formation
+              side={ENEMY} state={state} pops={pops} targeting={targeting}
+              onTap={tapChar} koShown={koShown} cardW={cardW}
+            />
+          </div>
+
+          {/* 中央: フィールド + ログ */}
+          <div className="center-strip">
+            <div className="field-slot">
+              {fieldCard ? <CardFrame card={fieldCard} width={50} /> : <div className="field-empty">FIELD</div>}
+            </div>
+            <div className="log-box">
+              {state.log.slice(-2).map((l, i) => <div key={i} className="log-line">{l}</div>)}
+            </div>
+          </div>
+
+          {/* 自分エリア: 左に陣形、右にゾーン（山札が一番右） */}
+          <div className="area my-area">
+            <Formation
+              side={PLAYER} state={state} pops={pops} targeting={targeting}
+              onTap={tapChar} koShown={koShown} cardW={cardW}
+            />
+            <ZoneCol side={PLAYER} p={me} deckRef={deckRefP} apRef={apRefP} trashRef={trashRefP} />
+          </div>
+        </div>
       </div>
 
-      {/* 相手の資源ゾーン */}
-      <ZoneRow side={ENEMY} p={foe} />
-
-      {/* 相手キャラクター */}
-      <CharRow side={ENEMY} state={state} pops={pops} targeting={targeting} onTap={tapChar} koShown={koShown} cardW={cardW} />
-
-      {/* 中央: フィールド + ログ */}
-      <div className="center-strip">
-        <div className="field-slot">
-          {fieldCard ? (
-            <CardFrame card={fieldCard} width={56} />
-          ) : (
-            <div className="field-empty">FIELD</div>
-          )}
-        </div>
-        <div className="log-box">
-          {lastLogs.map((l, i) => <div key={i} className="log-line">{l}</div>)}
-        </div>
-      </div>
-
-      {/* 自分キャラクター */}
-      <CharRow side={PLAYER} state={state} pops={pops} targeting={targeting} onTap={tapChar} koShown={koShown} cardW={cardW} />
-
-      {/* 自分の資源ゾーン */}
-      <ZoneRow side={PLAYER} p={me} />
-
-      {/* 自分の手札 */}
-      <div className="my-hand">
+      {/* 自分の手札（手に持っているので傾けない） */}
+      <div className="my-hand" ref={handRefP}>
         {me.hand.map((id, i) => {
           const card = cardById(id);
           const playable = isMyTurn && state.phase === 'play' && handPlayable.has(i);
-          const chargeable = isMyTurn && state.phase === 'charge';
+          const chargeable = isMyTurn && state.phase === 'charge' && !busy;
+          const picked = chargeSel.has(i);
           return (
             <div
               key={`${id}-${i}`}
               className={[
                 'hand-card',
-                selectedHand === i ? 'raised' : '',
+                selectedHand === i || picked ? 'raised' : '',
                 playable || chargeable ? 'playable' : '',
               ].join(' ')}
               style={{ marginLeft: i === 0 ? 0 : -Math.round(cardW * 0.37), zIndex: selectedHand === i ? 50 : i }}
               onClick={() => tapHand(i)}
             >
-              <CardFrame card={card} width={cardW} />
+              <CardFrame card={card} width={cardW} upright />
+              {picked && <span className="pick-badge">⚡</span>}
             </div>
           );
         })}
@@ -207,13 +308,13 @@ export function Battle({ setup, onExit, onRematch }: {
         <div className="guide-bar">
           <span className="guide-text">{guideText(state.phase, isMyTurn, busy, targeting !== null, guardPhase)}</span>
           <button className="chip small" onClick={() => setShowRules(true)}>？ルール</button>
-          <button className="chip small ghost" onClick={() => setGuideOn(false)}>ガイドOFF</button>
+          <button className="chip small ghost" onClick={() => setGuideOn(false)}>OFF</button>
         </div>
       )}
       {!guideOn && !finished && (
         <div className="guide-bar mini">
           <button className="chip small" onClick={() => setShowRules(true)}>？</button>
-          <button className="chip small ghost" onClick={() => setGuideOn(true)}>ガイドON</button>
+          <button className="chip small ghost" onClick={() => setGuideOn(true)}>ガイド</button>
         </div>
       )}
 
@@ -241,8 +342,15 @@ export function Battle({ setup, onExit, onRematch }: {
           </>
         ) : (
           <>
-            <span className="hint">手札をタップでAPチャージ</span>
-            <button className="big-btn slim" onClick={() => act({ type: 'endTurn' })}>ターンエンド</button>
+            {chargeSel.size > 0 ? (
+              <>
+                <button className="big-btn slim" onClick={chargeSelected}>{chargeSel.size}枚チャージ</button>
+                <button className="chip" onClick={() => setChargeSel(new Set())}>選び直す</button>
+              </>
+            ) : (
+              <span className="hint">チャージするカードをタップ（複数OK）</span>
+            )}
+            <button className="chip" onClick={() => act({ type: 'endTurn' })}>ターンエンド</button>
           </>
         )}
       </div>
@@ -267,13 +375,16 @@ export function Battle({ setup, onExit, onRematch }: {
         </div>
       )}
 
-      {/* ナレーション（今起きていること） */}
+      {/* ナレーション */}
       {current && <NarrationBanner ev={current} />}
       {current && current.card && ['play', 'guard', 'field', 'equip'].includes(current.kind) && (
         <div className={`reveal ${current.side === ENEMY ? 'from-top' : 'from-bottom'}`}>
-          <CardFrame card={current.card} width={200} />
+          <CardFrame card={current.card} width={190} />
         </div>
       )}
+
+      {/* 飛んでいくカード */}
+      {flights.map((f) => <FlyGhost key={f.key} flight={f} />)}
 
       {/* ルール説明 */}
       {showRules && <RulesModal onClose={() => setShowRules(false)} />}
@@ -297,37 +408,14 @@ export function Battle({ setup, onExit, onRematch }: {
   );
 }
 
-// ---------------------------------------------------------------- 部品
+// ---------------------------------------------------------------- 陣形
 
-/** 資源ゾーン（山札・トラッシュ・AP） */
-function ZoneRow({ side, p }: { side: 0 | 1; p: BattleState['players'][number] }) {
-  return (
-    <div className={`zone-row ${side === ENEMY ? 'enemy' : ''}`}>
-      <div className="pile">
-        <img src={IMG('back')} className="pile-card" />
-        <span className="pile-count">{p.deck.length}</span>
-        <span className="pile-label">山札</span>
-      </div>
-      <div className="pile ap">
-        <img src={IMG('back')} className="pile-card sideways" />
-        <span className="pile-count gold">{p.ap.length}</span>
-        <span className="pile-label">AP</span>
-      </div>
-      <div className="pile trash">
-        {p.trash.length > 0 ? (
-          <div className="pile-card trash-top" style={{ backgroundImage: `url(${IMG(p.trash[p.trash.length - 1])})` }} />
-        ) : (
-          <div className="pile-card empty" />
-        )}
-        <span className="pile-count">{p.trash.length}</span>
-        <span className="pile-label">トラッシュ</span>
-      </div>
-    </div>
-  );
-}
-
-/** キャラクターの列 */
-function CharRow({ side, state, pops, targeting, onTap, koShown, cardW }: {
+/**
+ * キャラクターの陣形。
+ * 3人: アクターが前面中央（少し大きい）、控え2人が後ろ左右のトライアングル。
+ * 2人: アクター前・控え後ろの斜め配置。位置はCSS transitionで滑らかに入れ替わる。
+ */
+function Formation({ side, state, pops, targeting, onTap, koShown, cardW }: {
   side: 0 | 1;
   state: BattleState;
   pops: DamagePop[];
@@ -337,18 +425,46 @@ function CharRow({ side, state, pops, targeting, onTap, koShown, cardW }: {
   cardW: number;
 }) {
   const p = state.players[side];
+  const n = p.characters.length;
+  const cardH = cardW * 1.39;
+  const frontW = Math.round(cardW * 1.1);
+  const backW = Math.round(cardW * 0.84);
+  const width = cardW * 2.62;
+  const height = cardH * 1.4;
   const selectable =
     (targeting?.kind === 'enemy' && side === ENEMY) ||
     ((targeting?.kind === 'allyHeal' || targeting?.kind === 'allyEquip') && side === PLAYER);
 
+  // 前面（アクター）は中央=相手側寄り。自分なら上、相手なら下
+  const frontEdge = side === PLAYER ? 'top' : 'bottom';
+  const backEdge = side === PLAYER ? 'bottom' : 'top';
+  const backOrder = p.characters.map((_, i) => i).filter((i) => i !== p.actorIndex);
+
+  function slotStyle(i: number): React.CSSProperties {
+    const isFront = i === p.actorIndex;
+    if (isFront) {
+      const left = n === 2 ? '32%' : '50%';
+      return { [frontEdge]: 0, left, transform: 'translateX(-50%)', zIndex: 5 } as React.CSSProperties;
+    }
+    const bi = backOrder.indexOf(i);
+    if (n === 2) return { [backEdge]: 0, right: '2%', zIndex: 3 } as React.CSSProperties;
+    return bi === 0
+      ? ({ [backEdge]: 0, left: '1%', zIndex: 3 } as React.CSSProperties)
+      : ({ [backEdge]: 0, right: '1%', zIndex: 3 } as React.CSSProperties);
+  }
+
   return (
-    <div className={`char-row ${side === ENEMY ? 'enemy' : ''}`}>
+    <div className="formation" style={{ width, height }}>
       {p.characters.map((c, i) => {
         const alive = isCharAlive(state, side, i);
-        const koVisible = koShown.has(`${side}-${i}`); // 演出のタイミングで裏返す
+        const koVisible = koShown.has(`${side}-${i}`);
         const isActor = p.actorIndex === i && alive;
-        const hp = Math.max(0, maxHpOf(state, side, i) - c.damage);
+        const w = isActor ? frontW : backW;
+        const maxHp = maxHpOf(state, side, i);
+        const hp = Math.max(0, maxHp - c.damage);
+        const hpRatio = maxHp > 0 ? hp / maxHp : 0;
         const myPops = pops.filter((d) => d.side === side && d.charIndex === i);
+        const extras = extraAttributes(state, side, i);
         return (
           <div
             key={c.cardId + i}
@@ -358,18 +474,33 @@ function CharRow({ side, state, pops, targeting, onTap, koShown, cardW }: {
               koVisible ? 'ko' : '',
               selectable && alive ? 'selectable' : '',
             ].join(' ')}
+            style={slotStyle(i)}
             onClick={() => onTap(side, i)}
           >
-            <CardFrame card={cardById(c.cardId)} width={cardW} />
+            <CardFrame card={cardById(c.cardId)} width={w} />
             {koVisible && <img src={IMG('back')} className="ko-back" />}
-            {alive && (
-              <span className="hp-chip">
-                <img src={IMG_PNG('heart_material')} />
-                <b>{hp}</b>
-              </span>
-            )}
-            {c.equipmentCardId && <span className="equip-dot" title="装備あり">⚙</span>}
             {isActor && <span className="actor-label">ACTOR</span>}
+            {c.equipmentCardId && <span className="equip-dot" title="装備あり">⚙</span>}
+            {alive && (
+              <div className="char-status">
+                <div className="hp-bar">
+                  <div
+                    className={`hp-fill ${hpRatio <= 0.25 ? 'low' : hpRatio <= 0.5 ? 'mid' : ''}`}
+                    style={{ width: `${Math.round(hpRatio * 100)}%` }}
+                  />
+                </div>
+                <div className="status-row">
+                  <span className="hp-num">{hp}/{maxHp}</span>
+                  {extras.length > 0 && (
+                    <span className="extra-attrs">
+                      {extras.slice(0, 4).map((a, k) => (
+                        <img key={k} src={IMG(a)} alt={a} title={`追加属性: ${a}`} />
+                      ))}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
             {myPops.map((d) => (
               <span key={d.key} className={d.amount > 0 ? 'pop dmg' : 'pop heal'}>
                 {d.amount > 0 ? `-${d.amount}` : `+${-d.amount}`}
@@ -382,7 +513,84 @@ function CharRow({ side, state, pops, targeting, onTap, koShown, cardW }: {
   );
 }
 
-/** 今起きていることを1件ずつ見せるナレーションバナー */
+/** 本来の属性に対して「追加されている」属性の一覧（装備・効果・味方付与など） */
+function extraAttributes(state: BattleState, side: 0 | 1, i: number): string[] {
+  const c = state.players[side].characters[i];
+  const counts = new Map<string, number>();
+  for (const a of c.attributes) counts.set(a, (counts.get(a) ?? 0) + 1);
+  const extras: string[] = [];
+  for (const a of effectiveAttributes(state, side, i)) {
+    const left = counts.get(a) ?? 0;
+    if (left > 0) counts.set(a, left - 1);
+    else extras.push(a);
+  }
+  return extras;
+}
+
+// ---------------------------------------------------------------- ゾーン（縦積み・山札が端）
+
+function ZoneCol({ side, p, deckRef, apRef, trashRef }: {
+  side: 0 | 1;
+  p: BattleState['players'][number];
+  deckRef: React.RefObject<HTMLDivElement>;
+  apRef: React.RefObject<HTMLDivElement>;
+  trashRef: React.RefObject<HTMLDivElement>;
+}) {
+  const deck = (
+    <div className="pile deck" ref={deckRef} key="deck">
+      <img src={IMG('back')} className="pile-card" />
+      <span className="pile-count">{p.deck.length}</span>
+      <span className="pile-label">山札</span>
+    </div>
+  );
+  const ap = (
+    <div className="pile ap" ref={apRef} key="ap">
+      <img src={IMG('back')} className="pile-card sideways" />
+      <span className="pile-count gold">{p.ap.length}</span>
+      <span className="pile-label">AP</span>
+    </div>
+  );
+  const trash = (
+    <div className="pile trash" ref={trashRef} key="trash">
+      {p.trash.length > 0 ? (
+        <div className="pile-card trash-top" style={{ backgroundImage: `url(${IMG(p.trash[p.trash.length - 1])})` }} />
+      ) : (
+        <div className="pile-card empty" />
+      )}
+      <span className="pile-count">{p.trash.length}</span>
+      <span className="pile-label">トラッシュ</span>
+    </div>
+  );
+  // 自分: 一番下（一番手前）が山札、その上にAP・トラッシュ。相手は鏡写し
+  return (
+    <div className={`zone-col ${side === ENEMY ? 'enemy' : ''}`}>
+      {side === PLAYER ? [trash, ap, deck] : [deck, ap, trash]}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- 演出部品
+
+/** 飛んでいくカード（山札→手札、手札→AP、使用→トラッシュなど） */
+function FlyGhost({ flight }: { flight: Flight }) {
+  const [pos, setPos] = useState(flight.from);
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setPos(flight.to));
+    return () => cancelAnimationFrame(raf);
+  }, [flight]);
+  return (
+    <div className="fly-ghost" style={{ left: pos.x, top: pos.y }}>
+      {flight.faceCardId ? (
+        <div className="fly-face">
+          <CardFrame card={cardById(flight.faceCardId)} width={54} />
+        </div>
+      ) : (
+        <img src={IMG('back')} />
+      )}
+    </div>
+  );
+}
+
 const KIND_ICON: Record<string, string> = {
   turn: '🔄', draw: '🃏', charge: '⚡', chargeDeck: '⚡', mill: '🗑️', play: '✨',
   guard: '🛡️', attack: '⚔️', damage: '💥', heal: '💚', ko: '💀', revive: '🌟',
@@ -399,14 +607,13 @@ function NarrationBanner({ ev }: { ev: NarrEvent }) {
   );
 }
 
-/** フェーズごとの初心者ガイド文 */
 function guideText(phase: string, isMyTurn: boolean, busy: boolean, targeting: boolean, guardPhase: boolean): string {
   if (busy) return '⏳ 何が起きているか、上のナレーションを見てね';
   if (guardPhase) return '🛡️ 相手の攻撃！ガードカードで割り込むか、そのまま受けるか選ぼう';
   if (targeting) return '🎯 対象のキャラクターをタップしよう';
   if (!isMyTurn) return '⏳ 相手のターン。ようすを見よう';
   if (phase === 'play') return '✨ 明るい手札＝今使えるカード。タップして「使う」！終わったら「チャージへ」';
-  if (phase === 'charge') return '⚡ 使わない手札をタップするとAP（スキルのエネルギー）になるよ。よければ「ターンエンド」';
+  if (phase === 'charge') return '⚡ チャージしたいカードを複数えらんで「チャージ」。よければ「ターンエンド」';
   return '';
 }
 

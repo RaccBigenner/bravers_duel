@@ -67,7 +67,9 @@ export interface PendingAttack {
   skillId: string;
   skillName: string;
   value: number;
-  targets: number[]; // 防御側キャラの番号
+  /** 対象の決め方。実際の対象は「解決時」に決まる（飛翔などでアクターが変わったら攻撃先も変わる） */
+  targeting: 'actor' | 'all' | 'standby' | 'choose';
+  chosenIndex?: number; // choose の時だけ
   noGuard: boolean;
   attackerChar: number; // 使用キャラの番号
 }
@@ -79,6 +81,8 @@ export interface BattleState {
   players: [PlayerBattle, PlayerBattle];
   firstPlayer: PlayerIndex;
   pendingAttack: PendingAttack | null;
+  /** 効果が明示的にアクターを動かしたプレイヤー（そのプレイヤーの直後の自動交代をスキップ） */
+  skipRotationFor: PlayerIndex | null;
   /** 場のフィールドカード（両者共有・1枚だけ） */
   field: { cardId: string; owner: PlayerIndex } | null;
   winner: PlayerIndex | null;
@@ -255,8 +259,9 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
   const enemy = () => state.players[enemyIdx];
   const clampN = (n: number) => Math.max(0, Math.floor(n));
   const firstTarget = () => {
-    const t = state.pendingAttack?.targets[0];
-    return t === undefined ? null : t;
+    if (!state.pendingAttack) return null;
+    const targets = resolveAttackTargets(state, state.pendingAttack);
+    return targets.length > 0 ? targets[0] : null;
   };
   // 攻撃効果の「対象」は防御側（= pendingAttack がある時の active の相手）
   const defenderIdx = () => (1 - state.active) as PlayerIndex;
@@ -409,9 +414,15 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
       }
       const p = me();
       p.actorIndex = nextAliveIndex(state, owner, p.actorIndex, skip);
+      pushLog(state, `プレイヤー${owner + 1}のアクターが${p.characters[p.actorIndex].name}に交代`);
+      state.skipRotationFor = owner; // 効果でアクターを動かしたので自動交代はしない
     },
     becomeActor: () => {
-      if (isCharAlive(state, owner, ownerChar)) me().actorIndex = ownerChar;
+      if (isCharAlive(state, owner, ownerChar)) {
+        me().actorIndex = ownerChar;
+        pushLog(state, `プレイヤー${owner + 1}のアクターが${me().characters[ownerChar].name}に交代`);
+        state.skipRotationFor = owner; // 効果でアクターを決めたので自動交代はしない
+      }
     },
     reduceNextSkillCost: (n) => {
       me().nextSkillCostDelta -= clampN(n);
@@ -650,6 +661,7 @@ export function createBattle(
     players,
     firstPlayer,
     pendingAttack: null,
+    skipRotationFor: null,
     field: null,
     winner: null,
     endReason: null,
@@ -852,6 +864,9 @@ export function legalActions(state: BattleState): BattleAction[] {
 
 export function applyAction(state: BattleState, action: BattleAction): void {
   if (state.phase === 'finished') throw new Error('バトルは終了しています');
+  if (action.type !== 'playGuard' && action.type !== 'pass') {
+    state.skipRotationFor = null; // 攻撃解決をまたぐ場合以外はリセット
+  }
 
   switch (action.type) {
     case 'playSkill': {
@@ -1034,6 +1049,26 @@ export function applyAction(state: BattleState, action: BattleAction): void {
   }
 }
 
+/** 攻撃対象を「今の状況」から決める（宣言時ではなく解決時基準） */
+function resolveAttackTargets(state: BattleState, pending: PendingAttack): number[] {
+  const defenderIdx = (1 - state.active) as PlayerIndex;
+  const defender = state.players[defenderIdx];
+  const aliveIdx = defender.characters.map((_, i) => i).filter((i) => isCharAlive(state, defenderIdx, i));
+  switch (pending.targeting) {
+    case 'all':
+      return aliveIdx;
+    case 'standby':
+      return aliveIdx.filter((i) => i !== defender.actorIndex);
+    case 'choose': {
+      const t = pending.chosenIndex;
+      if (t !== undefined && isCharAlive(state, defenderIdx, t)) return [t];
+      return aliveIdx.includes(defender.actorIndex) ? [defender.actorIndex] : aliveIdx.slice(0, 1);
+    }
+    default:
+      return aliveIdx.includes(defender.actorIndex) ? [defender.actorIndex] : aliveIdx.slice(0, 1);
+  }
+}
+
 function requirePhase(state: BattleState, phase: Phase): void {
   if (state.phase !== phase) {
     throw new Error(`今は${phase}フェーズではありません（今: ${state.phase}）`);
@@ -1056,33 +1091,14 @@ function beginAttack(
   forceNoGuard = false,
 ): void {
   const defenderIdx = (1 - state.active) as PlayerIndex;
-  const defender = state.players[defenderIdx];
   const eff = skillEffectOf(card.id);
-
-  let targets: number[];
-  switch (eff?.targeting) {
-    case 'all':
-      targets = defender.characters.map((_, i) => i).filter((i) => isCharAlive(state, defenderIdx, i));
-      break;
-    case 'standby':
-      targets = defender.characters
-        .map((_, i) => i)
-        .filter((i) => i !== defender.actorIndex && isCharAlive(state, defenderIdx, i));
-      break;
-    case 'choose': {
-      const t = targetIndex ?? defender.actorIndex;
-      targets = isCharAlive(state, defenderIdx, t) ? [t] : [defender.actorIndex];
-      break;
-    }
-    default:
-      targets = [defender.actorIndex];
-  }
 
   state.pendingAttack = {
     skillId: card.id,
     skillName: card.name,
     value: card.baseValue,
-    targets,
+    targeting: eff?.targeting ?? 'actor',
+    chosenIndex: eff?.targeting === 'choose' ? targetIndex : undefined,
     noGuard: forceNoGuard || (eff?.noGuard ?? false),
     attackerChar: usingChar,
   };
@@ -1134,8 +1150,11 @@ function resolvePendingAttack(state: BattleState): void {
 
   let dealtTotal = 0;
   let damagedCount = 0;
-  const judgedActor = defender.actorIndex; // 途中で強制交代が起きても判定は攻撃開始時点で固定
-  for (const ti of pending.targets) {
+  // 対象もアクター判定も「解決を始める時点」で確定する
+  // （飛翔でアクターが変われば攻撃先も変わる。解決中の強制交代では変わらない）
+  const targets = resolveAttackTargets(state, pending);
+  const judgedActor = defender.actorIndex;
+  for (const ti of targets) {
     if (battleOver(state)) break;
     if (!isCharAlive(state, defenderIdx, ti)) continue;
     const dealt = applyDamage(state, defenderIdx, ti, Math.max(0, pending.value - reduction), judgedActor);
@@ -1175,6 +1194,10 @@ function resolveNonAttack(state: BattleState, card: SkillCard, usingChar: number
 }
 
 function rotateActorAfterSkill(state: BattleState, player: PlayerIndex): void {
+  if (state.skipRotationFor === player) {
+    state.skipRotationFor = null;
+    return;
+  }
   if (actorLocked(state, player)) return;
   const p = state.players[player];
   const before = p.actorIndex;

@@ -21,6 +21,8 @@ import {
 interface Props {
   card: Card;
   width?: number;
+  /** 大型（横長）カードを90度回転して縦持ちで表示する（手札用） */
+  upright?: boolean;
 }
 
 /**
@@ -29,13 +31,14 @@ interface Props {
  */
 const BASE_WIDTH = 340;
 
-export function CardFrame({ card, width = 300 }: Props) {
+export function CardFrame({ card, width = 300, upright = false }: Props) {
   const isLandscape = card.type === 'character' && card.size === 'legendaryLarge';
   const scale = width / BASE_WIDTH;
   const w = BASE_WIDTH;
   const h = (w * 417) / 300;
-  const outerW = isLandscape ? h : w;
-  const outerH = isLandscape ? w : h;
+  const rotate = isLandscape && upright; // 横長カードを縦持ちに
+  const outerW = isLandscape && !rotate ? h : w;
+  const outerH = isLandscape && !rotate ? w : h;
   // "1-A041-SR" → "1-A041 SR"（右下のコレクター表記）
   const collectorNo = card.id.replace(/-([A-Z]+)$/, ' $1');
 
@@ -50,10 +53,12 @@ export function CardFrame({ card, width = 300 }: Props) {
     >
       <div
         style={{
-          width: outerW,
-          height: outerH,
-          transform: `scale(${scale})`,
-          transformOrigin: 'top left',
+          width: rotate ? h : outerW,
+          height: rotate ? w : outerH,
+          transform: rotate
+            ? `scale(${scale}) translate(${(w - h) / 2}px, ${(h - w) / 2}px) rotate(90deg)`
+            : `scale(${scale})`,
+          transformOrigin: rotate ? 'center' : 'top left',
         }}
       >
         <RarityFrame rarity={card.rarity} w={w} collectorNo={collectorNo}>
