@@ -450,7 +450,7 @@ export function Battle({ setup, onExit, onRematch }: {
       </div>
 
       {/* 自分の手札（扇状に持つ。カードの増減はキーを固定してなめらかに詰める） */}
-      <div className="my-hand" ref={handRefP} style={{ height: Math.round(handW * 1.52) }}>
+      <div className="my-hand" ref={handRefP} style={{ height: Math.round(handW * 1.72) }}>
         {(() => {
           const seen = new Map<string, number>();
           const n = me.hand.length;
