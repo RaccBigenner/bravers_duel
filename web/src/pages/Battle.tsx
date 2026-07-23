@@ -37,10 +37,10 @@ function useViewportHeight(): number {
 }
 
 function cardWidthFor(vh: number): number {
-  if (vh >= 840) return 84;
-  if (vh >= 760) return 76;
-  if (vh >= 700) return 68;
-  return 62;
+  if (vh >= 840) return 100;
+  if (vh >= 760) return 92;
+  if (vh >= 700) return 84;
+  return 74;
 }
 
 /** 飛んでいくカードの演出 */
@@ -58,7 +58,7 @@ export function Battle({ setup, onExit, onRematch }: {
   onExit: () => void;
   onRematch: () => void;
 }) {
-  const { state, busy, current, pops, koShown, perform, myActions, isMyTurn } = useBattle(setup.playerDeck, setup.enemy.deck);
+  const { state, view, busy, current, pops, koShown, perform, myActions, isMyTurn } = useBattle(setup.playerDeck, setup.enemy.deck);
   const [previewHand, setPreviewHand] = useState<number | null>(null);
   const [chargeSel, setChargeSel] = useState<Set<number>>(new Set());
   const [targeting, setTargeting] = useState<Targeting>(null);
@@ -68,8 +68,9 @@ export function Battle({ setup, onExit, onRematch }: {
 
   const vh = useViewportHeight();
   const cardW = cardWidthFor(vh);
-  const me = state.players[PLAYER];
-  const foe = state.players[ENEMY];
+  const handW = Math.round(cardW * 0.78);
+  const me = view.players[PLAYER]; // 盤面は表示用ステートを映す
+  const foe = view.players[ENEMY];
   const finished = state.phase === 'finished';
   const guardPhase = state.phase === 'guard' && isMyTurn && !busy;
 
@@ -107,6 +108,20 @@ export function Battle({ setup, onExit, onRematch }: {
     }
   }
 
+  // スキルの属性を覚えておき、続くダメージ等のVFXに使う
+  const lastAttrsRef = useRef<string[]>([]);
+  interface Vfx { key: number; side: 0 | 1; charIndex: number; img: string; delay: number }
+  const [vfxList, setVfxList] = useState<Vfx[]>([]);
+
+  function spawnVfx(side: 0 | 1 | undefined, charIndex: number | undefined, imgs: string[]) {
+    if (side === undefined || charIndex === undefined) return;
+    const spawned: Vfx[] = imgs.map((img, i) => ({ key: flightKey++, side, charIndex, img, delay: i * 170 }));
+    setVfxList((prev) => [...prev, ...spawned]);
+    window.setTimeout(() => {
+      setVfxList((prev) => prev.filter((v) => !spawned.includes(v)));
+    }, 1100 + imgs.length * 170);
+  }
+
   // ナレーションイベントに合わせて「カードが飛ぶ」物理演出
   useEffect(() => {
     if (!current) return;
@@ -126,10 +141,31 @@ export function Battle({ setup, onExit, onRematch }: {
         break;
       case 'play':
       case 'guard':
+        // このスキルの属性を記憶（後続のダメージ等のVFXに使う）
+        if (current.card?.type === 'skill') {
+          lastAttrsRef.current = [...new Set(current.card.conditionAttribute)];
+        } else {
+          lastAttrsRef.current = [];
+        }
         // カットインのあと、使ったカードがトラッシュへ飛ぶ
         window.setTimeout(() => {
           spawnFlight(boardRef.current, trashRefs[s].current, 1, current.card?.id);
         }, Math.max(0, current.duration - 420));
+        break;
+      case 'turn':
+        lastAttrsRef.current = [];
+        break;
+      case 'damage':
+        spawnVfx(current.side, current.charIndex, [...lastAttrsRef.current.map((a) => `vfx_${a}`), 'vfx_damage']);
+        break;
+      case 'heal':
+        spawnVfx(current.side, current.charIndex, [...lastAttrsRef.current.map((a) => `vfx_${a}`), 'vfx_heal']);
+        break;
+      case 'attr':
+        spawnVfx(current.side, current.charIndex, [current.attr ? `vfx_${current.attr}` : '', 'vfx_attr'].filter(Boolean));
+        break;
+      case 'lock':
+        spawnVfx(current.side, current.charIndex, [...lastAttrsRef.current.map((a) => `vfx_${a}`), 'vfx_lock']);
         break;
       default:
         break;
@@ -228,7 +264,7 @@ export function Battle({ setup, onExit, onRematch }: {
     }
   }
 
-  const fieldCard = state.field ? cardById(state.field.cardId) : null;
+  const fieldCard = view.field ? cardById(view.field.cardId) : null;
 
   return (
     <div className="battle-root">
@@ -254,8 +290,8 @@ export function Battle({ setup, onExit, onRematch }: {
           <div className="area enemy-area">
             <ZoneCol side={ENEMY} p={foe} deckRef={deckRefE} apRef={apRefE} trashRef={trashRefE} />
             <Formation
-              side={ENEMY} state={state} pops={pops} targeting={targeting}
-              onTap={tapChar} koShown={koShown} cardW={cardW}
+              side={ENEMY} state={view} pops={pops} targeting={targeting}
+              onTap={tapChar} koShown={koShown} cardW={cardW} vfxList={vfxList}
             />
           </div>
 
@@ -272,8 +308,8 @@ export function Battle({ setup, onExit, onRematch }: {
           {/* 自分エリア: 左に陣形、右にゾーン（山札が一番右） */}
           <div className="area my-area">
             <Formation
-              side={PLAYER} state={state} pops={pops} targeting={targeting}
-              onTap={tapChar} koShown={koShown} cardW={cardW}
+              side={PLAYER} state={view} pops={pops} targeting={targeting}
+              onTap={tapChar} koShown={koShown} cardW={cardW} vfxList={vfxList}
             />
             <ZoneCol side={PLAYER} p={me} deckRef={deckRefP} apRef={apRefP} trashRef={trashRefP} />
           </div>
@@ -295,10 +331,10 @@ export function Battle({ setup, onExit, onRematch }: {
                 picked ? 'raised' : '',
                 playable || chargeable ? 'playable' : '',
               ].join(' ')}
-              style={{ marginLeft: i === 0 ? 0 : -Math.round(cardW * 0.37), zIndex: i }}
+              style={{ marginLeft: i === 0 ? 0 : -Math.round(handW * 0.37), zIndex: i }}
               onClick={() => tapHand(i)}
             >
-              <CardFrame card={card} width={cardW} upright />
+              <CardFrame card={card} width={handW} upright />
               {picked && <span className="pick-badge">⚡</span>}
             </div>
           );
@@ -349,7 +385,7 @@ export function Battle({ setup, onExit, onRematch }: {
               const hi = (a as { handIndex: number }).handIndex;
               return (
                 <div key={hi} className="hand-card playable" onClick={() => act(a)}>
-                  <CardFrame card={cardById(me.hand[hi])} width={cardW} />
+                  <CardFrame card={cardById(me.hand[hi])} width={handW} />
                 </div>
               );
             })}
@@ -411,11 +447,11 @@ export function Battle({ setup, onExit, onRematch }: {
 // ---------------------------------------------------------------- 陣形
 
 /**
- * キャラクターの陣形。
- * 3人: アクターが前面中央（少し大きい）、控え2人が後ろ左右のトライアングル。
- * 2人: アクター前・控え後ろの斜め配置。位置はCSS transitionで滑らかに入れ替わる。
+ * キャラクターの陣形（リボルバー式）。
+ * キャラをホイール上に等間隔で配置し、アクター交代時はホイールごと回転して
+ * リボルバーのように入れ替わる。アクター位置（中央側）のカードは大きく表示。
  */
-function Formation({ side, state, pops, targeting, onTap, koShown, cardW }: {
+function Formation({ side, state, pops, targeting, onTap, koShown, cardW, vfxList }: {
   side: 0 | 1;
   state: BattleState;
   pops: DamagePop[];
@@ -423,35 +459,34 @@ function Formation({ side, state, pops, targeting, onTap, koShown, cardW }: {
   onTap: (side: 0 | 1, index: number) => void;
   koShown: Set<string>;
   cardW: number;
+  vfxList: { key: number; side: 0 | 1; charIndex: number; img: string; delay: number }[];
 }) {
   const p = state.players[side];
   const n = p.characters.length;
+  const step = 360 / Math.max(n, 1);
+  const r = Math.round(cardW * 0.92); // ホイール半径
   const frontW = Math.round(cardW * 1.08);
-  const backW = Math.round(cardW * 0.82);
-  // 前面1枚と控え2枚が重ならない幅（控え2枚を両端、前面を中央に）
-  const width = backW * 2 + frontW + 10;
-  const height = frontW * 1.39 + cardW * 0.3;
+  const backScale = 0.74;
+
+  // 前面 = 中央（相手側）寄り。自分は上向き、相手は下向き
+  const frontAngle = side === PLAYER ? 0 : 180;
+  const tilt = n === 2 ? 28 : 0; // 2人の時は斜めに
+  const desired = frontAngle - p.actorIndex * step + tilt;
+
+  // 回転は最短経路で連続的に（リボルバーの回転演出）
+  const rotRef = useRef(desired);
+  const prev = rotRef.current;
+  const delta = ((desired - prev) % 360 + 540) % 360 - 180;
+  const wheelRot = prev + delta;
+  useEffect(() => {
+    rotRef.current = wheelRot;
+  });
+
+  const width = Math.round(r * 1.8 + cardW * 0.9);
+  const height = Math.round(r * 1.55 + cardW * 1.39 * 0.85);
   const selectable =
     (targeting?.kind === 'enemy' && side === ENEMY) ||
     ((targeting?.kind === 'allyHeal' || targeting?.kind === 'allyEquip') && side === PLAYER);
-
-  // 前面（アクター）は中央=相手側寄り。自分なら上、相手なら下
-  const frontEdge = side === PLAYER ? 'top' : 'bottom';
-  const backEdge = side === PLAYER ? 'bottom' : 'top';
-  const backOrder = p.characters.map((_, i) => i).filter((i) => i !== p.actorIndex);
-
-  function slotStyle(i: number): React.CSSProperties {
-    const isFront = i === p.actorIndex;
-    if (isFront) {
-      const left = n === 2 ? '32%' : '50%';
-      return { [frontEdge]: 0, left, transform: 'translateX(-50%)', zIndex: 5 } as React.CSSProperties;
-    }
-    const bi = backOrder.indexOf(i);
-    if (n === 2) return { [backEdge]: 0, right: '2%', zIndex: 3 } as React.CSSProperties;
-    return bi === 0
-      ? ({ [backEdge]: 0, left: '1%', zIndex: 3 } as React.CSSProperties)
-      : ({ [backEdge]: 0, right: '1%', zIndex: 3 } as React.CSSProperties);
-  }
 
   return (
     <div className="formation" style={{ width, height }}>
@@ -459,27 +494,34 @@ function Formation({ side, state, pops, targeting, onTap, koShown, cardW }: {
         const alive = isCharAlive(state, side, i);
         const koVisible = koShown.has(`${side}-${i}`);
         const isActor = p.actorIndex === i && alive;
-        const w = isActor ? frontW : backW;
         const maxHp = maxHpOf(state, side, i);
         const hp = Math.max(0, maxHp - c.damage);
         const hpRatio = maxHp > 0 ? hp / maxHp : 0;
         const myPops = pops.filter((d) => d.side === side && d.charIndex === i);
+        const myVfx = vfxList.filter((v) => v.side === side && v.charIndex === i);
         const extras = extraAttributes(state, side, i);
+        const A = i * step + wheelRot;
+        const scale = isActor ? 1 : backScale;
         return (
           <div
             key={c.cardId + i}
             className={[
               'char-slot',
+              'wheel-slot',
               isActor ? 'actor' : '',
               koVisible ? 'ko' : '',
               selectable && alive ? 'selectable' : '',
             ].join(' ')}
-            style={slotStyle(i)}
+            style={{
+              left: '50%',
+              top: '50%',
+              zIndex: isActor ? 6 : 3,
+              transform: `translate(-50%, -50%) rotate(${A}deg) translateY(${-r}px) rotate(${-A}deg) scale(${scale})`,
+            }}
             onClick={() => onTap(side, i)}
           >
-            <CardFrame card={cardById(c.cardId)} width={w} />
+            <CardFrame card={cardById(c.cardId)} width={frontW} />
             {koVisible && <img src={IMG('back')} className="ko-back" />}
-            {isActor && <span className="actor-label">ACTOR</span>}
             {c.equipmentCardId && <span className="equip-dot" title="装備あり">⚙</span>}
             {alive && (
               <div className="char-status">
@@ -501,6 +543,15 @@ function Formation({ side, state, pops, targeting, onTap, koShown, cardW }: {
                 </div>
               </div>
             )}
+            {myVfx.map((v) => (
+              <img
+                key={v.key}
+                className="vfx-burst"
+                src={IMG(v.img)}
+                style={{ animationDelay: `${v.delay}ms`, transform: `rotate(${(v.key * 47) % 40 - 20}deg)` }}
+                onError={(e) => ((e.target as HTMLImageElement).style.display = 'none')}
+              />
+            ))}
             {myPops.map((d) => (
               <span key={d.key} className={d.amount > 0 ? 'pop dmg' : 'pop heal'}>
                 {d.amount > 0 ? `-${d.amount}` : `+${-d.amount}`}

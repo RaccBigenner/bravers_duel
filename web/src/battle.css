@@ -666,3 +666,28 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
 @media (max-height: 780px) {
   .guide-zone { font-size: 10.5px; padding: 4px 7px; }
 }
+
+/* ============ リボルバー陣形 + VFX ============ */
+.wheel-slot {
+  position: absolute;
+  transition: transform 0.65s cubic-bezier(0.35, 0.1, 0.25, 1), filter 0.3s ease;
+}
+
+.vfx-burst {
+  position: absolute;
+  left: -22%;
+  top: -18%;
+  width: 144%;
+  height: auto;
+  mix-blend-mode: screen; /* 黒背景素材を加算合成で光らせる */
+  pointer-events: none;
+  opacity: 0;
+  z-index: 25;
+  animation: vfx-pop 0.95s ease-out forwards;
+}
+@keyframes vfx-pop {
+  0% { opacity: 0; scale: 0.45; }
+  18% { opacity: 1; }
+  70% { opacity: 0.9; scale: 1.15; }
+  100% { opacity: 0; scale: 1.4; }
+}

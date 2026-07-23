@@ -1,15 +1,23 @@
 /**
  * バトル画面の状態管理フック。
- * 行動を適用すると、起きたこと（ログ差分）を演出イベント列に変換し、
- * 1件ずつ順番に再生する。再生が終わるまで次の行動（AI含む）は始まらない。
+ *
+ * エンジンの本当の状態（realState）は行動を適用した瞬間に最終形になるが、
+ * 画面には「表示用ステート（view）」を映す。view は演出イベントが1件
+ * 再生されるたびに、そのイベントの内容だけ進む。これにより
+ * 「カードが飛んでから枚数が減る」「カットインの後にHPが減る」など、
+ * 状態の変化と物理演出が正しく同期する。
+ * 演出キューが空になった時点で view は realState に完全同期される。
  */
 import {
   actingPlayer,
   applyAction,
+  cardById,
   createBattle,
   isCharAlive,
   legalActions,
+  maxHpOf,
   simpleAi,
+  type Attribute,
   type BattleAction,
   type BattleAi,
   type BattleState,
@@ -31,10 +39,113 @@ const ENEMY = 1 as const;
 
 let uniq = 1;
 
+/** 表示用ステートに演出イベント1件ぶんの変化を適用する */
+function applyEventToView(view: BattleState, ev: NarrEvent): void {
+  const s = (ev.side ?? 0) as 0 | 1;
+  const p = view.players[s];
+
+  const removeFromHandById = (side: 0 | 1, cardId: string) => {
+    const hand = view.players[side].hand;
+    const i = hand.indexOf(cardId);
+    if (i >= 0) hand.splice(i, 1);
+    else hand.pop(); // 見つからなければ枚数だけ合わせる
+  };
+  const removeFromHandByName = (side: 0 | 1, name: string) => {
+    const hand = view.players[side].hand;
+    const i = hand.findIndex((id) => cardById(id).name === name);
+    if (i >= 0) hand.splice(i, 1);
+    else hand.pop();
+  };
+
+  switch (ev.kind) {
+    case 'turn':
+      if (ev.side !== undefined) view.active = ev.side;
+      break;
+    case 'draw': {
+      const n = Math.min(ev.amount ?? 1, p.deck.length);
+      p.hand.push(...p.deck.splice(0, n));
+      break;
+    }
+    case 'charge': {
+      if (ev.cardName) removeFromHandByName(s, ev.cardName);
+      else p.hand.pop();
+      p.ap.push('charged');
+      break;
+    }
+    case 'chargeDeck': {
+      const n = Math.min(ev.amount ?? 1, p.deck.length);
+      p.ap.push(...p.deck.splice(0, n));
+      break;
+    }
+    case 'mill': {
+      const n = Math.min(ev.amount ?? 1, p.deck.length);
+      p.trash.push(...p.deck.splice(0, n));
+      break;
+    }
+    case 'play':
+    case 'guard': {
+      if (ev.card) removeFromHandById(s, ev.card.id);
+      // トラッシュへの移動はカットイン後（呼び出し側が遅延で積む）
+      break;
+    }
+    case 'damage': {
+      if (ev.side !== undefined && ev.charIndex !== undefined) {
+        const c = view.players[ev.side].characters[ev.charIndex];
+        c.damage += ev.amount ?? 0;
+      }
+      break;
+    }
+    case 'heal': {
+      if (ev.side !== undefined && ev.charIndex !== undefined) {
+        const c = view.players[ev.side].characters[ev.charIndex];
+        c.damage = Math.max(0, c.damage - (ev.amount ?? 0));
+      }
+      break;
+    }
+    case 'revive': {
+      if (ev.side !== undefined && ev.charIndex !== undefined) {
+        const c = view.players[ev.side].characters[ev.charIndex];
+        c.damage = Math.max(0, maxHpOf(view, ev.side, ev.charIndex) - (ev.amount ?? 1));
+      }
+      break;
+    }
+    case 'actor': {
+      if (ev.side !== undefined && ev.charIndex !== undefined) {
+        view.players[ev.side].actorIndex = ev.charIndex;
+      }
+      break;
+    }
+    case 'equip': {
+      if (ev.side !== undefined && ev.charIndex !== undefined && ev.card) {
+        removeFromHandById(ev.side, ev.card.id);
+        view.players[ev.side].characters[ev.charIndex].equipmentCardId = ev.card.id;
+      }
+      break;
+    }
+    case 'field': {
+      if (ev.card && ev.side !== undefined) {
+        removeFromHandById(ev.side, ev.card.id);
+        view.field = { cardId: ev.card.id, owner: ev.side };
+      }
+      break;
+    }
+    case 'attr': {
+      if (ev.side !== undefined && ev.charIndex !== undefined && ev.attr) {
+        view.players[ev.side].characters[ev.charIndex].addedAttributes.push(ev.attr as Attribute);
+      }
+      break;
+    }
+    default:
+      break;
+  }
+}
+
 export function useBattle(playerDeck: DeckList, enemyDeck: DeckList) {
   const stateRef = useRef<BattleState | null>(null);
+  const viewRef = useRef<BattleState | null>(null);
   if (stateRef.current === null) {
     stateRef.current = createBattle([playerDeck, enemyDeck], Math.floor(Math.random() * 1e9));
+    viewRef.current = structuredClone(stateRef.current);
   }
   const state = stateRef.current;
 
@@ -46,14 +157,18 @@ export function useBattle(playerDeck: DeckList, enemyDeck: DeckList) {
   const aiRef = useRef<BattleAi>(simpleAi({ keepHand: 2 }));
 
   const busy = queue.length > 0 || current !== null;
+  const bump = useCallback(() => setVersion((v) => v + 1), []);
 
-  /** 開幕処理（先攻決定・クラウディア等）のログも再生する */
+  /** 開幕処理のログも演出として再生（表示状態には適用しない: すでに反映済みのため） */
   const bootRef = useRef(false);
   useEffect(() => {
     if (bootRef.current) return;
     bootRef.current = true;
     const s = stateRef.current!;
-    const events = s.log.map((l) => classify(s, l, s.firstPlayer)).filter((e): e is NarrEvent => e !== null);
+    const events = s.log
+      .map((l) => classify(s, l, s.firstPlayer))
+      .filter((e): e is NarrEvent => e !== null)
+      .map((e) => ({ ...e, noApply: true }));
     setQueue(events);
   }, []);
 
@@ -69,33 +184,47 @@ export function useBattle(playerDeck: DeckList, enemyDeck: DeckList) {
     const newLines = newCount > 0 ? s.log.slice(-Math.min(newCount, s.log.length)) : [];
     const events = newLines.map((l) => classify(s, l, who)).filter((e): e is NarrEvent => e !== null);
     setQueue((q) => [...q, ...events]);
-    setVersion((v) => v + 1);
-  }, []);
+    bump();
+  }, [bump]);
 
   // 演出キューの再生ループ
   useEffect(() => {
-    if (current !== null) return; // 再生中
+    if (current !== null) return;
     if (queue.length === 0) {
-      // 再生し終わったら、戦闘不能の表示をエンジンの状態と同期させる（取りこぼし防止）
+      // 全部再生し終わったら表示状態を本当の状態に完全同期
       const s = stateRef.current!;
-      setKoShown((prev) => {
+      viewRef.current = structuredClone(s);
+      setKoShown(() => {
         const next = new Set<string>();
         s.players.forEach((p, si) =>
           p.characters.forEach((_, ci) => {
             if (!isCharAlive(s, si as 0 | 1, ci)) next.add(`${si}-${ci}`);
           }),
         );
-        // 再生済みの分も維持（同期と同じ内容になるはず）
-        prev.forEach((k) => next.add(k));
         return next;
       });
+      bump();
       return;
     }
     const ev = queue[0];
     setQueue((q) => q.slice(1));
     setCurrent(ev);
 
-    // イベントに応じた演出の発火
+    // 表示状態をこのイベントのぶんだけ進める
+    if (!ev.noApply && viewRef.current) {
+      applyEventToView(viewRef.current, ev);
+      // 使用カードはカットインの後にトラッシュへ落ちる
+      if ((ev.kind === 'play' || ev.kind === 'guard') && ev.card && ev.side !== undefined) {
+        const cardId = ev.card.id;
+        const side = ev.side;
+        window.setTimeout(() => {
+          viewRef.current?.players[side].trash.push(cardId);
+          bump();
+        }, Math.max(0, ev.duration - 380));
+      }
+    }
+
+    // ダメージ・回復ポップ（イベント再生の瞬間に出す）
     if ((ev.kind === 'damage' || ev.kind === 'heal') && ev.side !== undefined && ev.charIndex !== undefined) {
       const pop: DamagePop = {
         key: uniq++,
@@ -104,11 +233,11 @@ export function useBattle(playerDeck: DeckList, enemyDeck: DeckList) {
         amount: ev.kind === 'damage' ? (ev.amount ?? 0) : -(ev.amount ?? 0),
       };
       setPops((prev) => [...prev, pop]);
-      window.setTimeout(() => setPops((prev) => prev.filter((p) => p.key !== pop.key)), 1100);
+      window.setTimeout(() => setPops((prev) => prev.filter((x) => x.key !== pop.key)), 1100);
     }
     if (ev.kind === 'ko' && ev.side !== undefined && ev.charIndex !== undefined) {
       const key = `${ev.side}-${ev.charIndex}`;
-      window.setTimeout(() => setKoShown((prev) => new Set(prev).add(key)), 300);
+      window.setTimeout(() => setKoShown((prev) => new Set(prev).add(key)), 350);
     }
     if (ev.kind === 'revive' && ev.side !== undefined && ev.charIndex !== undefined) {
       const key = `${ev.side}-${ev.charIndex}`;
@@ -120,7 +249,8 @@ export function useBattle(playerDeck: DeckList, enemyDeck: DeckList) {
     }
 
     window.setTimeout(() => setCurrent(null), ev.duration);
-  }, [queue, current]);
+    bump();
+  }, [queue, current, bump]);
 
   // AIの手番（演出が終わってから考える）
   useEffect(() => {
@@ -137,6 +267,8 @@ export function useBattle(playerDeck: DeckList, enemyDeck: DeckList) {
 
   return {
     state,
+    /** 画面に映す用の状態（演出と同期して進む） */
+    view: viewRef.current!,
     version,
     busy,
     current,
