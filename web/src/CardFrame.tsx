@@ -315,6 +315,75 @@ function CharacterContent({ card, w, h, landscape }: { card: CharacterCard; w: n
 
 // ---------------------------------------------------------------- スキル
 
+/**
+ * スキル種別ごとの画像の切り抜きシェイプ。
+ * ひと目で「攻撃/防御/補助/回復」が分かるように、輪郭そのものを変える。
+ * - attack: 袈裟斬りの軌跡のような斜めのスラッシュバナー（刃こぼれの切り欠き付き）
+ * - guard: 上辺が広く、下が中央に収束する盾のシルエット
+ * - support: 上辺が大きくアーチを描く、丸みのある窓
+ * - heal: 対角が丸く膨らむ、柔らかい花弁（雫）型
+ * リム（縁）もタイプ色で塗り分ける。
+ */
+const SKILL_ART_SHAPES: Record<
+  string,
+  { clip?: string; radius?: (w: number) => string; rim: string; glow: string }
+> = {
+  attack: {
+    clip: 'polygon(0% 14%, 84% 5%, 88% 0%, 100% 0%, 100% 86%, 16% 95%, 12% 100%, 0% 100%)',
+    rim: 'linear-gradient(115deg, #ffd98a, #e0512e 55%, #6e1212)',
+    glow: 'rgba(224, 81, 46, 0.45)',
+  },
+  guard: {
+    clip: 'polygon(4% 0%, 96% 0%, 100% 13%, 100% 52%, 82% 78%, 50% 100%, 18% 78%, 0% 52%, 0% 13%)',
+    rim: 'linear-gradient(180deg, #d5ecff, #3f7fc4 55%, #122f4d)',
+    glow: 'rgba(80, 150, 220, 0.45)',
+  },
+  support: {
+    radius: (w) => `${w * 0.2}px ${w * 0.2}px ${w * 0.032}px ${w * 0.032}px`,
+    rim: 'linear-gradient(180deg, #fff0b8, #c9992e 60%, #63470d)',
+    glow: 'rgba(212, 175, 55, 0.4)',
+  },
+  heal: {
+    radius: (w) => `${w * 0.26}px ${w * 0.05}px ${w * 0.26}px ${w * 0.05}px`,
+    rim: 'linear-gradient(135deg, #e2ffdd, #57b96a 60%, #1c5230)',
+    glow: 'rgba(96, 190, 120, 0.45)',
+  },
+};
+
+/** タイプ別シェイプで切り抜いたスキル画像（リム付き） */
+function SkillArt({ card, w, h }: { card: SkillCard; w: number; h: number }) {
+  const shape = SKILL_ART_SHAPES[card.valueType] ?? SKILL_ART_SHAPES.attack;
+  const rimWidth = w * 0.011;
+  const radius = shape.radius?.(w);
+  const shared: CSSProperties = shape.clip ? { clipPath: shape.clip } : { borderRadius: radius };
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        top: h * 0.15,
+        left: w * 0.008,
+        right: w * 0.008,
+        height: h * 0.43,
+        // 影と発光は silhouette（切り抜き後の形）に沿わせる
+        filter: `drop-shadow(0 ${w * 0.006}px ${w * 0.012}px rgba(0,0,0,0.5)) drop-shadow(0 0 ${w * 0.02}px ${shape.glow})`,
+      }}
+    >
+      <div style={{ position: 'absolute', inset: 0, background: shape.rim, ...shared }}>
+        <div
+          style={{
+            position: 'absolute',
+            inset: rimWidth,
+            backgroundImage: `url(${IMG(card.id)})`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            ...shared,
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
 function SkillContent({ card, w, h }: { card: SkillCard; w: number; h: number }) {
   const fullArt = card.rarity === 'USR';
 
@@ -328,21 +397,8 @@ function SkillContent({ card, w, h }: { card: SkillCard; w: number; h: number })
         />
       )}
 
-      {/* 中段のスキル画像（USR以外）。枠内の横いっぱいに広げる */}
-      {!fullArt && (
-        <div
-          style={{
-            position: 'absolute',
-            top: h * 0.153,
-            left: 0,
-            right: 0,
-            height: h * 0.422,
-            backgroundImage: `url(${IMG(card.id)})`,
-            backgroundSize: 'cover',
-            backgroundPosition: 'center',
-          }}
-        />
-      )}
+      {/* 中段のスキル画像（USR以外）。タイプ別のシェイプで切り抜く */}
+      {!fullArt && <SkillArt card={card} w={w} h={h} />}
 
       <div
         style={{
