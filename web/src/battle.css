@@ -1623,6 +1623,18 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
   object-fit: contain;
   mix-blend-mode: screen;
 }
+/* ホームのロゴ画像（カード背面と同じ公式ロゴ） */
+.home-title-logo {
+  margin: 0;
+  line-height: 0;
+}
+.home-title-logo img {
+  width: min(200px, 55vw);
+  height: auto;
+  /* 濃紺の文字が暗い背景に沈まないように淡い光背を敷く */
+  filter: drop-shadow(0 0 18px rgba(190, 215, 255, 0.35)) drop-shadow(0 2px 6px rgba(0, 0, 0, 0.6));
+}
+
 /* ホームの浮遊カード（勇者クラウディア × 魔王トランザード） */
 .home-cards {
   display: flex;
