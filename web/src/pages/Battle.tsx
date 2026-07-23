@@ -158,9 +158,12 @@ export function Battle({ setup, onExit, onRematch }: {
 
   // スキルの属性を覚えておき、続くダメージ等のVFXに使う
   const lastAttrsRef = useRef<string[]>([]);
+  // 直近でスキルを使ったキャラ（カード効果の発動プレートを出す先）
+  const lastCasterRef = useRef<{ side: 0 | 1; charIndex: number } | null>(null);
   interface Vfx { key: number; side: 0 | 1; charIndex: number; img: string; delay: number }
   const [vfxList, setVfxList] = useState<Vfx[]>([]);
 
+  /** imgs: 画像VFX名、または 'css:クラス名'（CSSだけのエフェクト） */
   function spawnVfx(side: 0 | 1 | undefined, charIndex: number | undefined, imgs: string[]) {
     if (side === undefined || charIndex === undefined) return;
     const spawned: Vfx[] = imgs.map((img, i) => ({ key: flightKey++, side, charIndex, img, delay: i * 170 }));
@@ -168,6 +171,17 @@ export function Battle({ setup, onExit, onRematch }: {
     window.setTimeout(() => {
       setVfxList((prev) => prev.filter((v) => !spawned.includes(v)));
     }, 1100 + imgs.length * 170);
+  }
+
+  // キャラの頭上に出る小さなプレート（能力発動・威力アップ・ガード結果など）
+  interface Plate { key: number; side: 0 | 1; charIndex: number; text: string; cls: string }
+  const [plates, setPlates] = useState<Plate[]>([]);
+
+  function spawnPlate(side: 0 | 1 | undefined, charIndex: number | undefined, text: string, cls = '', life = 1500) {
+    if (side === undefined || charIndex === undefined) return;
+    const plate: Plate = { key: flightKey++, side, charIndex, text, cls };
+    setPlates((prev) => [...prev, plate]);
+    window.setTimeout(() => setPlates((prev) => prev.filter((p) => p.key !== plate.key)), life);
   }
 
   // ナレーションイベントに合わせて「カードが飛ぶ」物理演出
@@ -207,6 +221,18 @@ export function Battle({ setup, onExit, onRematch }: {
         } else {
           lastAttrsRef.current = [];
         }
+        // 使用キャラに「詠唱」エフェクト（属性の光 + 立ち上る詠唱リング）
+        if (current.charIndex !== undefined && current.side !== undefined) {
+          lastCasterRef.current = { side: current.side, charIndex: current.charIndex };
+          spawnVfx(current.side, current.charIndex, [
+            'css:cast',
+            ...lastAttrsRef.current.slice(0, 2).map((a) => `vfx_${a}`),
+          ]);
+        }
+        // ガードは「いくつ → いくつ」を頭上に大きく出す
+        if (current.kind === 'guard' && current.amountBefore !== undefined) {
+          spawnPlate(current.side, current.charIndex, `🛡 ${current.amountBefore} → ${current.amount}`, 'guard', 1900);
+        }
         // カットインのあと、使ったカードがトラッシュへ飛ぶ
         window.setTimeout(() => {
           spawnFlight(boardRef.current, trashRefs[s].current, 1, current.card?.id);
@@ -223,9 +249,41 @@ export function Battle({ setup, onExit, onRematch }: {
         break;
       case 'attr':
         spawnVfx(current.side, current.charIndex, [current.attr ? `vfx_${current.attr}` : '', 'vfx_attr'].filter(Boolean));
+        spawnPlate(current.side, current.charIndex, `＋${current.attr}属性`, 'attr');
         break;
       case 'lock':
         spawnVfx(current.side, current.charIndex, [...lastAttrsRef.current.map((a) => `vfx_${a}`), 'vfx_lock']);
+        spawnPlate(current.side, current.charIndex, '🔒 ロック', 'lock');
+        break;
+      case 'unlock':
+        spawnPlate(current.side, current.charIndex, '🔓 ロック解除', 'lock');
+        break;
+      case 'ability': {
+        // パッシブ発動: キャラの頭上に能力プレート + 金の波動
+        const at = current.charIndex !== undefined && current.side !== undefined
+          ? { side: current.side, charIndex: current.charIndex }
+          : lastCasterRef.current;
+        if (at) {
+          spawnPlate(at.side, at.charIndex, `⚡ ${current.text.replace(/！$/, '')}`, 'passive', 1700);
+          spawnVfx(at.side, at.charIndex, ['css:passive']);
+        }
+        break;
+      }
+      case 'power':
+        spawnPlate(current.side, current.charIndex, `⚔ 威力+${current.amount}`, 'power', 1400);
+        spawnVfx(current.side, current.charIndex, ['css:power']);
+        break;
+      case 'powerGuard':
+        spawnPlate(current.side, current.charIndex, `🛡 ガード+${current.amount}`, 'pguard', 1400);
+        spawnVfx(current.side, current.charIndex, ['css:pguard']);
+        break;
+      case 'info':
+        if (current.charName === '無傷') {
+          spawnPlate(current.side, current.charIndex, '無傷！', 'miss', 1300);
+        }
+        break;
+      case 'search':
+        spawnFlight(deckRefs[s].current, handRefs[s].current, 1);
         break;
       default:
         break;
@@ -238,6 +296,65 @@ export function Battle({ setup, onExit, onRematch }: {
     setChargeSel(new Set());
     setPreviewHand(null);
   }, [state.phase, isMyTurn]);
+
+  // 手札の長押しピーク: 押している間だけ拡大。指を横に滑らせると隣のカードに切り替わる
+  const peekTimerRef = useRef(0);
+  const peekingRef = useRef(false);
+  const peekedRecentlyRef = useRef(false);
+
+  function handIndexFromX(clientX: number): number | null {
+    const el = handRefP.current;
+    const n = me.hand.length;
+    if (!el || n === 0) return null;
+    const r = el.getBoundingClientRect();
+    const step = Math.round(handW * 0.63);
+    const idx = Math.round((clientX - (r.left + r.width / 2)) / step + (n - 1) / 2);
+    return Math.max(0, Math.min(n - 1, idx));
+  }
+
+  const handPeek = {
+    onPointerDown: (e: React.PointerEvent) => {
+      try {
+        (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+      } catch {
+        /* すでに解放済みのポインタなどは無視 */
+      }
+      const x = e.clientX;
+      window.clearTimeout(peekTimerRef.current);
+      peekTimerRef.current = window.setTimeout(() => {
+        peekingRef.current = true;
+        peekedRecentlyRef.current = true;
+        const idx = handIndexFromX(x);
+        if (idx !== null && me.hand[idx]) setZoomCard(me.hand[idx]);
+      }, 450);
+    },
+    onPointerMove: (e: React.PointerEvent) => {
+      if (!peekingRef.current) return;
+      const idx = handIndexFromX(e.clientX);
+      if (idx !== null && me.hand[idx]) setZoomCard(me.hand[idx]);
+    },
+    onPointerUp: () => {
+      window.clearTimeout(peekTimerRef.current);
+      if (peekingRef.current) {
+        peekingRef.current = false;
+        setZoomCard(null);
+        window.setTimeout(() => { peekedRecentlyRef.current = false; }, 80);
+      }
+    },
+    onPointerCancel: () => {
+      window.clearTimeout(peekTimerRef.current);
+      peekingRef.current = false;
+      setZoomCard(null);
+    },
+    onClickCapture: (e: React.MouseEvent) => {
+      // 長押しピークの直後のクリックは「カードを選んだ」扱いにしない
+      if (peekedRecentlyRef.current) {
+        e.stopPropagation();
+        e.preventDefault();
+        peekedRecentlyRef.current = false;
+      }
+    },
+  };
 
   const handPlayable = useMemo(() => {
     const map = new Map<number, BattleAction[]>();
@@ -419,16 +536,15 @@ export function Battle({ setup, onExit, onRematch }: {
             <Formation
               side={ENEMY} state={view} pops={pops} targeting={targeting}
               onTap={tapChar} koShown={koShown} cardW={cardW} vfxList={vfxList}
-              onZoom={setZoomCard}
+              plates={plates} onZoom={setZoomCard}
             />
           </div>
 
-          {/* 中央: フィールド + ガイドテキスト（薄い帯） */}
+          {/* 中央: フィールドのみ（ガイドテキストは廃止。すべて演出で伝える） */}
           <div className="center-strip">
             <div className="field-slot">
               {fieldCard ? <CardFrame card={fieldCard} width={40} /> : <div className="field-empty">FIELD</div>}
             </div>
-            <GuideTicker text={guideText(state.phase, isMyTurn, busy, targeting !== null, guardPhase)} />
           </div>
 
           {/* 自分エリア: 左に陣形、右にゾーン（山札が一番右） */}
@@ -436,7 +552,7 @@ export function Battle({ setup, onExit, onRematch }: {
             <Formation
               side={PLAYER} state={view} pops={pops} targeting={targeting}
               onTap={tapChar} koShown={koShown} cardW={cardW} vfxList={vfxList}
-              onZoom={setZoomCard}
+              plates={plates} onZoom={setZoomCard}
             />
             <ZoneCol
               side={PLAYER} p={me} deckRef={deckRefP} apRef={apRefP} trashRef={trashRefP}
@@ -486,7 +602,7 @@ export function Battle({ setup, onExit, onRematch }: {
                   transformOrigin: '50% 115%',
                 }}
                 onClick={() => tapHand(i)}
-                {...longPressHandlers(() => setZoomCard(id))}
+                {...handPeek}
               >
                 <CardFrame card={card} width={handW} upright />
                 {picked && <span className="pick-badge">⚡</span>}
@@ -580,12 +696,9 @@ export function Battle({ setup, onExit, onRematch }: {
         </div>
       )}
 
-      {/* ナレーション（テキストは最小限。基本は演出で伝える） */}
+      {/* テキスト表示はターン・先攻・決着のみ。ほかは全部その場の演出で伝える */}
       {current && current.kind === 'turn' && <TurnSplash key={current.key} mine={current.side === PLAYER} text={current.text} />}
       {current && ['coin', 'end'].includes(current.kind) && <NarrationBanner ev={current} />}
-      {current && ['ability', 'search', 'lock', 'info'].includes(current.kind) && (
-        <NarrationBanner ev={current} mini />
-      )}
       {current && current.card && ['play', 'guard', 'field', 'equip'].includes(current.kind) && (
         <div className={`reveal ${current.side === ENEMY ? 'from-top' : 'from-bottom'}`}>
           <CardFrame card={current.card} width={190} />
@@ -671,7 +784,7 @@ export function Battle({ setup, onExit, onRematch }: {
  * キャラをホイール上に等間隔で配置し、アクター交代時はホイールごと回転して
  * リボルバーのように入れ替わる。アクター位置（中央側）のカードは大きく表示。
  */
-function Formation({ side, state, pops, targeting, onTap, koShown, cardW, vfxList, onZoom }: {
+function Formation({ side, state, pops, targeting, onTap, koShown, cardW, vfxList, plates, onZoom }: {
   side: 0 | 1;
   state: BattleState;
   pops: DamagePop[];
@@ -680,6 +793,7 @@ function Formation({ side, state, pops, targeting, onTap, koShown, cardW, vfxLis
   koShown: Set<string>;
   cardW: number;
   vfxList: { key: number; side: 0 | 1; charIndex: number; img: string; delay: number }[];
+  plates: { key: number; side: 0 | 1; charIndex: number; text: string; cls: string }[];
   onZoom?: (cardId: string) => void;
 }) {
   const p = state.players[side];
@@ -781,15 +895,30 @@ function Formation({ side, state, pops, targeting, onTap, koShown, cardW, vfxLis
                 </div>
               </div>
             )}
-            {myVfx.map((v) => (
-              <img
-                key={v.key}
-                className="vfx-burst"
-                src={IMG(v.img)}
-                style={{ animationDelay: `${v.delay}ms`, transform: `rotate(${(v.key * 47) % 40 - 20}deg)` }}
-                onError={(e) => ((e.target as HTMLImageElement).style.display = 'none')}
-              />
-            ))}
+            {myVfx.map((v) =>
+              v.img.startsWith('css:') ? (
+                <span
+                  key={v.key}
+                  className={`fx-css fx-${v.img.slice(4)}`}
+                  style={{ animationDelay: `${v.delay}ms` }}
+                />
+              ) : (
+                <img
+                  key={v.key}
+                  className="vfx-burst"
+                  src={IMG(v.img)}
+                  style={{ animationDelay: `${v.delay}ms`, transform: `rotate(${(v.key * 47) % 40 - 20}deg)` }}
+                  onError={(e) => ((e.target as HTMLImageElement).style.display = 'none')}
+                />
+              ),
+            )}
+            {plates
+              .filter((pl) => pl.side === side && pl.charIndex === i)
+              .map((pl, k) => (
+                <span key={pl.key} className={`char-plate ${pl.cls}`} style={{ marginTop: -k * 22 }}>
+                  {pl.text}
+                </span>
+              ))}
             {myPops.map((d) => (
               <span key={d.key} className={d.amount > 0 ? 'pop dmg' : 'pop heal'}>
                 {d.amount > 0 ? `-${d.amount}` : `+${-d.amount}`}
@@ -905,35 +1034,6 @@ function TurnSplash({ mine, text }: { mine: boolean; text: string }) {
       <span>{text}</span>
     </div>
   );
-}
-
-/** 1行の電光掲示板。はみ出す場合は流れる */
-function GuideTicker({ text }: { text: string }) {
-  const boxRef = useRef<HTMLDivElement>(null);
-  const spanRef = useRef<HTMLSpanElement>(null);
-  const [scroll, setScroll] = useState(false);
-  useEffect(() => {
-    const box = boxRef.current;
-    const span = spanRef.current;
-    if (!box || !span) return;
-    setScroll(span.scrollWidth > box.clientWidth + 4);
-  }, [text]);
-  return (
-    <div className="guide-zone ticker" ref={boxRef}>
-      <span ref={spanRef} className={scroll ? 'ticker-run' : ''}>{text}</span>
-    </div>
-  );
-}
-
-function guideText(phase: string, isMyTurn: boolean, busy: boolean, targeting: boolean, guardPhase: boolean): string {
-  if (busy) return '⏳ 何が起きているか、上のナレーションを見てね';
-  if (phase === 'choice') return '🌀 ターン開始の能力を使うか選ぼう';
-  if (guardPhase) return '🛡️ 相手の攻撃！ガードカードで割り込むか、そのまま受けるか選ぼう';
-  if (targeting) return '🎯 対象のキャラクターをタップしよう';
-  if (!isMyTurn) return '⏳ 相手のターン。ようすを見よう';
-  if (phase === 'play') return '✨ 明るい手札＝今使えるカード。タップして「使う」！終わったら「チャージへ」';
-  if (phase === 'charge') return '⚡ チャージしたいカードを複数えらんで「チャージ」。よければ「ターンエンド」';
-  return '';
 }
 
 function ResultOverlay({ state, setup, onExit, onRematch }: {

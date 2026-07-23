@@ -301,13 +301,25 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
     skillsUsedThisTurn: () => me().skillsUsedThisTurn,
 
     addDamage: (n) => {
-      if (state.pendingAttack) state.pendingAttack.value += clampN(n);
+      if (state.pendingAttack && clampN(n) > 0) {
+        state.pendingAttack.value += clampN(n);
+        pushLog(
+          state,
+          `P${owner + 1}の${me().characters[ownerChar].name}の攻撃威力+${clampN(n)}（ダメージ${state.pendingAttack.value}）`,
+        );
+      }
     },
     setDamage: (n) => {
-      if (state.pendingAttack) state.pendingAttack.value = clampN(n);
+      if (state.pendingAttack) {
+        state.pendingAttack.value = clampN(n);
+        pushLog(state, `攻撃のダメージが${clampN(n)}に変わった`);
+      }
     },
     addGuardValue: (n) => {
-      if (state.pendingAttack) state.pendingAttack.value = Math.max(0, state.pendingAttack.value - clampN(n));
+      if (state.pendingAttack && clampN(n) > 0) {
+        state.pendingAttack.value = Math.max(0, state.pendingAttack.value - clampN(n));
+        pushLog(state, `P${owner + 1}のガード強化+${clampN(n)}（残りダメージ${state.pendingAttack.value}）`);
+      }
     },
 
     chargeFromDeck: (who, n) => {
@@ -985,7 +997,7 @@ export function applyAction(state: BattleState, action: BattleAction): void {
       p.trash.push(card.id);
       p.skillsUsedThisTurn++;
       p.nextSkillCostDelta = 0; // コスト修正は1回で消費
-      pushLog(state, `${p.characters[usingChar].name}が${card.name}を使用`);
+      pushLog(state, `P${state.active + 1}の${p.characters[usingChar].name}（${usingChar + 1}番手）が${card.name}を使用`);
       if (card.effectText !== '' && !hasEffectImplementation(card.id)) {
         pushLog(state, `※${card.name}の効果は未実装: 「${card.effectText}」`);
       }

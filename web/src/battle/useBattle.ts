@@ -110,6 +110,15 @@ function applyEventToView(view: BattleState, ev: NarrEvent): void {
       if (ev.side !== undefined) p.actorLockUntilTurn = 0;
       break;
     }
+    case 'search': {
+      // デッキから名前で探して手札へ（見つからなくても枚数だけ合わせる）
+      if (ev.cardName) {
+        const i = p.deck.findIndex((id) => cardById(id).name === ev.cardName);
+        if (i >= 0) p.hand.push(...p.deck.splice(i, 1));
+        else if (p.deck.length > 0) p.hand.push(p.deck.pop()!);
+      }
+      break;
+    }
     case 'play':
     case 'guard': {
       if (ev.card) removeFromHandById(s, ev.card.id);
