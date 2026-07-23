@@ -425,7 +425,8 @@ export const VOL1_EFFECTS: Record<string, CardEffect> = {
   '1-A120-C': {
     kind: 'skill',
     onAttackDeclare: (api) => {
-      if (api.skillsUsedThisTurn() >= 2) api.addDamage(1);
+      // コンボスタブ: このターン既にスキルを使っていれば+4（2026-07-23 社長調整）
+      if (api.skillsUsedThisTurn() >= 2) api.addDamage(4);
     },
   },
   '1-A121-C': {

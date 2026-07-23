@@ -58,7 +58,7 @@ function useViewportHeight(): number {
  */
 function cardWidthFor(vh: number, vw: number): number {
   const byHeight = vh >= 840 ? 118 : vh >= 760 ? 110 : vh >= 700 ? 100 : 88;
-  const byWidth = Math.floor((Math.min(vw, 440) - 70) / 2.95);
+  const byWidth = Math.floor((Math.min(vw, 440) - 70) / 3.2);
   return Math.min(byHeight, byWidth);
 }
 
@@ -134,6 +134,7 @@ function BattleInner({ setup, onExit, onRematch }: {
 }) {
   const { state, view, busy, current, pops, koShown, perform, myActions, isMyTurn, speed, setSpeed } = useBattle(setup.playerDeck, setup.enemy.deck);
   const [previewHand, setPreviewHand] = useState<number | null>(null);
+  const [previewGuard, setPreviewGuard] = useState<number | null>(null); // ガードカードの使用前確認
   const [zoomCard, setZoomCard] = useState<string | null>(null); // 読み取り専用の拡大表示（カードID）
   const [pileList, setPileList] = useState<{ title: string; cards: string[] } | null>(null);
   const [chargeSel, setChargeSel] = useState<Set<number>>(new Set());
@@ -228,8 +229,8 @@ function BattleInner({ setup, onExit, onRematch }: {
       chargeTrash: ['se_card', 0.35],
       chargeAll: ['se_card', 0.4],
       mill: ['se_card', 0.3],
-      apTrash: ['se_card', 0.3],
-      handTrash: ['se_card', 0.3],
+      apTrash: ['se_break', 0.5],
+      handTrash: ['se_break', 0.45],
       search: ['se_draw', 0.4],
       play: ['se_play', 0.5],
       field: ['se_play', 0.5],
@@ -248,8 +249,7 @@ function BattleInner({ setup, onExit, onRematch }: {
       lock: ['se_lock', 0.5],
       unlock: ['se_lock', 0.4],
       turn: ['se_turn', 0.5],
-      coin: ['se_coin', 0.55],
-      end: ['se_end', 0.6],
+      // バトル開始(coin)と決着(end)は音なし（社長判断）
     };
     const se = SFX_BY_KIND[current.kind];
     if (se) playSfx(se[0], se[1]);
@@ -360,6 +360,7 @@ function BattleInner({ setup, onExit, onRematch }: {
   useEffect(() => {
     setChargeSel(new Set());
     setPreviewHand(null);
+    setPreviewGuard(null);
   }, [state.phase, isMyTurn]);
 
   // 手札の長押しピーク: 押している間だけ拡大。指を横に滑らせると隣のカードに切り替わる
@@ -765,7 +766,7 @@ function BattleInner({ setup, onExit, onRematch }: {
             {myActions.filter((a) => a.type === 'playGuard').map((a) => {
               const hi = (a as { handIndex: number }).handIndex;
               return (
-                <div key={hi} className="hand-card playable" onClick={() => act(a)}>
+                <div key={hi} className="hand-card playable" onClick={() => setPreviewGuard(hi)}>
                   <CardFrame card={cardById(me.hand[hi])} width={handW} />
                 </div>
               );
@@ -823,6 +824,41 @@ function BattleInner({ setup, onExit, onRematch }: {
                 <span className="hint">{state.phase === 'play' ? '今は使えないカード（APや属性を確認）' : ''}</span>
               )}
               <button className="chip" onClick={() => setPreviewHand(null)}>とじる</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ガードカードの使用前確認（攻撃スキルと同じ「見る→使う」の2段階） */}
+      {previewGuard !== null && previewGuard < me.hand.length && (
+        <div className="overlay preview" onClick={() => setPreviewGuard(null)}>
+          <div className="preview-inner" onClick={(e) => e.stopPropagation()}>
+            <CardFrame card={cardById(me.hand[previewGuard])} width={Math.min(300, Math.max(230, window.innerWidth * 0.72))} upright />
+            {(() => {
+              const card = cardById(me.hand[previewGuard]);
+              if (card.type !== 'skill' || !state.pendingAttack) return null;
+              const after = Math.max(0, state.pendingAttack.value - card.baseValue);
+              return (
+                <div className="predict-row">
+                  <span className="predict grd">
+                    ダメージ <b>{state.pendingAttack.value}</b><em> → </em><b>{after}</b>
+                  </span>
+                  <span className="predict cost">コスト <b>{card.costAp}</b></span>
+                </div>
+              );
+            })()}
+            <div className="dialog-btns">
+              <button
+                className="big-btn slim"
+                onClick={() => {
+                  const hi = previewGuard;
+                  setPreviewGuard(null);
+                  act({ type: 'playGuard', handIndex: hi });
+                }}
+              >
+                このカードでガードする
+              </button>
+              <button className="chip" onClick={() => setPreviewGuard(null)}>やめる</button>
             </div>
           </div>
         </div>

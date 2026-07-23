@@ -84,8 +84,8 @@ export function Formation({ side, state, pops, targeting, onTap, koShown, cardW,
   const step = 360 / Math.max(n, 1);
   // 横長の楕円ホイール: 横方向に大きく広げ、縦はつぶして省スペースにする。
   // 空いた縦の余白ぶんカード自体を大きくできる。
-  const rx = Math.round(cardW * 1.12); // 横半径
-  const ry = Math.round(cardW * 0.5); // 縦半径
+  const rx = Math.round(cardW * 1.24); // 横半径（カード同士が重ならない余白を確保）
+  const ry = Math.round(cardW * 0.6); // 縦半径
   const frontW = Math.round(cardW * 1.08);
   const backScale = 0.8;
 
@@ -104,8 +104,8 @@ export function Formation({ side, state, pops, targeting, onTap, koShown, cardW,
     rotRef.current = wheelRot;
   });
 
-  const width = Math.round(cardW * 2.95 + 8);
-  const height = Math.round(cardW * 2.2 + 16);
+  const width = Math.round(cardW * 3.2 + 8);
+  const height = Math.round(cardW * 2.4 + 16);
   const selectableSet = targeting && targeting.side === side ? targeting.actions : null;
 
   return (

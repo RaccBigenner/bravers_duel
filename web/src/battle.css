@@ -966,8 +966,6 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
 .turn-badge.theirs { background: linear-gradient(#a33, #711); color: #fdd; box-shadow: 0 0 10px rgba(255,80,80,0.5); }
 
 /* 自分のターンは手札まわりが金色に灯る */
-.battle-root.my-turn .my-hand { box-shadow: inset 0 -14px 22px -16px rgba(255, 215, 0, 0.75); border-radius: 12px; }
-.battle-root.enemy-turn .enemy-hand { box-shadow: inset 0 14px 22px -16px rgba(255, 90, 90, 0.6); border-radius: 12px; }
 
 /* 先攻コイン演出（大きめバナー） */
 .narration.kind-coin {
@@ -1446,14 +1444,17 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
 
 /* ---- 頭上プレート: 生成した金縁プレート画像に載せる ---- */
 .char-plate {
-  background: url('./assets/plate.webp') center / 100% 100% no-repeat;
+  /* 枠は廃止（社長判断）。読みやすさは余白と縁取りで確保する */
+  background: none;
   border: none;
   border-radius: 0;
   box-shadow: none;
-  padding: 7px 30px 9px;
-  font-size: 11.5px;
+  padding: 6px 14px;
+  font-size: 12.5px;
   color: #ffe9a0;
-  text-shadow: 0 1px 2px #000, 0 0 6px rgba(0, 0, 0, 0.8);
+  text-shadow:
+    -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000,
+    0 0 8px rgba(0, 0, 0, 0.95), 0 0 14px rgba(0, 0, 0, 0.8);
 }
 .char-plate.guard { color: #cfeaff; font-size: 14px; }
 .char-plate.power { color: #ffd0a8; }
@@ -1464,11 +1465,17 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
 
 /* ---- ナレーション（コイン・決着）も同じプレートに ---- */
 .narration {
-  background: url('./assets/plate.webp') center / 100% 100% no-repeat;
+  background: none;
   border: none;
   border-radius: 0;
   box-shadow: none;
-  padding: 14px 44px 16px;
+  padding: 16px 28px;
+}
+.narration .narr-text {
+  font-size: 17px;
+  text-shadow:
+    -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000,
+    0 0 10px rgba(0, 0, 0, 0.95), 0 0 18px rgba(0, 0, 0, 0.85);
 }
 .narration.kind-ko { background-color: transparent; }
 

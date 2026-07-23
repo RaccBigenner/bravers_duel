@@ -1909,13 +1909,13 @@
     "rarity": "C",
     "name": "コンボスタブ",
     "type": "skill",
-    "effectText": "このターン、既にスキルを使用していればダメージを+1。",
+    "effectText": "このターン、既にスキルを使用していればダメージを+4。",
     "flavorText": "",
     "costAp": 2,
     "conditionAttribute": [
       "突"
     ],
-    "baseValue": 5,
+    "baseValue": 4,
     "valueType": "attack"
   },
   {
