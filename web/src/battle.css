@@ -827,3 +827,84 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
   0% { transform: translateX(12%); }
   100% { transform: translateX(-100%); }
 }
+
+/* ============ ぬるぬる化パス + ターンスプラッシュ + ミニ通知 ============ */
+
+* { -webkit-tap-highlight-color: transparent; }
+
+/* リボルバーはバネのある回転に */
+.wheel-slot {
+  transition: transform 0.8s cubic-bezier(0.3, 1.12, 0.42, 1), filter 0.35s ease;
+}
+
+/* 手札の詰め直し・明暗もスムーズに */
+.hand-card {
+  transition: transform 0.22s ease, margin 0.3s ease, filter 0.35s ease, opacity 0.3s ease;
+}
+.enemy-hand .hand-back { transition: margin 0.3s ease; }
+
+/* 山札などの枚数バッジ */
+.pile-count { transition: transform 0.2s ease; }
+
+/* 飛翔カードの軌道を気持ちよく */
+.fly-ghost {
+  transition: left 0.62s cubic-bezier(0.25, 0.9, 0.35, 1), top 0.62s cubic-bezier(0.45, 0.05, 0.4, 1);
+}
+
+/* ドローの滑り込みをなめらかに */
+@keyframes draw-in {
+  0% { transform: translate(90px, -70px) rotate(10deg) scale(0.9); opacity: 0; }
+  60% { opacity: 1; }
+  100% { transform: translate(0, 0) rotate(0) scale(1); opacity: 1; }
+}
+.my-hand .hand-card { animation: draw-in 0.45s cubic-bezier(0.2, 0.8, 0.3, 1); }
+
+/* HPバー・状態表示 */
+.hp-fill { transition: width 0.55s cubic-bezier(0.3, 0.9, 0.4, 1); }
+.char-status { transition: opacity 0.3s ease; }
+
+/* ターン切り替えスプラッシュ（全幅の帯が走る） */
+.turn-splash {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 42%;
+  z-index: 66;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 12px 0;
+  pointer-events: none;
+  animation: splash-sweep 1.35s cubic-bezier(0.2, 0.9, 0.3, 1) forwards;
+}
+.turn-splash span {
+  font-size: 24px;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+  font-family: 'Cinzel', 'Murecho', serif;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9);
+}
+.turn-splash.mine {
+  background: linear-gradient(90deg, transparent, rgba(212, 175, 55, 0.32), transparent);
+}
+.turn-splash.mine span { color: #ffe9a0; }
+.turn-splash.theirs {
+  background: linear-gradient(90deg, transparent, rgba(180, 50, 50, 0.35), transparent);
+}
+.turn-splash.theirs span { color: #ffb3b3; }
+@keyframes splash-sweep {
+  0% { transform: translateX(-60%); opacity: 0; }
+  16% { transform: translateX(0); opacity: 1; }
+  80% { transform: translateX(0); opacity: 1; }
+  100% { transform: translateX(30%); opacity: 0; }
+}
+
+/* ミニ通知（能力発動など、控えめに上部へ） */
+.narration.mini {
+  top: 7.5%;
+  padding: 4px 14px;
+  border-radius: 16px;
+  background: rgba(12, 14, 20, 0.82);
+}
+.narration.mini .narr-text { font-size: 11.5px; }
+.narration.mini .narr-icon { font-size: 13px; }

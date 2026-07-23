@@ -19,12 +19,12 @@ import '../battle.css';
 const PLAYER = 0 as const;
 const ENEMY = 1 as const;
 
-type Targeting =
-  | null
-  | { kind: 'enemy'; handIndex: number }
-  | { kind: 'allyHeal'; handIndex: number }
-  | { kind: 'allyEquip'; handIndex: number }
-  | { kind: 'allyUse'; handIndex: number }; // 控えから使うスキルの使用キャラ選択
+/** 対象選択モード。合法手から導出した「選べる対象 → 実行する行動」の表を持つ */
+type Targeting = {
+  side: 0 | 1; // 対象側
+  hint: string;
+  actions: Map<number, BattleAction>; // charIndex → action
+} | null;
 
 /** 画面の高さ（リサイズ追従） */
 function useViewportHeight(): number {
@@ -241,50 +241,63 @@ export function Battle({ setup, onExit, onRematch }: {
     }
   }
 
-  /** プレビュー中のカードを使う（必要なら対象選択モードへ） */
+  /** プレビュー中のカードを使う（必要なら対象選択モードへ）。
+   * 選べる対象は合法手（legalActions）から導出するので、選択肢の抜けが起きない */
   function playFromPreview(handIndex: number) {
     const card = cardById(me.hand[handIndex]);
     setPreviewHand(null);
-    if (card.type === 'skill') {
-      const eff = skillEffectOf(card.id);
-      if (eff?.anyCharacterCanUse) {
-        const eligible = myActions.filter(
-          (a) => a.type === 'playSkill' && a.handIndex === handIndex && a.usingIndex !== undefined,
-        );
-        if (eligible.length > 1) return setTargeting({ kind: 'allyUse', handIndex });
-        if (eligible.length === 1) return act(eligible[0]);
-      }
-      if (card.valueType === 'heal') return setTargeting({ kind: 'allyHeal', handIndex });
-      if (card.valueType === 'attack' && eff?.targeting === 'choose') {
-        return setTargeting({ kind: 'enemy', handIndex });
-      }
-      act({ type: 'playSkill', handIndex });
-    } else if (card.type === 'character') {
-      act({ type: 'playCharacter', handIndex });
-    } else if (card.type === 'equipment') {
-      setTargeting({ kind: 'allyEquip', handIndex });
-    } else if (card.type === 'field') {
-      act({ type: 'playField', handIndex });
+
+    // このカードに対応する合法手を集める
+    const acts = myActions.filter((a) => 'handIndex' in a && a.handIndex === handIndex);
+    if (acts.length === 0) return;
+    if (acts.length === 1 && !('targetIndex' in acts[0] && card.type === 'equipment')) {
+      // 対象の選びようがない（1通りしかない）場合は即実行
+      const only = acts[0];
+      const needsChoice =
+        (only.type === 'playSkill' && (only.healTargetIndex !== undefined || only.targetIndex !== undefined || only.usingIndex !== undefined)) ||
+        only.type === 'playEquipment';
+      if (!needsChoice) return act(only);
     }
+
+    // 対象→行動 の表を作る
+    const map = new Map<number, BattleAction>();
+    let side: 0 | 1 = PLAYER;
+    let hint = '対象を選んでください';
+    for (const a of acts) {
+      if (a.type === 'playSkill' && a.targetIndex !== undefined) {
+        map.set(a.targetIndex, a);
+        side = ENEMY;
+        hint = '攻撃する相手を選んでください';
+      } else if (a.type === 'playSkill' && a.healTargetIndex !== undefined) {
+        map.set(a.healTargetIndex, a);
+        side = PLAYER;
+        hint = '回復する味方を選んでください';
+      } else if (a.type === 'playSkill' && a.usingIndex !== undefined) {
+        map.set(a.usingIndex, a);
+        side = PLAYER;
+        hint = 'このスキルを使うキャラを選んでください';
+      } else if (a.type === 'playEquipment') {
+        map.set(a.targetIndex, a);
+        side = PLAYER;
+        hint = '装備するキャラを選んでください';
+      }
+    }
+    if (map.size === 0) {
+      act(acts[0]);
+      return;
+    }
+    if (map.size === 1) {
+      act([...map.values()][0]);
+      return;
+    }
+    setTargeting({ side, hint, actions: map });
   }
 
   function tapChar(side: 0 | 1, index: number) {
     if (!targeting) return;
-    if (targeting.kind === 'enemy' && side === ENEMY && isCharAlive(state, ENEMY, index)) {
-      act({ type: 'playSkill', handIndex: targeting.handIndex, targetIndex: index });
-    }
-    if (targeting.kind === 'allyHeal' && side === PLAYER && isCharAlive(state, PLAYER, index)) {
-      act({ type: 'playSkill', handIndex: targeting.handIndex, healTargetIndex: index });
-    }
-    if (targeting.kind === 'allyEquip' && side === PLAYER && isCharAlive(state, PLAYER, index)) {
-      act({ type: 'playEquipment', handIndex: targeting.handIndex, targetIndex: index });
-    }
-    if (targeting.kind === 'allyUse' && side === PLAYER) {
-      const match = myActions.find(
-        (a) => a.type === 'playSkill' && a.handIndex === targeting.handIndex && a.usingIndex === index,
-      );
-      if (match) act(match);
-    }
+    if (side !== targeting.side) return;
+    const action = targeting.actions.get(index);
+    if (action) act(action);
   }
 
   function tapHand(i: number) {
@@ -420,13 +433,7 @@ export function Battle({ setup, onExit, onRematch }: {
           <span className="hint">…</span>
         ) : targeting ? (
           <>
-            <span className="hint">
-              {targeting.kind === 'enemy'
-                ? '攻撃する相手を選んでください'
-                : targeting.kind === 'allyUse'
-                  ? 'このスキルを使うキャラを選んでください'
-                  : '対象の味方を選んでください'}
-            </span>
+            <span className="hint">{targeting.hint}</span>
             <button className="chip" onClick={() => setTargeting(null)}>やめる</button>
           </>
         ) : guardPhase ? (
@@ -492,8 +499,12 @@ export function Battle({ setup, onExit, onRematch }: {
         </div>
       )}
 
-      {/* ナレーション */}
-      {current && <NarrationBanner ev={current} />}
+      {/* ナレーション（テキストは最小限。基本は演出で伝える） */}
+      {current && current.kind === 'turn' && <TurnSplash key={current.key} mine={current.side === PLAYER} text={current.text} />}
+      {current && ['coin', 'end'].includes(current.kind) && <NarrationBanner ev={current} />}
+      {current && ['ability', 'search', 'lock', 'info'].includes(current.kind) && (
+        <NarrationBanner ev={current} mini />
+      )}
       {current && current.card && ['play', 'guard', 'field', 'equip'].includes(current.kind) && (
         <div className={`reveal ${current.side === ENEMY ? 'from-top' : 'from-bottom'}`}>
           <CardFrame card={current.card} width={190} />
@@ -598,24 +609,23 @@ function Formation({ side, state, pops, targeting, onTap, koShown, cardW, vfxLis
   const backScale = 0.74;
 
   // 前面 = 中央（相手側）寄り。自分は上向き、相手は下向き
+  // 配置順: アクター=前、1控え=左、2控え=右（基準角を -i*step にすることで実現）
   const frontAngle = side === PLAYER ? 0 : 180;
   const tilt = n === 2 ? 28 : 0; // 2人の時は斜めに
-  const desired = frontAngle - p.actorIndex * step + tilt;
+  const desired = p.actorIndex * step;
 
-  // 回転は最短経路で連続的に（リボルバーの回転演出）
+  // 回転は常に同じ方向（進行方向）へ。1控えへも2控えへも同方向に回る
   const rotRef = useRef(desired);
   const prev = rotRef.current;
-  const delta = ((desired - prev) % 360 + 540) % 360 - 180;
-  const wheelRot = prev + delta;
+  const forward = ((desired - prev) % 360 + 360) % 360;
+  const wheelRot = prev + forward;
   useEffect(() => {
     rotRef.current = wheelRot;
   });
 
   const width = Math.round(r * 1.8 + cardW * 0.9);
   const height = Math.round(r * 1.55 + cardW * 1.39 * 0.85);
-  const selectable =
-    (targeting?.kind === 'enemy' && side === ENEMY) ||
-    ((targeting?.kind === 'allyHeal' || targeting?.kind === 'allyEquip') && side === PLAYER);
+  const selectableSet = targeting && targeting.side === side ? targeting.actions : null;
 
   return (
     <div className="formation" style={{ width, height }}>
@@ -629,7 +639,7 @@ function Formation({ side, state, pops, targeting, onTap, koShown, cardW, vfxLis
         const myPops = pops.filter((d) => d.side === side && d.charIndex === i);
         const myVfx = vfxList.filter((v) => v.side === side && v.charIndex === i);
         const extras = extraAttributes(state, side, i);
-        const A = i * step + wheelRot;
+        const A = frontAngle - i * step + wheelRot + tilt;
         const scale = isActor ? 1 : backScale;
         return (
           <div
@@ -639,7 +649,7 @@ function Formation({ side, state, pops, targeting, onTap, koShown, cardW, vfxLis
               'wheel-slot',
               isActor ? 'actor' : '',
               koVisible ? 'ko' : '',
-              selectable && alive ? 'selectable' : '',
+              selectableSet?.has(i) ? 'selectable' : '',
             ].join(' ')}
             style={{
               left: '50%',
@@ -793,11 +803,20 @@ const KIND_ICON: Record<string, string> = {
   lock: '🔒', end: '🏁', info: '💬',
 };
 
-function NarrationBanner({ ev }: { ev: NarrEvent }) {
+function NarrationBanner({ ev, mini = false }: { ev: NarrEvent; mini?: boolean }) {
   return (
-    <div key={ev.key} className={`narration kind-${ev.kind}`}>
+    <div key={ev.key} className={`narration kind-${ev.kind} ${mini ? 'mini' : ''}`}>
       <span className="narr-icon">{KIND_ICON[ev.kind] ?? '💬'}</span>
       <span className="narr-text">{ev.text}</span>
+    </div>
+  );
+}
+
+/** ターン切り替えの全幅スプラッシュ演出 */
+function TurnSplash({ mine, text }: { mine: boolean; text: string }) {
+  return (
+    <div className={`turn-splash ${mine ? 'mine' : 'theirs'}`}>
+      <span>{text}</span>
     </div>
   );
 }
