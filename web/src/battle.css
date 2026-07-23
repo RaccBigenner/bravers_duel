@@ -162,7 +162,8 @@
   position: relative;
   transition: transform 0.25s ease, filter 0.25s ease;
 }
-.char-slot.actor .card-frame { box-shadow: 0 0 12px 3px rgba(255, 215, 0, 0.55); }
+/* アクターの金色オーラは廃止（テキストの裏で光って見えるため）。
+   アクターは「大きさ + 足元のスポットライト」で示す */
 .char-slot.ko { filter: saturate(0.2) brightness(0.7); }
 .ko-back {
   position: absolute;

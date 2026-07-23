@@ -159,11 +159,10 @@ export function simpleAi(options: SimpleAiOptions = {}): BattleAi {
       }
 
       // ---------- チャージフェーズ ----------
-      // 山札はチャージ・プレイした枚数だけ翌ターンのドローで減る。
-      // 人間のプレイを真似る:
-      // - 手札は「山札の貯金」なので、なるべく満タンのまま持つ（引く枚数を0に近づける）
-      // - 自分のキャラで使えない「死に札」だけは気軽にAPへ回す
-      // - 使える札は「攻撃に必要なAPが足りない時」にだけ最小限チャージする
+      // 手札は1枚残しまで使ってよい（人間も普通そうする）。
+      // 大事なのは「使った分を決着（KO）に変換する」こと:
+      // - 死に札から先にAPへ
+      // - 目標APは「アクターで撃てる攻撃の高い方から2発ぶん」= 毎ターン撃ち切る
       const attrsByChar = p.characters.map((_, i) => effectiveAttributes(state, me, i));
       const isUsable = (id: string): boolean => {
         const card = cardById(id);
@@ -186,20 +185,24 @@ export function simpleAi(options: SimpleAiOptions = {}): BattleAi {
         )
         .map((c) => c.costAp);
       const cheapest = actorAttackCosts.length > 0 ? Math.min(...actorAttackCosts) : Infinity;
-      const heaviest = actorAttackCosts.length > 0 ? Math.max(...actorAttackCosts) : 0;
+      const sortedCosts = [...actorAttackCosts].sort((a, b) => b - a);
+      // 目標AP = 高い方から2発ぶん（1発しか無ければ1発+2で次に備える）
+      const targetAp =
+        sortedCosts.length >= 2
+          ? Math.min(9, sortedCosts[0] + sortedCosts[1])
+          : sortedCosts.length === 1
+            ? Math.min(9, sortedCosts[0] + 2)
+            : 3;
 
-      // 1. 死に札（チームの誰も使えない）は自由にAPへ
-      const deadIndex = p.hand.findIndex((id) => !isUsable(id));
-      if (deadIndex >= 0 && p.ap.length < Math.min(9, Math.max(heaviest + 2, 4))) {
-        return { type: 'charge', handIndex: deadIndex };
-      }
-      // 2. アクターの一番安い攻撃が撃てるまで最小限チャージ
-      if (cheapest !== Infinity && p.ap.length < cheapest && p.hand.length > 1) {
+      if (p.hand.length > 1 && p.ap.length < targetAp) {
+        // 死に札（チームの誰も使えない）から先にAPへ
+        const deadIndex = p.hand.findIndex((id) => !isUsable(id));
+        if (deadIndex >= 0) return { type: 'charge', handIndex: deadIndex };
         const chargeIndex = chooseChargeIndex(p.hand, attrsByChar);
         return { type: 'charge', handIndex: chargeIndex };
       }
-      // 3. アクターで撃てる攻撃が手札に無い（手札が腐っている）なら、
-      //    1枚チャージして山札を回し、手札を入れ替える（膠着防止）
+      // アクターで撃てる攻撃が手札に無い（手札が腐っている）なら、
+      // 1枚チャージして山札を回し、手札を入れ替える（膠着防止）
       if (cheapest === Infinity && p.hand.length > 1) {
         const chargeIndex = chooseChargeIndex(p.hand, attrsByChar);
         return { type: 'charge', handIndex: chargeIndex };
