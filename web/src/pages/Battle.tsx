@@ -348,18 +348,16 @@ function BattleInner({ setup, onExit, onRematch }: {
       case 'ability': {
         // パッシブ発動: エンジンが明示した位置にだけ出す（推測して間違った側に出さない）
         if (current.charIndex !== undefined && current.side !== undefined) {
+          // テキストの裏は光らせない（社長判断）: プレートのみ表示
           spawnPlate(current.side, current.charIndex, current.text.replace(/！$/, ''), 'passive', 1700, 'icon_bolt');
-          spawnVfx(current.side, current.charIndex, ['css:passive']);
         }
         break;
       }
       case 'power':
         spawnPlate(current.side, current.charIndex, `威力+${current.amount}`, 'power', 1400, 'icon_sword');
-        spawnVfx(current.side, current.charIndex, ['css:power']);
         break;
       case 'powerGuard':
         spawnPlate(current.side, current.charIndex, `ガード+${current.amount}`, 'pguard', 1400, 'icon_shield');
-        spawnVfx(current.side, current.charIndex, ['css:pguard']);
         break;
       case 'info':
         if (current.charName === '無傷') {

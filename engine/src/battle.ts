@@ -1513,7 +1513,12 @@ function beginAttack(
   const pending = state.pendingAttack;
   if (!pending) return;
 
-  if (!pending.noGuard && guardOptions(state, defenderIdx).length > 0) {
+  // ガードで割り込めるのは「自分（アクター）への攻撃を含む」時だけ。
+  // 控えだけを狙う攻撃（コメットスナイプの控え指定など）にはガードできない
+  const hitsActor = resolveAttackTargets(state, pending).includes(
+    state.players[defenderIdx].actorIndex,
+  );
+  if (!pending.noGuard && hitsActor && guardOptions(state, defenderIdx).length > 0) {
     state.phase = 'guard';
     pushLog(state, `${card.name}で攻撃 → 相手は割り込みできる（ダメージ${pending.value}）`);
     emit(state, { t: 'attackDeclared', player: state.active, charIndex: usingChar, cardId: card.id, value: pending.value, noGuard: false });
