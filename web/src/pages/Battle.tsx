@@ -26,6 +26,7 @@ import {
   type Targeting,
 } from '../battle/BoardParts';
 import { useBattle } from '../battle/useBattle';
+import { logEvent } from '../telemetry';
 import { RulesModal } from './RulesModal';
 import '../battle.css';
 
@@ -143,6 +144,17 @@ function BattleInner({ setup, onExit, onRematch }: {
   const [showRules, setShowRules] = useState(false);
   const [flights, setFlights] = useState<Flight[]>([]);
   const [sfxOn, setSfxOn] = useState(isSfxEnabled());
+
+  // 公開βのログ: バトル開始を1回だけ記録
+  useEffect(() => {
+    logEvent('battle_start', {
+      playerDeck: setup.playerDeckName,
+      playerDeckKind: setup.playerDeckKind,
+      enemyDeck: setup.enemy.name,
+      enemyRandom: setup.enemyRandom,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const vh = useViewportHeight();
   const cardW = cardWidthFor(vh, window.innerWidth);
@@ -940,6 +952,21 @@ function BattleInner({ setup, onExit, onRematch }: {
 
 
 
+/** バトル内容の要約（ログ用）: 使われたカード・チャージ回数などをイベントから集計 */
+function summarizeBattle(state: BattleState) {
+  const used: [Record<string, number>, Record<string, number>] = [{}, {}];
+  const charges = [0, 0];
+  const damage = [0, 0]; // その側が「与えた」ダメージ
+  for (const e of state.events) {
+    if (e.t === 'skillUsed' || e.t === 'characterCardUsed' || e.t === 'castFromDeck' || e.t === 'guardPlayed' || e.t === 'equip' || e.t === 'fieldSet') {
+      used[e.player][e.cardId] = (used[e.player][e.cardId] ?? 0) + 1;
+    }
+    if (e.t === 'chargeHand') charges[e.player]++;
+    if (e.t === 'damage') damage[1 - e.player]++;
+  }
+  return { usedByPlayer: used[0], usedByEnemy: used[1], chargesPlayer: charges[0], chargesEnemy: charges[1] };
+}
+
 function ResultOverlay({ state, setup, onExit, onRematch }: {
   state: BattleState;
   setup: BattleSetup;
@@ -948,6 +975,36 @@ function ResultOverlay({ state, setup, onExit, onRematch }: {
 }) {
   const won = state.winner === PLAYER;
   const reason = state.endReason === 'wipeout' ? '全滅' : state.endReason === 'deckout' ? '山札切れ' : '時間切れ';
+  const [stars, setStars] = useState(0);
+  const [reviewText, setReviewText] = useState('');
+  const [reviewSent, setReviewSent] = useState(false);
+
+  // バトル終了ログ（リザルト表示時に1回だけ）
+  useEffect(() => {
+    logEvent('battle_end', {
+      playerDeck: setup.playerDeckName,
+      playerDeckKind: setup.playerDeckKind,
+      enemyDeck: setup.enemy.name,
+      enemyRandom: setup.enemyRandom,
+      winner: state.winner === null ? 'draw' : state.winner === PLAYER ? 'player' : 'enemy',
+      reason: state.endReason,
+      turns: state.turn,
+      ...summarizeBattle(state),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function sendReview() {
+    logEvent('review', {
+      stars,
+      text: reviewText.slice(0, 1000),
+      playerDeck: setup.playerDeckName,
+      enemyDeck: setup.enemy.name,
+      winner: state.winner === PLAYER ? 'player' : state.winner === null ? 'draw' : 'enemy',
+      turns: state.turn,
+    });
+    setReviewSent(true);
+  }
   const text = won
     ? `BRAVER'S DUEL β: 「${setup.playerDeckName}」で「${setup.enemy.name}」に勝利！（${reason}・${state.turn}ターン）`
     : `BRAVER'S DUEL β: 「${setup.enemy.name}」に敗北…リベンジ求む（${state.turn}ターン）`;
@@ -962,6 +1019,38 @@ function ResultOverlay({ state, setup, onExit, onRematch }: {
           <span className="stat"><b>{reason}</b><em>決着</em></span>
           <span className="stat"><b>{state.turn}</b><em>ターン</em></span>
           <span className="stat"><b>{setup.enemy.name}</b><em>対戦相手</em></span>
+        </div>
+        {/* レビュー（毎回表示） */}
+        <div className="review-box">
+          {reviewSent ? (
+            <p className="review-thanks">ご意見ありがとうございました！</p>
+          ) : (
+            <>
+              <p className="review-title">このバトルはどうでしたか？</p>
+              <div className="review-stars">
+                {[1, 2, 3, 4, 5].map((n) => (
+                  <span
+                    key={n}
+                    className={`review-star ${n <= stars ? 'on' : ''}`}
+                    onClick={() => setStars(n)}
+                  >
+                    ★
+                  </span>
+                ))}
+              </div>
+              <textarea
+                className="review-text"
+                placeholder="気づいたこと・感想があれば（任意・1000文字まで）"
+                maxLength={1000}
+                rows={2}
+                value={reviewText}
+                onChange={(e) => setReviewText(e.target.value)}
+              />
+              <button className="chip" disabled={stars === 0} onClick={sendReview}>
+                {stars === 0 ? '星を選んでください' : '送信する'}
+              </button>
+            </>
+          )}
         </div>
         <a className="big-btn slim share" href={shareUrl} target="_blank" rel="noreferrer">
           𝕏 で結果をシェア

@@ -25,7 +25,10 @@ export function Home({ onBattle, onGallery }: { onBattle: () => void; onGallery:
             カード一覧
           </button>
         </div>
-        <p className="home-note">オープンβテスト — データは保存されません。デッキはJSONで書き出せます。</p>
+        <p className="home-note">
+          オープンβテスト — ゲームデータは保存されません。デッキはJSONで書き出せます。
+          品質向上のため、匿名のプレイ統計とレビューを送信します（個人情報は含みません）。
+        </p>
       </div>
       {showRules && <RulesModal onClose={() => setShowRules(false)} />}
     </div>

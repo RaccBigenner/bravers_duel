@@ -1,5 +1,6 @@
 import type { DeckList, NamedDeck } from '@bravers/engine';
 import { useState } from 'react';
+import { logEvent } from './telemetry';
 import { Battle } from './pages/Battle';
 import { DeckBuilder, type CustomDeck } from './pages/DeckBuilder';
 import { DeckSelect } from './pages/DeckSelect';
@@ -9,7 +10,11 @@ import { Home } from './pages/Home';
 export interface BattleSetup {
   playerDeck: DeckList;
   playerDeckName: string;
+  /** ログ用: プリセット / 自作 / JSON読み込み */
+  playerDeckKind: 'preset' | 'custom' | 'imported';
   enemy: NamedDeck;
+  /** ログ用: 敵をランダムで選んだか */
+  enemyRandom: boolean;
 }
 
 type View =
@@ -48,6 +53,11 @@ export function App() {
           initial={customDeck}
           onUse={(deck) => {
             setCustomDeck(deck);
+            logEvent('custom_deck', {
+              deckName: deck.name,
+              characterIds: deck.deck.characterIds,
+              cardIds: deck.deck.cardIds,
+            });
             setView({ name: 'deckSelect' });
           }}
           onBack={() => setView({ name: 'deckSelect' })}

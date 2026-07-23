@@ -98,10 +98,13 @@ export function DeckSelect({ onStart, onBack, custom, onBuild }: {
   }
 
   function start() {
-    const enemy = enemyIdx === 'random' ? enemies[Math.floor(Math.random() * enemies.length)] : enemies[enemyIdx];
-    const playerDeck = mineIdx === 'custom' && customEntry ? customEntry.deck : all[mineIdx === 'custom' ? 0 : mineIdx].deck;
-    const playerDeckName = mineIdx === 'custom' && customEntry ? customEntry.name : all[mineIdx === 'custom' ? 0 : mineIdx].name;
-    onStart({ playerDeck, playerDeckName, enemy });
+    const enemyRandom = enemyIdx === 'random';
+    const enemy = enemyRandom ? enemies[Math.floor(Math.random() * enemies.length)] : enemies[enemyIdx as number];
+    const useCustom = mineIdx === 'custom' && customEntry;
+    const playerDeck = useCustom ? customEntry.deck : all[mineIdx === 'custom' ? 0 : mineIdx].deck;
+    const playerDeckName = useCustom ? customEntry.name : all[mineIdx === 'custom' ? 0 : mineIdx].name;
+    const playerDeckKind = useCustom ? (imported ? 'imported' : 'custom') : 'preset';
+    onStart({ playerDeck, playerDeckName, playerDeckKind, enemy, enemyRandom });
   }
 
   return (
