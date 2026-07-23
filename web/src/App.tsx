@@ -1,7 +1,9 @@
 import type { DeckList, NamedDeck } from '@bravers/engine';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { logEvent } from './telemetry';
+import { decodeSharedLog, type SharedLog } from './shareLog';
 import { Battle } from './pages/Battle';
+import { BattleLogPage } from './pages/BattleLog';
 import { DeckBuilder, type CustomDeck } from './pages/DeckBuilder';
 import { DeckSelect } from './pages/DeckSelect';
 import { Gallery } from './pages/Gallery';
@@ -22,11 +24,27 @@ type View =
   | { name: 'gallery' }
   | { name: 'deckSelect' }
   | { name: 'builder' }
-  | { name: 'battle'; setup: BattleSetup; nonce: number };
+  | { name: 'battle'; setup: BattleSetup; nonce: number }
+  | { name: 'sharedLog'; log: SharedLog };
 
 export function App() {
   const [view, setView] = useState<View>({ name: 'home' });
   const [customDeck, setCustomDeck] = useState<CustomDeck | null>(null);
+
+  // シェアされたバトルログURL（#log=…）で開かれたらプレビューを表示
+  // （開いた時 + 開いたままURLを貼られた時の両方）
+  useEffect(() => {
+    const check = () => {
+      const token = location.hash.startsWith('#log=') ? location.hash.slice(5) : null;
+      if (!token) return;
+      void decodeSharedLog(token).then((log) => {
+        if (log) setView({ name: 'sharedLog', log });
+      });
+    };
+    check();
+    window.addEventListener('hashchange', check);
+    return () => window.removeEventListener('hashchange', check);
+  }, []);
 
   switch (view.name) {
     case 'home':
@@ -61,6 +79,17 @@ export function App() {
             setView({ name: 'deckSelect' });
           }}
           onBack={() => setView({ name: 'deckSelect' })}
+        />
+      );
+    case 'sharedLog':
+      return (
+        <BattleLogPage
+          log={view.log}
+          onHome={() => {
+            // ログURLのハッシュを消してからホームへ（リロードでログに戻らないように）
+            history.replaceState(null, '', location.pathname + location.search);
+            setView({ name: 'home' });
+          }}
         />
       );
     case 'battle':

@@ -27,6 +27,10 @@ import {
 } from '../battle/BoardParts';
 import { useBattle } from '../battle/useBattle';
 import { logEvent } from '../telemetry';
+import { encodeSharedLog, type SharedLog } from '../shareLog';
+
+/** シェアリンクの飛び先（公開ページ） */
+const SITE_URL = 'https://raccbigenner.github.io/bravers_duel/';
 import { RulesModal } from './RulesModal';
 import '../battle.css';
 
@@ -1008,10 +1012,34 @@ function ResultOverlay({ state, setup, onExit, onRematch }: {
     setReviewSent(true);
     setStep('after');
   }
-  const text = won
-    ? `BRAVER'S DUEL β: 「${setup.playerDeckName}」で「${setup.enemy.name}」に勝利！（${reason}・${state.turn}ターン）`
-    : `BRAVER'S DUEL β: 「${setup.enemy.name}」に敗北…リベンジ求む（${state.turn}ターン）`;
-  const shareUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent('https://raccbigenner.github.io/bravers_duel/')}`;
+  // シェア: バトルログをURLに埋め込んだプレビューページを付ける
+  const [logUrl, setLogUrl] = useState(SITE_URL);
+  useEffect(() => {
+    const sum = summarizeBattle(state);
+    const shared: SharedLog = {
+      v: 1,
+      pd: setup.playerDeckName,
+      ed: setup.enemy.name,
+      w: state.winner === null ? 'd' : state.winner === PLAYER ? 'p' : 'e',
+      r: state.endReason ?? '',
+      t: state.turn,
+      pc: setup.playerDeck.characterIds,
+      ec: setup.enemy.deck.characterIds,
+      pu: Object.entries(sum.usedByPlayer),
+      eu: Object.entries(sum.usedByEnemy),
+    };
+    void encodeSharedLog(shared).then((token) => setLogUrl(`${SITE_URL}#log=${token}`));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const verdict =
+    state.winner === null ? '引き分け' : `${reason}${won ? '勝利' : '負け'}`;
+  const line = won
+    ? `「${setup.playerDeckName}」で「${setup.enemy.name}」に勝利！！`
+    : state.winner === null
+      ? `「${setup.playerDeckName}」で「${setup.enemy.name}」と激闘！`
+      : `「${setup.playerDeckName}」で「${setup.enemy.name}」に挑戦！`;
+  const text = `#ブレデュエ\n${line}｜${state.turn}ターン｜${verdict}\n`;
+  const shareUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(logUrl)}`;
 
   return (
     <div className="overlay">
