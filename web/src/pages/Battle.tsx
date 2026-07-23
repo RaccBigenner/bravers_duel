@@ -14,6 +14,7 @@ import type { BattleSetup } from '../App';
 import { CardFrame } from '../CardFrame';
 import { IMG } from '../cardAssets';
 import type { NarrEvent } from '../battle/narrator';
+import { ALL_SFX, isSfxEnabled, playSfx, preloadSfx, setSfxEnabled } from '../battle/sfx';
 import { useBattle, type DamagePop } from '../battle/useBattle';
 import { RulesModal } from './RulesModal';
 import '../battle.css';
@@ -47,11 +48,15 @@ function useViewportHeight(): number {
   return vh;
 }
 
-function cardWidthFor(vh: number): number {
-  if (vh >= 840) return 100;
-  if (vh >= 760) return 92;
-  if (vh >= 700) return 84;
-  return 74;
+/**
+ * キャラカードの基準サイズ。
+ * 陣形を横長の楕円にしたぶん縦に余裕ができたので、高さ上限を引き上げ、
+ * 横は「陣形の全幅が画面に収まる」ことを上限にする。
+ */
+function cardWidthFor(vh: number, vw: number): number {
+  const byHeight = vh >= 840 ? 118 : vh >= 760 ? 110 : vh >= 700 ? 100 : 88;
+  const byWidth = Math.floor((Math.min(vw, 440) - 70) / 2.95);
+  return Math.min(byHeight, byWidth);
 }
 
 /** 飛んでいくカードの演出 */
@@ -135,6 +140,7 @@ export function Battle(props: { setup: BattleSetup; onExit: () => void; onRematc
   useEffect(() => {
     let alive = true;
     setReady(false);
+    preloadSfx(ALL_SFX); // 効果音も先に読み込む
     preloadBattleImages(props.setup).then(() => {
       if (alive) setReady(true);
     });
@@ -168,9 +174,10 @@ function BattleInner({ setup, onExit, onRematch }: {
   const [confirmExit, setConfirmExit] = useState(false);
   const [showRules, setShowRules] = useState(false);
   const [flights, setFlights] = useState<Flight[]>([]);
+  const [sfxOn, setSfxOn] = useState(isSfxEnabled());
 
   const vh = useViewportHeight();
-  const cardW = cardWidthFor(vh);
+  const cardW = cardWidthFor(vh, window.innerWidth);
   const handW = Math.round(cardW * 0.78);
   const me = view.players[PLAYER]; // 盤面は表示用ステートを映す
   const foe = view.players[ENEMY];
@@ -202,6 +209,7 @@ function BattleInner({ setup, onExit, onRematch }: {
     const from = centerOf(fromEl);
     const to = centerOf(toEl);
     if (!from || !to) return;
+    playSfx('se_card', 0.3); // カードが擦れて滑る音
     for (let i = 0; i < Math.min(count, 3); i++) {
       const f: Flight = { key: flightKey++, from, to, faceCardId };
       window.setTimeout(() => {
@@ -247,6 +255,39 @@ function BattleInner({ setup, onExit, onRematch }: {
   useEffect(() => {
     if (!current) return;
     const s = (current.side ?? PLAYER) as 0 | 1;
+    // 全演出の効果音（イベント種 → [SE名, 音量]）
+    const SFX_BY_KIND: Partial<Record<NarrEvent['kind'], [string, number]>> = {
+      draw: ['se_draw', 0.4],
+      charge: ['se_card', 0.35],
+      chargeDeck: ['se_card', 0.35],
+      chargeTrash: ['se_card', 0.35],
+      chargeAll: ['se_card', 0.4],
+      mill: ['se_card', 0.3],
+      apTrash: ['se_card', 0.3],
+      handTrash: ['se_card', 0.3],
+      search: ['se_draw', 0.4],
+      play: ['se_play', 0.5],
+      field: ['se_play', 0.5],
+      attack: ['se_attack', 0.55],
+      guard: ['se_guard', 0.55],
+      damage: ['se_damage', 0.6],
+      heal: ['se_heal', 0.5],
+      revive: ['se_heal', 0.55],
+      ko: ['se_ko', 0.65],
+      ability: ['se_ability', 0.45],
+      power: ['se_ability', 0.45],
+      powerGuard: ['se_ability', 0.45],
+      attr: ['se_ability', 0.4],
+      actor: ['se_actor', 0.5],
+      equip: ['se_equip', 0.5],
+      lock: ['se_lock', 0.5],
+      unlock: ['se_lock', 0.4],
+      turn: ['se_turn', 0.5],
+      coin: ['se_coin', 0.55],
+      end: ['se_end', 0.6],
+    };
+    const se = SFX_BY_KIND[current.kind];
+    if (se) playSfx(se[0], se[1]);
     switch (current.kind) {
       case 'draw':
         spawnFlight(deckRefs[s].current, handRefs[s].current, current.amount ?? 1);
@@ -558,7 +599,19 @@ function BattleInner({ setup, onExit, onRematch }: {
           onClick={() => setSpeed(speed > 1 ? 1 : 2)}
           title="演出の速さを切り替え"
         >
-          倍速{speed > 1 ? '×2' : '×1'}
+          {speed > 1 ? '×2' : '×1'}
+        </button>
+        <button
+          className={`chip small speed ${sfxOn ? 'on' : ''}`}
+          onClick={() => {
+            const next = !sfxOn;
+            setSfxEnabled(next);
+            setSfxOn(next);
+            if (next) playSfx('se_ability', 0.4);
+          }}
+          title="効果音のオン/オフ"
+        >
+          音
         </button>
         <button className="chip small" onClick={() => setShowRules(true)}>？</button>
         <button className="chip small danger" onClick={() => setConfirmExit(true)}>投了</button>
@@ -885,9 +938,12 @@ function Formation({ side, state, pops, targeting, onTap, koShown, cardW, vfxLis
   const p = state.players[side];
   const n = p.characters.length;
   const step = 360 / Math.max(n, 1);
-  const r = Math.round(cardW * 0.92); // ホイール半径
+  // 横長の楕円ホイール: 横方向に大きく広げ、縦はつぶして省スペースにする。
+  // 空いた縦の余白ぶんカード自体を大きくできる。
+  const rx = Math.round(cardW * 1.12); // 横半径
+  const ry = Math.round(cardW * 0.5); // 縦半径
   const frontW = Math.round(cardW * 1.08);
-  const backScale = 0.74;
+  const backScale = 0.8;
 
   // 前面 = 中央（相手側）寄り。自分は上向き、相手は下向き
   // 配置順: アクター=前、1控え=左、2控え=右（基準角を -i*step にすることで実現）
@@ -904,8 +960,8 @@ function Formation({ side, state, pops, targeting, onTap, koShown, cardW, vfxLis
     rotRef.current = wheelRot;
   });
 
-  const width = Math.round(r * 1.8 + cardW * 0.9);
-  const height = Math.round(r * 1.55 + cardW * 1.39 * 0.85);
+  const width = Math.round(cardW * 2.95 + 8);
+  const height = Math.round(cardW * 2.2 + 16);
   const selectableSet = targeting && targeting.side === side ? targeting.actions : null;
 
   return (
@@ -921,6 +977,9 @@ function Formation({ side, state, pops, targeting, onTap, koShown, cardW, vfxLis
         const myVfx = vfxList.filter((v) => v.side === side && v.charIndex === i);
         const extras = extraAttributes(state, side, i);
         const A = frontAngle - i * step + wheelRot + tilt;
+        const rad = (A * Math.PI) / 180;
+        const x = Math.round(Math.sin(rad) * rx * 10) / 10;
+        const y = Math.round(-Math.cos(rad) * ry * 10) / 10;
         const scale = isActor ? 1 : backScale;
         return (
           <div
@@ -937,7 +996,7 @@ function Formation({ side, state, pops, targeting, onTap, koShown, cardW, vfxLis
               left: '50%',
               top: '50%',
               zIndex: isActor ? 6 : 3,
-              transform: `translate(-50%, -50%) rotate(${A}deg) translateY(${-r}px) rotate(${-A}deg) scale(${scale})`,
+              transform: `translate(-50%, -50%) translate(${x}px, ${y}px) scale(${scale})`,
             }}
             onClick={() => onTap(side, i)}
             {...longPressHandlers(() => onZoom?.(c.cardId))}
