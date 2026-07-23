@@ -599,3 +599,37 @@ describe('ヤクビの発動条件（2026-07-23 社長決定）', () => {
     expect(state.players[0].actorIndex).toBe(0); // 交代もしない
   });
 });
+
+describe('型付きイベントストリーム（UI演出の唯一の情報源）', () => {
+  it('ガード・ダメージ・交代イベントが正しい位置情報つきで発行される', () => {
+    const atkChar = charForSkill('1-A053-R'); // トルネード（敵全体4）
+    const guardChar = charForSkill('1-A122-C');
+    const state = battleWith([atkChar.id], '1-A053-R', [guardChar.id, DADA], '1-A122-C');
+    giveAp(state, 0, 6);
+    giveAp(state, 1, 2);
+    const seqBefore = state.eventSeq;
+
+    applyAction(state, { type: 'playSkill', handIndex: 0 });
+    applyAction(state, { type: 'playGuard', handIndex: 0 });
+
+    const events = state.events.slice(-(state.eventSeq - seqBefore));
+    const guard = events.find((e) => e.t === 'guardPlayed');
+    expect(guard).toMatchObject({ t: 'guardPlayed', player: 1, charIndex: 0, before: 4, after: 0 });
+    // ダメージイベントは控え（1番）にだけ、フルの4で出る
+    const damages = events.filter((e) => e.t === 'damage');
+    expect(damages).toMatchObject([{ t: 'damage', player: 1, charIndex: 1, n: 4 }]);
+    // 使用イベントは使用キャラの位置を持つ
+    expect(events.find((e) => e.t === 'skillUsed')).toMatchObject({ player: 0, charIndex: 0 });
+  });
+
+  it('開幕にはbattleStartと後攻補償のイベントが並ぶ', () => {
+    const state = battleWith([ORUS], VANILLA_ATK, [DADA, OWU], VANILLA_ATK);
+    expect(state.events[0]).toMatchObject({ t: 'battleStart', first: 0 });
+    expect(state.events.find((e) => e.t === 'bonusCharge')).toMatchObject({ player: 1, n: 2 });
+
+    // ターン2に切り替えるとturnStartイベントが出る
+    applyAction(state, { type: 'endPlay' });
+    applyAction(state, { type: 'endTurn' });
+    expect(state.events.find((e) => e.t === 'turnStart')).toMatchObject({ turn: 2, player: 1 });
+  });
+});

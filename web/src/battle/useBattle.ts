@@ -24,7 +24,7 @@ import {
   type DeckList,
 } from '@bravers/engine';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { classify, type NarrEvent } from './narrator';
+import { narrate, type NarrEvent } from './narrator';
 
 export interface DamagePop {
   key: number;
@@ -203,30 +203,41 @@ export function useBattle(playerDeck: DeckList, enemyDeck: DeckList) {
   const busy = queue.length > 0 || current !== null;
   const bump = useCallback(() => setVersion((v) => v + 1), []);
 
-  /** 開幕処理のログも演出として再生（表示状態には適用しない: すでに反映済みのため） */
+  // 演出用タイマーは全部ここで管理し、画面を離れたら確実に止める
+  // （放置するとアンマウント後に発火して不要な処理が走る）
+  const timersRef = useRef<number[]>([]);
+  const later = useCallback((fn: () => void, ms: number) => {
+    const id = window.setTimeout(() => {
+      timersRef.current = timersRef.current.filter((t) => t !== id);
+      fn();
+    }, ms);
+    timersRef.current.push(id);
+  }, []);
+  useEffect(() => () => timersRef.current.forEach((t) => window.clearTimeout(t)), []);
+
+  /** 開幕処理のイベントも演出として再生（表示状態には適用しない: すでに反映済みのため） */
   const bootRef = useRef(false);
   useEffect(() => {
     if (bootRef.current) return;
     bootRef.current = true;
     const s = stateRef.current!;
-    const events = s.log
-      .map((l) => classify(s, l, s.firstPlayer))
+    const events = s.events
+      .map((e) => narrate(s, e))
       .filter((e): e is NarrEvent => e !== null)
       .map((e) => ({ ...e, noApply: true }));
     setQueue(events);
   }, []);
 
-  /** 行動を適用し、新しく起きたことを演出キューへ */
+  /** 行動を適用し、新しく起きたイベントを演出キューへ */
   const perform = useCallback((action: BattleAction) => {
     const s = stateRef.current!;
-    const who = actingPlayer(s) as 0 | 1;
-    const seqBefore = s.logSeq;
+    const seqBefore = s.eventSeq;
 
     applyAction(s, action);
 
-    const newCount = s.logSeq - seqBefore;
-    const newLines = newCount > 0 ? s.log.slice(-Math.min(newCount, s.log.length)) : [];
-    const events = newLines.map((l) => classify(s, l, who)).filter((e): e is NarrEvent => e !== null);
+    const newCount = s.eventSeq - seqBefore;
+    const newEvents = newCount > 0 ? s.events.slice(-Math.min(newCount, s.events.length)) : [];
+    const events = newEvents.map((e) => narrate(s, e)).filter((e): e is NarrEvent => e !== null);
     setQueue((q) => [...q, ...events]);
     bump();
   }, [bump]);
@@ -262,7 +273,7 @@ export function useBattle(playerDeck: DeckList, enemyDeck: DeckList) {
       if ((ev.kind === 'play' || ev.kind === 'guard') && ev.card && ev.side !== undefined) {
         const cardId = ev.card.id;
         const side = ev.side;
-        window.setTimeout(() => {
+        later(() => {
           viewRef.current?.players[side].trash.push(cardId);
           bump();
         }, Math.max(0, ev.duration - 380));
@@ -278,11 +289,11 @@ export function useBattle(playerDeck: DeckList, enemyDeck: DeckList) {
         amount: ev.kind === 'damage' ? (ev.amount ?? 0) : -(ev.amount ?? 0),
       };
       setPops((prev) => [...prev, pop]);
-      window.setTimeout(() => setPops((prev) => prev.filter((x) => x.key !== pop.key)), 1100);
+      later(() => setPops((prev) => prev.filter((x) => x.key !== pop.key)), 1100);
     }
     if (ev.kind === 'ko' && ev.side !== undefined && ev.charIndex !== undefined) {
       const key = `${ev.side}-${ev.charIndex}`;
-      window.setTimeout(() => setKoShown((prev) => new Set(prev).add(key)), 350);
+      later(() => setKoShown((prev) => new Set(prev).add(key)), 350);
     }
     if (ev.kind === 'revive' && ev.side !== undefined && ev.charIndex !== undefined) {
       const key = `${ev.side}-${ev.charIndex}`;
@@ -293,9 +304,9 @@ export function useBattle(playerDeck: DeckList, enemyDeck: DeckList) {
       });
     }
 
-    window.setTimeout(() => setCurrent(null), ev.duration);
+    later(() => setCurrent(null), ev.duration);
     bump();
-  }, [queue, current, bump]);
+  }, [queue, current, bump, later]);
 
   // AIの手番（演出が終わってから考える）
   useEffect(() => {

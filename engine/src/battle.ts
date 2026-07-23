@@ -19,6 +19,7 @@ import {
   skillEffectOf,
   type EffectApi,
 } from './effects';
+import type { BattleEvent } from './events';
 import { mulberry32, shuffled } from './rng';
 import {
   CHARACTER_CARD_HEAL,
@@ -98,6 +99,10 @@ export interface BattleState {
   log: string[];
   /** ログの通し番号（上限で古いログが消えても、UI側が差分を取れるように） */
   logSeq: number;
+  /** 型付きイベントストリーム（UIの演出はこれだけを読む。→ events.ts） */
+  events: BattleEvent[];
+  /** イベントの通し番号（上限で古いものが消えても差分を取れるように） */
+  eventSeq: number;
 }
 
 export type BattleAction =
@@ -120,6 +125,15 @@ function pushLog(state: BattleState, message: string): void {
   state.logSeq++;
   if (state.log.length > MAX_LOG_ENTRIES) {
     state.log.splice(0, state.log.length - MAX_LOG_ENTRIES);
+  }
+}
+
+/** UI用の型付きイベントを発行する（ログとは独立。演出はこちらだけを読む） */
+function emit(state: BattleState, ev: BattleEvent): void {
+  state.events.push(ev);
+  state.eventSeq++;
+  if (state.events.length > MAX_LOG_ENTRIES) {
+    state.events.splice(0, state.events.length - MAX_LOG_ENTRIES);
   }
 }
 
@@ -228,6 +242,7 @@ function finish(state: BattleState, winner: PlayerIndex | null, reason: EndReaso
   state.endReason = reason;
   state.pendingAttack = null;
   pushLog(state, winner === null ? `決着つかず（${reason}）` : `プレイヤー${winner + 1}の勝ち（${reason}）`);
+  emit(state, { t: 'battleEnd', winner, reason });
 }
 
 // ---------------------------------------------------------------- 効果の安全実行
@@ -257,10 +272,13 @@ function runEffectSafely(
     winner: state.winner,
     endReason: state.endReason,
     rngState: state.rngState,
+    events: state.events,
+    eventSeq: state.eventSeq,
   });
   state.effectDepth++;
   // ＠P◯の◯番手 は演出がキャラ位置を正確に特定するための機械可読な印
   pushLog(state, anchor ? `発動:${label}＠P${anchor.player + 1}の${anchor.charIndex + 1}番手` : `発動:${label}`);
+  emit(state, { t: 'abilityTriggered', label, player: anchor?.player, charIndex: anchor?.charIndex });
   try {
     fn();
   } catch (e) {
@@ -319,6 +337,7 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
           state,
           `P${owner + 1}の${me().characters[ownerChar].name}の攻撃威力+${clampN(n)}（ダメージ${state.pendingAttack.value}）`,
         );
+        emit(state, { t: 'powerUp', player: owner, charIndex: ownerChar, n: clampN(n), total: state.pendingAttack.value });
       }
     },
     setDamage: (n) => {
@@ -336,10 +355,12 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
             state,
             `P${owner + 1}のガード強化+${clampN(n)}（残りダメージ${Math.max(0, pending.value - pending.guard.value)}）`,
           );
+          emit(state, { t: 'guardBoost', player: owner, n: clampN(n), remain: Math.max(0, pending.value - pending.guard.value) });
         } else {
           // ガード外から呼ばれた場合は攻撃自体を弱める
           pending.value = Math.max(0, pending.value - clampN(n));
           pushLog(state, `P${owner + 1}のガード強化+${clampN(n)}（残りダメージ${pending.value}）`);
+          emit(state, { t: 'guardBoost', player: owner, n: clampN(n), remain: pending.value });
         }
       }
     },
@@ -349,19 +370,28 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
       const p = state.players[idx];
       const moved = p.deck.splice(0, clampN(n));
       p.ap.push(...moved);
-      if (moved.length > 0) pushLog(state, `P${idx + 1}はデッキから${moved.length}枚チャージ（AP: ${p.ap.length}）`);
+      if (moved.length > 0) {
+        pushLog(state, `P${idx + 1}はデッキから${moved.length}枚チャージ（AP: ${p.ap.length}）`);
+        emit(state, { t: 'chargeDeck', player: idx, n: moved.length, ap: p.ap.length });
+      }
     },
     chargeAllHand: () => {
       const p = me();
       const n = p.hand.length;
       p.ap.push(...p.hand.splice(0));
-      if (n > 0) pushLog(state, `P${owner + 1}は手札を全てチャージ（${n}枚）`);
+      if (n > 0) {
+        pushLog(state, `P${owner + 1}は手札を全てチャージ（${n}枚）`);
+        emit(state, { t: 'chargeAllHand', player: owner, n });
+      }
     },
     chargeFromTrashBottom: (n) => {
       const p = me();
       const moved = p.trash.splice(0, clampN(n));
       p.ap.push(...moved);
-      if (moved.length > 0) pushLog(state, `P${owner + 1}はトラッシュから${moved.length}枚チャージ（AP: ${p.ap.length}）`);
+      if (moved.length > 0) {
+        pushLog(state, `P${owner + 1}はトラッシュから${moved.length}枚チャージ（AP: ${p.ap.length}）`);
+        emit(state, { t: 'chargeTrash', player: owner, n: moved.length, ap: p.ap.length });
+      }
     },
     drawCards: (who, n) => {
       const idx = who === 'me' ? owner : enemyIdx;
@@ -369,26 +399,38 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
       const before = p.hand.length;
       p.hand.push(...p.deck.splice(0, clampN(n)));
       const drawn = p.hand.length - before;
-      if (drawn > 0) pushLog(state, `プレイヤー${idx + 1}が${drawn}枚ドロー`);
+      if (drawn > 0) {
+        pushLog(state, `プレイヤー${idx + 1}が${drawn}枚ドロー`);
+        emit(state, { t: 'draw', player: idx, n: drawn });
+      }
     },
     discardHandAll: () => {
       const p = me();
       const n = p.hand.length;
       p.trash.push(...p.hand.splice(0));
-      if (n > 0) pushLog(state, `P${owner + 1}は手札を全てトラッシュ（${n}枚）`);
+      if (n > 0) {
+        pushLog(state, `P${owner + 1}は手札を全てトラッシュ（${n}枚）`);
+        emit(state, { t: 'handTrash', player: owner, n });
+      }
     },
     millDeck: (who, n) => {
       const idx = who === 'me' ? owner : enemyIdx;
       const p = state.players[idx];
       const moved = p.deck.splice(0, clampN(n));
       p.trash.push(...moved);
-      if (moved.length > 0) pushLog(state, `P${idx + 1}のデッキから${moved.length}枚トラッシュ`);
+      if (moved.length > 0) {
+        pushLog(state, `P${idx + 1}のデッキから${moved.length}枚トラッシュ`);
+        emit(state, { t: 'mill', player: idx, n: moved.length });
+      }
     },
     discardEnemyAp: (n) => {
       const p = enemy();
       const moved = p.ap.splice(0, clampN(n));
       p.trash.push(...moved);
-      if (moved.length > 0) pushLog(state, `P${enemyIdx + 1}のAPから${moved.length}枚トラッシュ`);
+      if (moved.length > 0) {
+        pushLog(state, `P${enemyIdx + 1}のAPから${moved.length}枚トラッシュ`);
+        emit(state, { t: 'apTrash', player: enemyIdx, n: moved.length });
+      }
     },
     damageEnemyActor: (n) => {
       applyDamage(state, enemyIdx, enemy().actorIndex, clampN(n));
@@ -413,6 +455,7 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
       if (state.phase !== 'finished' && !isCharAlive(state, enemyIdx, enemy().actorIndex)) {
         enemy().actorIndex = nextAliveIndex(state, enemyIdx, enemy().actorIndex);
         pushLog(state, `P${enemyIdx + 1}のアクターが${enemy().characters[enemy().actorIndex].name}（${enemy().actorIndex + 1}番手）に強制交代`);
+        emit(state, { t: 'actorChanged', player: enemyIdx, charIndex: enemy().actorIndex, forced: true });
       }
     },
     damageTarget: (n) => {
@@ -438,6 +481,7 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
       const c = p.characters[best];
       c.damage = Math.max(0, maxHpOf(state, owner, best) - Math.max(1, hp));
       pushLog(state, `P${owner + 1}の${c.name}が復活（HP${Math.max(1, hp)}）`);
+      emit(state, { t: 'revive', player: owner, charIndex: best, hp: Math.max(1, hp) });
     },
     addAttributeToSelf: (attr, n = 1) => {
       const c = me().characters[ownerChar];
@@ -445,6 +489,7 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
         c.addedAttributes.push(attr);
       }
       pushLog(state, `P${owner + 1}の${c.name}に${attr}属性を追加`);
+      emit(state, { t: 'attributeAdded', player: owner, charIndex: ownerChar, attr });
     },
     addAttributeToAllAllies: (attr) => {
       me().characters.forEach((c, i) => {
@@ -461,38 +506,48 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
     lockEnemyActor: () => {
       enemy().actorLockUntilTurn = state.turn + 1;
       pushLog(state, `P${enemyIdx + 1}のアクターをロック（ターン${state.turn + 1}終了まで）`);
+      emit(state, { t: 'actorLocked', player: enemyIdx, untilTurn: state.turn + 1 });
     },
     lockMyActor: () => {
       me().actorLockUntilTurn = state.turn + 1;
       pushLog(state, `P${owner + 1}のアクターをロック（ターン${state.turn + 1}終了まで）`);
+      emit(state, { t: 'actorLocked', player: owner, untilTurn: state.turn + 1 });
     },
     unlockMyActor: () => {
-      if (actorLocked(state, owner)) pushLog(state, `P${owner + 1}のアクターのロックを解除`);
+      if (actorLocked(state, owner)) {
+        pushLog(state, `P${owner + 1}のアクターのロックを解除`);
+        emit(state, { t: 'actorUnlocked', player: owner });
+      }
       me().actorLockUntilTurn = 0;
     },
     forceChangeEnemyActor: () => {
       if (actorLocked(state, enemyIdx)) {
         pushLog(state, 'アクターがロックされていて変更できない');
+        emit(state, { t: 'lockBlocked', player: enemyIdx });
         return;
       }
       const p = enemy();
       p.actorIndex = nextAliveIndex(state, enemyIdx, p.actorIndex, rotationSkip(state, enemyIdx));
       pushLog(state, `P${enemyIdx + 1}のアクターが${p.characters[p.actorIndex].name}（${p.actorIndex + 1}番手）に変更`);
+      emit(state, { t: 'actorChanged', player: enemyIdx, charIndex: p.actorIndex, forced: true });
     },
     changeMyActor: (skip = 0) => {
       if (actorLocked(state, owner)) {
         pushLog(state, 'アクターがロックされていて変更できない');
+        emit(state, { t: 'lockBlocked', player: owner });
         return;
       }
       const p = me();
       p.actorIndex = nextAliveIndex(state, owner, p.actorIndex, skip);
       pushLog(state, `プレイヤー${owner + 1}のアクターが${p.characters[p.actorIndex].name}（${p.actorIndex + 1}番手）に交代`);
+      emit(state, { t: 'actorChanged', player: owner, charIndex: p.actorIndex, forced: false });
       state.skipRotationFor = owner; // 効果でアクターを動かしたので自動交代はしない
     },
     becomeActor: () => {
       if (isCharAlive(state, owner, ownerChar)) {
         me().actorIndex = ownerChar;
         pushLog(state, `プレイヤー${owner + 1}のアクターが${me().characters[ownerChar].name}（${ownerChar + 1}番手）に交代`);
+        emit(state, { t: 'actorChanged', player: owner, charIndex: ownerChar, forced: false });
         state.skipRotationFor = owner; // 効果でアクターを決めたので自動交代はしない
       }
     },
@@ -517,6 +572,7 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
         [p.deck[i], p.deck[j]] = [p.deck[j], p.deck[i]];
       }
       pushLog(state, `デッキから${cardById(card).name}を手札に加えた`);
+      emit(state, { t: 'searchToHand', player: owner, cardId: card });
       return true;
     },
     selfHasEquipment: () => me().characters[ownerChar].equipmentCardId !== null,
@@ -527,6 +583,7 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
       if (c.equipmentCardId) {
         state.players[defenderIdx()].trash.push(c.equipmentCardId);
         pushLog(state, `P${defenderIdx() + 1}の${c.name}の装備${cardById(c.equipmentCardId).name}を破壊`);
+        emit(state, { t: 'equipDestroyed', player: defenderIdx(), charIndex: t, cardId: c.equipmentCardId });
         c.equipmentCardId = null;
       }
     },
@@ -545,7 +602,10 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
       const p = me();
       const n = p.ap.length;
       p.trash.push(...p.ap.splice(0));
-      if (n > 0) pushLog(state, `P${owner + 1}のAPから${n}枚トラッシュ`);
+      if (n > 0) {
+        pushLog(state, `P${owner + 1}のAPから${n}枚トラッシュ`);
+        emit(state, { t: 'apTrash', player: owner, n });
+      }
       return n;
     },
     damageSelf: (n) => {
@@ -564,12 +624,14 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
       });
       if (idx === -1) {
         pushLog(state, 'デッキに条件に合うカードが無かった');
+        emit(state, { t: 'info', text: 'デッキに条件に合うカードが無かった' });
         return;
       }
       const [id] = p.deck.splice(idx, 1);
       const card = cardById(id) as SkillCard;
       p.trash.push(id);
       pushLog(state, `デッキから${card.name}をコストなしで使用`);
+      emit(state, { t: 'castFromDeck', player: owner, charIndex: ownerChar, cardId: id });
       // スキルを本当に「使用」する（効果込み）。奇襲扱いでguard割り込みは不可。
       // もとのスキルの効果の一部なので、ここでは絶対にローテーションさせない
       // （させると「1スキルで2回スイッチ」が起きる）
@@ -612,6 +674,7 @@ function applyDamage(
   const eff = characterEffectOf(c.cardId);
   if (eff?.standbyImmune && charIndex !== actorRef) {
     pushLog(state, `P${player + 1}の${c.name}は控えのためダメージを受けない`);
+    emit(state, { t: 'standbyImmune', player, charIndex });
     return 0;
   }
 
@@ -619,6 +682,7 @@ function applyDamage(
   const actual = Math.min(amount, maxHp - c.damage);
   c.damage += actual;
   pushLog(state, `P${player + 1}の${c.name}に${actual}ダメージ（残りHP: ${maxHp - c.damage}）`);
+  emit(state, { t: 'damage', player, charIndex, n: actual, hpLeft: maxHp - c.damage });
 
   // 被ダメージ時の常時能力（ミルオン・ボーダン）。アクター判定は攻撃列の開始時点で行う
   if (actual > 0 && eff?.onDamaged && isCharAlive(state, player, charIndex)) {
@@ -633,6 +697,7 @@ function applyDamage(
   // 戦闘不能処理
   if (!isCharAlive(state, player, charIndex)) {
     pushLog(state, `P${player + 1}の${c.name}は戦闘不能`);
+    emit(state, { t: 'ko', player, charIndex });
     // 味方戦闘不能時の常時能力（レオン・ソーベルト。倒れた本人も発動する）
     p.characters.forEach((ally, i) => {
       const allyEff = characterEffectOf(ally.cardId);
@@ -650,6 +715,7 @@ function applyDamage(
     if (charIndex === p.actorIndex && !deferForcedSwitch) {
       p.actorIndex = nextAliveIndex(state, player, p.actorIndex);
       pushLog(state, `P${player + 1}のアクターが${p.characters[p.actorIndex].name}（${p.actorIndex + 1}番手）に強制交代`);
+      emit(state, { t: 'actorChanged', player, charIndex: p.actorIndex, forced: true });
     }
   }
   return actual;
@@ -664,6 +730,7 @@ function healCharacter(state: BattleState, player: PlayerIndex, charIndex: numbe
   c.damage -= healed;
   if (healed > 0) {
     pushLog(state, `P${player + 1}の${c.name}を${healed}回復`);
+    emit(state, { t: 'heal', player, charIndex, n: healed });
     const eff = characterEffectOf(c.cardId);
     if (eff?.onHealed) {
       runEffectSafely(
@@ -755,11 +822,15 @@ export function createBattle(
     effectDepth: 0,
     log: [`バトル開始。先攻: プレイヤー${firstPlayer + 1}`],
     logSeq: 1,
+    events: [],
+    eventSeq: 0,
   };
   pushLog(
     state,
     `後攻のP${(1 - firstPlayer) + 1}はデッキから${SECOND_PLAYER_STARTING_AP}枚チャージ（AP: ${second.ap.length}）`,
   );
+  emit(state, { t: 'battleStart', first: firstPlayer });
+  emit(state, { t: 'bonusCharge', player: (1 - firstPlayer) as PlayerIndex, n: SECOND_PLAYER_STARTING_AP });
 
   // バトル開始時の常時能力（先攻側から）
   for (const pIdx of [firstPlayer, (1 - firstPlayer) as PlayerIndex]) {
@@ -841,9 +912,13 @@ function drawPhase(state: BattleState): void {
   if (drawCount > 0) {
     const drawn = Math.min(drawCount, p.deck.length);
     p.hand.push(...p.deck.splice(0, drawn));
-    if (drawn > 0) pushLog(state, `プレイヤー${state.active + 1}が${drawn}枚ドロー`);
+    if (drawn > 0) {
+      pushLog(state, `プレイヤー${state.active + 1}が${drawn}枚ドロー`);
+      emit(state, { t: 'draw', player: state.active, n: drawn });
+    }
     if (p.hand.length < HAND_REFILL_TO && p.deck.length === 0 && drawn < drawCount) {
       pushLog(state, `プレイヤー${state.active + 1}は山札切れで手札を${HAND_REFILL_TO}枚にできない`);
+      emit(state, { t: 'deckout', player: state.active });
       finish(state, (1 - state.active) as PlayerIndex, 'deckout');
       return;
     }
@@ -1042,6 +1117,7 @@ export function applyAction(state: BattleState, action: BattleAction): void {
       p.skillsUsedThisTurn++;
       p.nextSkillCostDelta = 0; // コスト修正は1回で消費
       pushLog(state, `P${state.active + 1}の${p.characters[usingChar].name}（${usingChar + 1}番手）が${card.name}を使用`);
+      emit(state, { t: 'skillUsed', player: state.active, charIndex: usingChar, cardId: card.id });
       if (card.effectText !== '' && !hasEffectImplementation(card.id)) {
         pushLog(state, `※${card.name}の効果は未実装: 「${card.effectText}」`);
       }
@@ -1089,6 +1165,14 @@ export function applyAction(state: BattleState, action: BattleAction): void {
         state,
         `${card.name}で割り込み（${pending.value} → 残りダメージ${Math.max(0, pending.value - card.baseValue)}）`,
       );
+      emit(state, {
+        t: 'guardPlayed',
+        player: defender,
+        charIndex: p.actorIndex,
+        cardId: card.id,
+        before: pending.value,
+        after: Math.max(0, pending.value - card.baseValue),
+      });
       const eff = skillEffectOf(card.id);
       if (eff?.onGuardDeclare) {
         runEffectSafely(
@@ -1125,10 +1209,12 @@ export function applyAction(state: BattleState, action: BattleAction): void {
       if (target.equipmentCardId) {
         p.trash.push(target.equipmentCardId);
         pushLog(state, `P${state.active + 1}の${target.name}の${cardById(target.equipmentCardId).name}を外してトラッシュ`);
+        emit(state, { t: 'info', text: `${target.name}の${cardById(target.equipmentCardId).name}は外れた` });
       }
       p.hand.splice(action.handIndex, 1);
       target.equipmentCardId = card.id;
       pushLog(state, `P${state.active + 1}の${target.name}に${card.name}を装備`);
+      emit(state, { t: 'equip', player: state.active, charIndex: action.targetIndex, cardId: card.id });
       return;
     }
 
@@ -1141,10 +1227,12 @@ export function applyAction(state: BattleState, action: BattleAction): void {
       if (state.field) {
         state.players[state.field.owner].trash.push(state.field.cardId);
         pushLog(state, `${cardById(state.field.cardId).name}は上書きされてトラッシュへ`);
+        emit(state, { t: 'info', text: `${cardById(state.field.cardId).name}は上書きされた` });
       }
       p.hand.splice(action.handIndex, 1);
       state.field = { cardId: card.id, owner: state.active };
       pushLog(state, `フィールド${card.name}を展開`);
+      emit(state, { t: 'fieldSet', player: state.active, cardId: card.id });
       return;
     }
 
@@ -1165,6 +1253,7 @@ export function applyAction(state: BattleState, action: BattleAction): void {
       p.hand.splice(action.handIndex, 1);
       p.trash.push(card.id);
       pushLog(state, `${card.name}のカードを使用`);
+      emit(state, { t: 'characterCardUsed', player: state.active, cardId: card.id });
       healCharacter(state, state.active, best, CHARACTER_CARD_HEAL);
       return;
     }
@@ -1207,6 +1296,7 @@ export function applyAction(state: BattleState, action: BattleAction): void {
       p.hand.splice(action.handIndex, 1);
       p.ap.push(card.id);
       pushLog(state, `プレイヤー${state.active + 1}が${card.name}をチャージ（AP: ${p.ap.length}）`);
+      emit(state, { t: 'chargeHand', player: state.active, cardId: card.id, ap: p.ap.length });
       return;
     }
 
@@ -1241,6 +1331,7 @@ export function applyAction(state: BattleState, action: BattleAction): void {
       state.active = (1 - state.active) as PlayerIndex;
       state.turn += 1;
       pushLog(state, `--- ターン${state.turn}: プレイヤー${state.active + 1} ---`);
+      emit(state, { t: 'turnStart', turn: state.turn, player: state.active });
       beginTurn(state);
       return;
     }
@@ -1396,8 +1487,12 @@ function beginAttack(
   if (!pending.noGuard && guardOptions(state, defenderIdx).length > 0) {
     state.phase = 'guard';
     pushLog(state, `${card.name}で攻撃 → 相手は割り込みできる（ダメージ${pending.value}）`);
+    emit(state, { t: 'attackDeclared', player: state.active, cardId: card.id, value: pending.value, noGuard: false });
   } else {
-    if (pending.noGuard) pushLog(state, `${card.name}は防御で割り込めない攻撃`);
+    if (pending.noGuard) {
+      pushLog(state, `${card.name}は防御で割り込めない攻撃`);
+      emit(state, { t: 'attackDeclared', player: state.active, cardId: card.id, value: pending.value, noGuard: true });
+    }
     resolvePendingAttack(state);
   }
 }
@@ -1435,6 +1530,7 @@ function resolvePendingAttack(state: BattleState): void {
   if (!battleOver(state) && !isCharAlive(state, defenderIdx, defender.actorIndex)) {
     defender.actorIndex = nextAliveIndex(state, defenderIdx, defender.actorIndex);
     pushLog(state, `P${defenderIdx + 1}のアクターが${defender.characters[defender.actorIndex].name}（${defender.actorIndex + 1}番手）に強制交代`);
+    emit(state, { t: 'actorChanged', player: defenderIdx, charIndex: defender.actorIndex, forced: true });
   }
 
   if (!battleOver(state)) {
@@ -1469,6 +1565,7 @@ function resolveNonAttack(state: BattleState, card: SkillCard, usingChar: number
         const hp = Math.max(1, card.baseValue);
         c.damage = Math.max(0, maxHpOf(state, state.active, target) - hp);
         pushLog(state, `P${state.active + 1}の${c.name}が復活（HP${hp}）`);
+        emit(state, { t: 'revive', player: state.active, charIndex: target, hp });
       }
     } else {
       const target = healTargetIndex ?? me.actorIndex;
@@ -1499,5 +1596,6 @@ function rotateActorAfterSkill(state: BattleState, player: PlayerIndex): void {
   p.actorIndex = nextAliveIndex(state, player, p.actorIndex, rotationSkip(state, player));
   if (p.actorIndex !== before) {
     pushLog(state, `プレイヤー${player + 1}のアクターが${p.characters[p.actorIndex].name}（${p.actorIndex + 1}番手）に交代`);
+    emit(state, { t: 'actorChanged', player, charIndex: p.actorIndex, forced: false });
   }
 }

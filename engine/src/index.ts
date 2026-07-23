@@ -3,6 +3,7 @@ export * from './cards';
 export * from './rng';
 export * from './decks';
 export * from './battle';
+export * from './events';
 export * from './ai';
 export * from './runner';
 export * from './effects';

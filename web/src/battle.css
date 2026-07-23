@@ -128,15 +128,6 @@
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
   transform: rotate(180deg);
 }
-
-/* 資源ゾーン */
-.zone-row {
-  display: flex;
-  gap: 14px;
-  justify-content: flex-end;
-  padding: 0 6px;
-}
-.zone-row.enemy { flex-direction: row-reverse; }
 .pile { position: relative; width: 44px; text-align: center; }
 .pile-card {
   width: 40px;
@@ -167,20 +158,10 @@
 }
 .pile-count.gold { background: #4d3a00; border-color: #ffd700; color: #ffd700; }
 .pile-label { display: block; font-size: 9px; color: #888; margin-top: 2px; }
-
-/* キャラクター列 */
-.char-row {
-  display: flex;
-  justify-content: center;
-  gap: 10px;
-  padding: 6px 0;
-}
 .char-slot {
   position: relative;
   transition: transform 0.25s ease, filter 0.25s ease;
 }
-.char-row.enemy .char-slot.actor { transform: translateY(6px); }
-.char-row:not(.enemy) .char-slot.actor { transform: translateY(-6px); }
 .char-slot.actor .card-frame { box-shadow: 0 0 12px 3px rgba(255, 215, 0, 0.55); }
 .char-slot.ko { filter: saturate(0.2) brightness(0.7); }
 .ko-back {
@@ -209,49 +190,6 @@
 @keyframes pulse-glow {
   from { filter: brightness(1); }
   to { filter: brightness(1.35) drop-shadow(0 0 6px rgba(80, 180, 255, 0.8)); }
-}
-
-.hp-chip {
-  position: absolute;
-  bottom: -6px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: inline-flex;
-  align-items: center;
-  background: rgba(10, 12, 16, 0.9);
-  border: 1px solid #3a5;
-  border-radius: 12px;
-  padding: 1px 8px 1px 3px;
-  gap: 3px;
-}
-.hp-chip img { width: 14px; height: 14px; }
-.hp-chip b { color: #7f7; font-size: 12px; }
-.equip-dot {
-  position: absolute;
-  top: -5px;
-  left: -5px;
-  background: #333;
-  border: 1px solid #aaa;
-  border-radius: 50%;
-  width: 18px;
-  height: 18px;
-  font-size: 11px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.actor-label {
-  position: absolute;
-  top: -8px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: linear-gradient(#ffe680, #d4af37);
-  color: #402;
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: 0.1em;
-  border-radius: 8px;
-  padding: 0 6px;
 }
 
 /* ダメージ・回復ポップ */
@@ -296,14 +234,6 @@
   justify-content: center;
   letter-spacing: 0.2em;
 }
-.log-box { flex: 1; min-width: 0; }
-.log-line {
-  font-size: 11px;
-  color: #9a9;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 
 /* 自分の手札 */
 .my-hand {
@@ -327,11 +257,6 @@
   pointer-events: none;
 }
 .hand-card.raised { transform: translateY(-22px) scale(1.12); }
-.hand-card { animation: draw-in 0.35s ease; }
-@keyframes draw-in {
-  from { transform: translate(60px, -10px) rotate(6deg); opacity: 0; }
-  to { transform: translate(0, 0) rotate(0); opacity: 1; }
-}
 
 /* アクションバー */
 .action-bar {
@@ -507,7 +432,6 @@
 .home-tagline { color: #9aa3c0; font-size: 12.5px; letter-spacing: 0.05em; margin-top: 2px; }
 .home-menu { display: flex; flex-direction: column; gap: 12px; align-items: stretch; min-width: 240px; }
 .home-menu .big-btn { position: relative; display: flex; align-items: center; justify-content: center; gap: 8px; }
-.btn-icon { font-size: 18px; }
 .btn-note {
   position: absolute;
   right: 14px;
@@ -537,20 +461,6 @@
 .page-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .page-head h2 { margin: 0; font-size: 18px; }
 .deck-list { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
-.deck-item {
-  text-align: left;
-  background: #232634;
-  border: 1px solid #444;
-  border-radius: 10px;
-  padding: 10px 14px;
-  color: #ddd;
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.deck-item span { font-size: 12px; color: #99a; }
-.deck-item.on { border-color: #ffd700; background: #2e2a1a; }
 .import-box { margin: 10px 0; color: #aab; font-size: 13px; }
 .import-box textarea {
   width: 100%;
@@ -748,7 +658,6 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
   from { transform: translate(-50%, -8px); opacity: 0; }
   to { transform: translate(-50%, 0); opacity: 1; }
 }
-.narr-icon { font-size: 18px; }
 .narr-text { font-size: 14px; font-weight: 700; color: #eee; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .narration.kind-damage { border-color: #f66; }
 .narration.kind-damage .narr-text { color: #faa; }
@@ -760,19 +669,6 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
 .narration.kind-ability .narr-text { color: #ffe9a0; }
 .narration.kind-turn { border-color: #6af; }
 .narration.kind-end { border-color: #ffd700; }
-
-/* 初心者ガイド */
-.guide-bar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: rgba(30, 34, 48, 0.9);
-  border: 1px dashed #567;
-  border-radius: 10px;
-  padding: 6px 10px;
-}
-.guide-bar.mini { justify-content: flex-end; background: none; border: none; padding: 0; }
-.guide-text { flex: 1; font-size: 11.5px; color: #bcd; line-height: 1.4; }
 .chip.ghost { opacity: 0.6; }
 
 /* ルール説明モーダル */
@@ -783,7 +679,6 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
 .rules-body h3 { font-size: 14px; color: #ffd700; margin: 0 0 4px; }
 .rules-body p { font-size: 12.5px; color: #ccd; margin: 0; line-height: 1.7; }
 .dialog.rules .big-btn { margin-top: 10px; align-self: center; }
-
 
 /* 画面が低い端末向けの圧縮（1画面に収める） */
 @media (max-height: 780px) {
@@ -944,12 +839,6 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
   to { transform: rotate(0) scale(1); opacity: 1; }
 }
 
-/* ドロー: 手札に右上（山札側）から滑り込む */
-@keyframes draw-in {
-  from { transform: translate(90px, -70px) rotate(10deg); opacity: 0; }
-  to { transform: translate(0, 0) rotate(0); opacity: 1; }
-}
-
 /* 低い画面での圧縮（追加分） */
 @media (max-height: 780px) {
   .board { transform: rotateX(14deg) scale(1.02); }
@@ -993,17 +882,6 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
 
 /* ============ 中央のガイド帯（薄く） ============ */
 .center-strip { padding: 0 8px; gap: 8px; min-height: 0; }
-.guide-zone {
-  flex: 1;
-  min-width: 0;
-  font-size: 11.5px;
-  line-height: 1.45;
-  color: #cdd7ef;
-  background: rgba(10, 12, 20, 0.55);
-  border: 1px dashed rgba(120, 140, 190, 0.5);
-  border-radius: 8px;
-  padding: 5px 9px;
-}
 .field-empty { width: 40px; height: 56px; font-size: 8px; }
 
 @media (max-height: 780px) {
@@ -1100,7 +978,6 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
   background: rgba(20, 16, 4, 0.95);
 }
 .narration.kind-coin .narr-text { font-size: 22px; color: #ffe9a0; }
-.narration.kind-coin .narr-icon { font-size: 26px; }
 
 /* ヒットストップ: 被弾時のシェイク + 白フラッシュ */
 .card-hit {
@@ -1157,21 +1034,6 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
   100% { opacity: 0; transform: translate(-50%, -36px) scale(1); }
 }
 
-/* 電光掲示板ティッカー（1行固定） */
-.guide-zone.ticker {
-  white-space: nowrap;
-  overflow: hidden;
-  max-height: 26px;
-  display: flex;
-  align-items: center;
-}
-.guide-zone.ticker span { display: inline-block; padding-right: 40px; }
-.guide-zone.ticker .ticker-run { animation: ticker-scroll 9s linear infinite; }
-@keyframes ticker-scroll {
-  0% { transform: translateX(12%); }
-  100% { transform: translateX(-100%); }
-}
-
 /* ============ ぬるぬる化パス + ターンスプラッシュ + ミニ通知 ============ */
 
 * { -webkit-tap-highlight-color: transparent; }
@@ -1193,13 +1055,6 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
 /* 飛翔カードの軌道を気持ちよく */
 .fly-ghost {
   transition: left 0.62s cubic-bezier(0.25, 0.9, 0.35, 1), top 0.62s cubic-bezier(0.45, 0.05, 0.4, 1);
-}
-
-/* ドローの滑り込みをなめらかに */
-@keyframes draw-in {
-  0% { transform: translate(90px, -70px) rotate(10deg) scale(0.9); opacity: 0; }
-  60% { opacity: 1; }
-  100% { transform: translate(0, 0) rotate(0) scale(1); opacity: 1; }
 }
 .my-hand .hand-card { animation: draw-in 0.45s cubic-bezier(0.2, 0.8, 0.3, 1); }
 
@@ -1242,16 +1097,6 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
   80% { transform: translateX(0); opacity: 1; }
   100% { transform: translateX(30%); opacity: 0; }
 }
-
-/* ミニ通知（能力発動など、控えめに上部へ） */
-.narration.mini {
-  top: 7.5%;
-  padding: 4px 14px;
-  border-radius: 16px;
-  background: rgba(12, 14, 20, 0.82);
-}
-.narration.mini .narr-text { font-size: 11.5px; }
-.narration.mini .narr-icon { font-size: 13px; }
 
 /* ============ 手札のコストチップ ============ */
 .cost-chip {
@@ -1306,9 +1151,6 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
   font-size: 26px;
   filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.9)) drop-shadow(0 0 8px rgba(110, 224, 139, 0.5));
 }
-
-/* ガイドは補助情報なので控えめに */
-.guide-zone { opacity: 0.85; }
 
 /* ================================================================
    バトル画面の細部磨き込み（2026-07-23）
@@ -1478,17 +1320,6 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
 .field-empty {
   position: relative;
   background: radial-gradient(circle at 50% 45%, rgba(255, 215, 0, 0.05), transparent 65%);
-}
-
-
-/* ---- ガイドティッカー: 電光掲示板らしく ---- */
-.guide-zone.ticker {
-  background: linear-gradient(rgba(6, 8, 12, 0.85), rgba(10, 13, 20, 0.85));
-  border: 1px solid rgba(90, 110, 160, 0.3);
-  border-radius: 6px;
-  box-shadow: inset 0 1px 4px rgba(0, 0, 0, 0.8);
-  color: #8fd0ff;
-  text-shadow: 0 0 6px rgba(90, 180, 255, 0.45);
 }
 
 /* ---- 相手の手札の影（浮いて見えないように） ---- */
@@ -1777,7 +1608,6 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
   100% { transform: rotate(360deg) scale(1); }
 }
 
-
 /* 生成アイコン（黒背景素材はscreen合成で光らせる） */
 .plate-ico {
   width: 17px;
@@ -1821,7 +1651,6 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
 }
 /* アイコン廃止後のナレーションはテキストのみ中央寄せ */
 .narration { justify-content: center; }
-
 
 /* スキル使用前の予想値（プレビュー内） */
 .predict-row {

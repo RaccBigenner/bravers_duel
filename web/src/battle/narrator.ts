@@ -1,8 +1,12 @@
 /**
- * エンジンのログ1行を「演出イベント」に変換するナレーター。
+ * エンジンの型付きイベント（BattleEvent）を「演出イベント（NarrEvent）」に変換する。
  * バトル画面はこのイベント列を1件ずつ順番に再生する。
+ *
+ * 以前はエンジンの日本語ログを正規表現でパースしていたが、側やキャラ位置の
+ * 取り違いバグの温床だったため廃止した。位置・数値はすべてイベントが持っている。
+ * ここの仕事は「表示する文とテンポ（duration）を決める」ことだけ。
  */
-import { ALL_CARDS, type BattleState, type Card } from '@bravers/engine';
+import { cardById, type BattleEvent, type BattleState, type Card } from '@bravers/engine';
 
 export type FxKind =
   | 'coin' | 'turn' | 'draw' | 'charge' | 'chargeDeck' | 'chargeTrash' | 'chargeAll'
@@ -29,266 +33,161 @@ export interface NarrEvent {
   duration: number;
 }
 
-const CARD_BY_NAME = new Map<string, Card>(ALL_CARDS.map((c) => [c.name, c]));
-
 let uniq = 1;
-
-/** キャラ名から (side, index) を探す。両側にいる場合は preferSide を優先 */
-function findChar(state: BattleState, name: string, preferSide: 0 | 1): [0 | 1, number] | null {
-  const hits: [0 | 1, number][] = [];
-  state.players.forEach((p, si) => {
-    p.characters.forEach((c, ci) => {
-      if (c.name === name) hits.push([si as 0 | 1, ci]);
-    });
-  });
-  if (hits.length === 0) return null;
-  const preferred = hits.find(([s]) => s === preferSide);
-  return preferred ?? hits[0];
-}
-
-/** 側が確定しているログ（P1/P2つき）からキャラ位置を引く */
-function charOnSide(state: BattleState, side: 0 | 1, name: string): number | undefined {
-  const i = state.players[side].characters.findIndex((c) => c.name === name);
-  return i >= 0 ? i : undefined;
-}
 
 /** 側つきの名前表示（相手側には「相手の」を付ける） */
 function sideName(side: 0 | 1, name: string): string {
   return side === 1 ? `相手の${name}` : name;
 }
 
-/**
- * ログ1行を演出イベントに変換する。null なら表示しない。
- * actor = この行動を起こした側（ダメージの対象側の推定などに使う）
- */
-export function classify(state: BattleState, line: string, actor: 0 | 1): NarrEvent | null {
-  const ev = (e: Omit<NarrEvent, 'key'>): NarrEvent => ({ key: uniq++, ...e });
-  let m: RegExpMatchArray | null;
+function safeCard(id: string): Card | undefined {
+  try {
+    return cardById(id);
+  } catch {
+    return undefined;
+  }
+}
 
-  // 表示しないもの
-  if (line.startsWith('※') || line.startsWith('効果でエラー') || line.startsWith('効果の連鎖')) return null;
+/** BattleEvent 1件を演出イベントに変換する。null なら演出なし */
+export function narrate(state: BattleState, e: BattleEvent): NarrEvent | null {
+  const ev = (x: Omit<NarrEvent, 'key'>): NarrEvent => ({ key: uniq++, ...x });
+  const charName = (side: 0 | 1, ci: number) => state.players[side].characters[ci]?.name ?? '';
 
-  if ((m = line.match(/^--- ターン(\d+): プレイヤー(\d) ---$/))) {
-    const side = (Number(m[2]) - 1) as 0 | 1;
-    return ev({ kind: 'turn', text: side === 0 ? `ターン${m[1]} あなたの番！` : `ターン${m[1]} 相手の番`, side, duration: 1400 });
-  }
-  if ((m = line.match(/^プレイヤー(\d)が(\d+)枚ドロー$/))) {
-    const side = (Number(m[1]) - 1) as 0 | 1;
-    return ev({ kind: 'draw', text: side === 0 ? `${m[2]}枚ドロー！` : `相手が${m[2]}枚ドロー`, side, amount: Number(m[2]), duration: 750 });
-  }
-  if ((m = line.match(/^P(\d)の(.+)（(\d)番手）が(.+)を使用$/))) {
-    const side = (Number(m[1]) - 1) as 0 | 1;
-    const card = CARD_BY_NAME.get(m[4]);
-    return ev({ kind: 'play', text: `${m[2]}の「${m[4]}」！`, card, side, charIndex: Number(m[3]) - 1, duration: 1600 });
-  }
-  if ((m = line.match(/^(.+)が(.+)を使用$/))) {
-    const card = CARD_BY_NAME.get(m[2]);
-    const who = findChar(state, m[1], actor);
-    return ev({ kind: 'play', text: `${m[1]}の「${m[2]}」！`, card, side: who?.[0] ?? actor, charIndex: who?.[1], duration: 1600 });
-  }
-  if ((m = line.match(/^(.+)のカードを使用$/))) {
-    const card = CARD_BY_NAME.get(m[1]);
-    return ev({ kind: 'play', text: `「${m[1]}」で同名キャラを回復！`, card, side: actor, duration: 1500 });
-  }
-  if ((m = line.match(/^デッキから(.+)をコストなしで使用$/))) {
-    const card = CARD_BY_NAME.get(m[1]);
-    return ev({ kind: 'play', text: `デッキから「${m[1]}」が発動！`, card, side: actor, duration: 1600 });
-  }
-  if ((m = line.match(/^(.+)で割り込み（(\d+) → 残りダメージ(\d+)）$/))) {
-    const card = CARD_BY_NAME.get(m[1]);
-    return ev({
-      kind: 'guard',
-      text: `ガード！「${m[1]}」 ${m[2]}→${m[3]}`,
-      card,
-      side: actor,
-      charIndex: state.players[actor].actorIndex,
-      amountBefore: Number(m[2]),
-      amount: Number(m[3]),
-      duration: 1500,
-    });
-  }
-  if ((m = line.match(/^(.+)で割り込み（(.+)）$/))) {
-    const card = CARD_BY_NAME.get(m[1]);
-    return ev({ kind: 'guard', text: `ガード！「${m[1]}」（${m[2]}）`, card, side: actor, charIndex: state.players[actor].actorIndex, duration: 1400 });
-  }
-  if ((m = line.match(/^P(\d)の(.+)の攻撃威力\+(\d+)（ダメージ(\d+)）$/))) {
-    const side = (Number(m[1]) - 1) as 0 | 1;
-    return ev({
-      kind: 'power',
-      text: `${sideName(side, m[2])}の攻撃威力+${m[3]}！`,
-      side, charIndex: charOnSide(state, side, m[2]), amount: Number(m[3]), amountBefore: Number(m[4]), duration: 950,
-    });
-  }
-  if ((m = line.match(/^P(\d)のガード強化\+(\d+)（残りダメージ(\d+)）$/))) {
-    const side = (Number(m[1]) - 1) as 0 | 1;
-    return ev({
-      kind: 'powerGuard',
-      text: `ガード強化+${m[2]}！`,
-      side, charIndex: state.players[side].actorIndex, amount: Number(m[2]), amountBefore: Number(m[3]), duration: 950,
-    });
-  }
-  if ((m = line.match(/^(.+)で攻撃 → 相手は割り込みできる（ダメージ(\d+)）$/))) {
-    return ev({ kind: 'attack', text: `「${m[1]}」の攻撃！（ダメージ${m[2]}）`, amount: Number(m[2]), duration: 900 });
-  }
-  if ((m = line.match(/^(.+)は防御で割り込めない攻撃$/))) {
-    return ev({ kind: 'attack', text: `「${m[1]}」はガード不可の攻撃！`, duration: 900 });
-  }
-  if ((m = line.match(/^P(\d)の(.+)に(\d+)ダメージ（残りHP: (\d+)）$/))) {
-    const side = (Number(m[1]) - 1) as 0 | 1;
-    return ev({
-      kind: 'damage',
-      text: `${sideName(side, m[2])}に${m[3]}ダメージ！`,
-      side, charIndex: charOnSide(state, side, m[2]), amount: Number(m[3]), duration: 1125,
-    });
-  }
-  if ((m = line.match(/^P(\d)の(.+)を(\d+)回復$/))) {
-    const side = (Number(m[1]) - 1) as 0 | 1;
-    return ev({ kind: 'heal', text: `${sideName(side, m[2])}が${m[3]}回復`, side, charIndex: charOnSide(state, side, m[2]), amount: Number(m[3]), duration: 1125 });
-  }
-  if ((m = line.match(/^P(\d)の(.+)は戦闘不能$/))) {
-    const side = (Number(m[1]) - 1) as 0 | 1;
-    return ev({ kind: 'ko', text: `${sideName(side, m[2])}は戦闘不能！`, side, charIndex: charOnSide(state, side, m[2]), duration: 1600 });
-  }
-  if ((m = line.match(/^P(\d)の(.+)が復活（HP(\d+)）$/))) {
-    const side = (Number(m[1]) - 1) as 0 | 1;
-    return ev({ kind: 'revive', text: `${sideName(side, m[2])}が復活！`, side, charIndex: charOnSide(state, side, m[2]), amount: Number(m[3]), duration: 1600 });
-  }
-  if ((m = line.match(/^P(\d)のアクターが(.+)（(\d)番手）に強制交代$/))) {
-    const side = (Number(m[1]) - 1) as 0 | 1;
-    return ev({ kind: 'actor', text: `${side === 1 ? '相手の' : ''}アクターは${m[2]}に強制交代`, charName: m[2], side, charIndex: Number(m[3]) - 1, duration: 1250 });
-  }
-  if ((m = line.match(/^P(\d)のアクターが(.+)に強制交代$/))) {
-    const side = (Number(m[1]) - 1) as 0 | 1;
-    return ev({ kind: 'actor', text: `${side === 1 ? '相手の' : ''}アクターは${m[2]}に強制交代`, charName: m[2], side, charIndex: charOnSide(state, side, m[2]), duration: 1250 });
-  }
-  if ((m = line.match(/^プレイヤー(\d)のアクターが(.+)（(\d)番手）に交代$/))) {
-    const side = (Number(m[1]) - 1) as 0 | 1;
-    return ev({ kind: 'actor', text: side === 0 ? `アクターが${m[2]}に交代` : `相手のアクターが${m[2]}に交代`, side, charName: m[2], charIndex: Number(m[3]) - 1, duration: 1125 });
-  }
-  if ((m = line.match(/^プレイヤー(\d)のアクターが(.+)に交代$/))) {
-    const side = (Number(m[1]) - 1) as 0 | 1;
-    const hit = findChar(state, m[2], side);
-    return ev({ kind: 'actor', text: side === 0 ? `アクターが${m[2]}に交代` : `相手のアクターが${m[2]}に交代`, side, charName: m[2], charIndex: hit?.[1], duration: 1125 });
-  }
-  if ((m = line.match(/^P(\d)のアクターが(.+)（(\d)番手）に変更$/))) {
-    const side = (Number(m[1]) - 1) as 0 | 1;
-    return ev({ kind: 'actor', text: side === 1 ? `相手のアクターが${m[2]}に変更された！` : `アクターが${m[2]}に変更された！`, charName: m[2], side, charIndex: Number(m[3]) - 1, duration: 1125 });
-  }
-  if ((m = line.match(/^相手のアクターが(.+)に変更$/))) {
-    const hit = findChar(state, m[1], (1 - actor) as 0 | 1);
-    return ev({ kind: 'actor', text: `相手のアクターが${m[1]}に変更された！`, charName: m[1], side: hit?.[0], charIndex: hit?.[1], duration: 1125 });
-  }
-  if ((m = line.match(/^発動:(.+)＠P(\d)の(\d)番手$/))) {
-    // エンジンが位置を明示している（名前検索での取り違いが起きない）
-    const side = (Number(m[2]) - 1) as 0 | 1;
-    return ev({ kind: 'ability', text: `${m[1]}！`, side, charIndex: Number(m[3]) - 1, duration: 1100 });
-  }
-  if ((m = line.match(/^発動:(.+)$/))) {
-    // 位置情報なし（古い形式）: 頭上には出さず、位置の推測はしない
-    return ev({ kind: 'ability', text: `${m[1]}！`, duration: 1100 });
-  }
-  if ((m = line.match(/^P(\d)の(.+)に(.+)を装備$/))) {
-    const side = (Number(m[1]) - 1) as 0 | 1;
-    const card = CARD_BY_NAME.get(m[3]);
-    return ev({ kind: 'equip', text: `${sideName(side, m[2])}に「${m[3]}」を装備`, card, charName: m[2], side, charIndex: charOnSide(state, side, m[2]), duration: 1500 });
-  }
-  if ((m = line.match(/^P(\d)の(.+)の(.+)を外してトラッシュ$/))) {
-    return ev({ kind: 'info', text: `${m[2]}の「${m[3]}」は外れた`, duration: 1050 });
-  }
-  if ((m = line.match(/^P(\d)の(.+)の装備(.+)を破壊$/))) {
-    const side = (Number(m[1]) - 1) as 0 | 1;
-    return ev({ kind: 'equip', text: `${sideName(side, m[2])}の装備「${m[3]}」を破壊！`, duration: 1275 });
-  }
-  if ((m = line.match(/^フィールド(.+)を展開$/))) {
-    const card = CARD_BY_NAME.get(m[1]);
-    return ev({ kind: 'field', text: `フィールド「${m[1]}」を展開！`, card, side: actor, duration: 1500 });
-  }
-  if ((m = line.match(/^(.+)は上書きされてトラッシュへ$/))) {
-    return ev({ kind: 'info', text: `「${m[1]}」は上書きされた`, duration: 1050 });
-  }
-  if ((m = line.match(/^プレイヤー(\d)が(.+)をチャージ（AP: (\d+)）$/))) {
-    const side = (Number(m[1]) - 1) as 0 | 1;
-    return ev({ kind: 'charge', text: side === 0 ? `「${m[2]}」をチャージ（AP ${m[3]}）` : `相手がチャージ（AP ${m[3]}）`, side, cardName: m[2], duration: 550 });
-  }
-  if ((m = line.match(/^後攻のP(\d)はデッキから(\d+)枚チャージ（AP: (\d+)）$/))) {
-    const side = (Number(m[1]) - 1) as 0 | 1;
-    return ev({ kind: 'chargeDeck', text: side === 0 ? `後攻ボーナス！デッキから${m[2]}枚チャージ` : `相手は後攻ボーナスで${m[2]}枚チャージ`, side, amount: Number(m[2]), duration: 1100 });
-  }
-  if ((m = line.match(/^P(\d)はデッキから(\d+)枚チャージ（AP: (\d+)）$/))) {
-    const side = (Number(m[1]) - 1) as 0 | 1;
-    return ev({ kind: 'chargeDeck', text: side === 0 ? `デッキから${m[2]}枚チャージ（AP ${m[3]}）` : `相手がデッキから${m[2]}枚チャージ`, side, amount: Number(m[2]), duration: 850 });
-  }
-  if ((m = line.match(/^デッキから(\d+)枚チャージ（AP: (\d+)）$/))) {
-    return ev({ kind: 'chargeDeck', text: `デッキから${m[1]}枚チャージ（AP ${m[2]}）`, amount: Number(m[1]), duration: 850 });
-  }
-  if ((m = line.match(/^P(\d)はトラッシュから(\d+)枚チャージ（AP: (\d+)）$/))) {
-    const side = (Number(m[1]) - 1) as 0 | 1;
-    return ev({ kind: 'chargeTrash', text: side === 0 ? `トラッシュから${m[2]}枚チャージ！` : `相手がトラッシュから${m[2]}枚チャージ`, side, amount: Number(m[2]), duration: 850 });
-  }
-  if ((m = line.match(/^P(\d)は手札を全てチャージ（(\d+)枚）$/))) {
-    const side = (Number(m[1]) - 1) as 0 | 1;
-    return ev({ kind: 'chargeAll', text: side === 0 ? `手札を全てチャージ（${m[2]}枚）！` : `相手が手札を全てチャージ`, side, amount: Number(m[2]), duration: 900 });
-  }
-  if ((m = line.match(/^P(\d)は手札を全てトラッシュ（(\d+)枚）$/))) {
-    const side = (Number(m[1]) - 1) as 0 | 1;
-    return ev({ kind: 'handTrash', text: side === 0 ? `手札を全てトラッシュ（${m[2]}枚）` : `相手が手札を全てトラッシュ`, side, amount: Number(m[2]), duration: 900 });
-  }
-  if ((m = line.match(/^P(\d)のデッキから(\d+)枚トラッシュ$/))) {
-    const side = (Number(m[1]) - 1) as 0 | 1;
-    return ev({ kind: 'mill', text: side === 0 ? `自分のデッキから${m[2]}枚トラッシュ` : `相手のデッキから${m[2]}枚トラッシュ！`, side, amount: Number(m[2]), duration: 850 });
-  }
-  if ((m = line.match(/^デッキから(\d+)枚トラッシュ$/))) {
-    return ev({ kind: 'mill', text: `デッキから${m[1]}枚トラッシュ`, amount: Number(m[1]), duration: 850 });
-  }
-  if ((m = line.match(/^P(\d)のAPから(\d+)枚トラッシュ$/))) {
-    const side = (Number(m[1]) - 1) as 0 | 1;
-    return ev({ kind: 'apTrash', text: side === 0 ? `APから${m[2]}枚トラッシュ！` : `相手のAPから${m[2]}枚トラッシュ！`, side, amount: Number(m[2]), duration: 900 });
-  }
-  if ((m = line.match(/^P(\d)の(.+)に(.)属性を追加$/))) {
-    const side = (Number(m[1]) - 1) as 0 | 1;
-    return ev({ kind: 'attr', text: `${sideName(side, m[2])}に${m[3]}属性を追加`, charName: m[2], attr: m[3], side, charIndex: charOnSide(state, side, m[2]), duration: 1250 });
-  }
-  if ((m = line.match(/^デッキから(.+)を手札に加えた$/))) {
-    return ev({ kind: 'search', text: `デッキから「${m[1]}」を手札に！`, side: actor, cardName: m[1], duration: 1275 });
-  }
-  if ((m = line.match(/^P(\d)のアクターをロック（ターン(\d+)終了まで）$/))) {
-    const side = (Number(m[1]) - 1) as 0 | 1;
-    return ev({
-      kind: 'lock',
-      text: side === 0 ? '自分のアクターをロック（交代できない）' : '相手のアクターをロック！（交代できない）',
-      side, charIndex: state.players[side].actorIndex, amount: Number(m[2]), duration: 1275,
-    });
-  }
-  if ((m = line.match(/^P(\d)のアクターのロックを解除$/))) {
-    const side = (Number(m[1]) - 1) as 0 | 1;
-    return ev({ kind: 'unlock', text: side === 0 ? 'ロック解除！' : '相手のロックが解除された', side, charIndex: state.players[side].actorIndex, duration: 900 });
-  }
-  if (line.includes('アクターをロック')) {
-    const targetSide = (1 - actor) as 0 | 1;
-    return ev({ kind: 'lock', text: 'アクターをロック！（交代できない）', side: targetSide, charIndex: state.players[targetSide].actorIndex, duration: 1275 });
-  }
-  if (line.includes('ロックされていて変更できない')) {
-    return ev({ kind: 'lock', text: 'ロック中で交代できない！', duration: 1125 });
-  }
-  if ((m = line.match(/^P(\d)の(.+)は控えのためダメージを受けない$/))) {
-    const side = (Number(m[1]) - 1) as 0 | 1;
-    return ev({ kind: 'info', text: `${sideName(side, m[2])}は控えのため無傷！`, charName: '無傷', side, charIndex: charOnSide(state, side, m[2]), duration: 1200 });
-  }
-  if ((m = line.match(/^プレイヤー(\d)は山札切れで/))) {
-    const side = (Number(m[1]) - 1) as 0 | 1;
-    return ev({ kind: 'info', text: side === 0 ? '山札切れ！手札を5枚にできない…' : '相手が山札切れ！', duration: 1500 });
-  }
-  if ((m = line.match(/^プレイヤー(\d)の勝ち/))) {
-    return ev({ kind: 'end', text: 'バトル終了！', duration: 1200 });
-  }
-  if (line.startsWith('決着つかず')) {
-    return ev({ kind: 'end', text: '引き分け…', duration: 1200 });
-  }
-  if ((m = line.match(/^バトル開始。先攻: プレイヤー(\d)$/))) {
-    const side = (Number(m[1]) - 1) as 0 | 1;
-    return ev({ kind: 'coin', text: side === 0 ? '先攻はあなた！' : '先攻は相手！', side, duration: 2200 });
-  }
+  switch (e.t) {
+    case 'battleStart':
+      return ev({ kind: 'coin', text: e.first === 0 ? '先攻はあなた！' : '先攻は相手！', side: e.first, duration: 2200 });
+    case 'bonusCharge':
+      return ev({
+        kind: 'chargeDeck',
+        text: e.player === 0 ? `後攻ボーナス！デッキから${e.n}枚チャージ` : `相手は後攻ボーナスで${e.n}枚チャージ`,
+        side: e.player, amount: e.n, duration: 1100,
+      });
+    case 'turnStart':
+      return ev({
+        kind: 'turn',
+        text: e.player === 0 ? `ターン${e.turn} あなたの番！` : `ターン${e.turn} 相手の番`,
+        side: e.player, duration: 1400,
+      });
+    case 'battleEnd':
+      return ev({ kind: 'end', text: e.winner === null ? '引き分け…' : 'バトル終了！', duration: 1200 });
+    case 'deckout':
+      return ev({ kind: 'info', text: e.player === 0 ? '山札切れ！手札を5枚にできない…' : '相手が山札切れ！', duration: 1500 });
 
-  // 未知のログはそのまま情報として出す
-  return ev({ kind: 'info', text: line, duration: 1050 });
+    case 'draw':
+      return ev({ kind: 'draw', text: e.player === 0 ? `${e.n}枚ドロー！` : `相手が${e.n}枚ドロー`, side: e.player, amount: e.n, duration: 750 });
+    case 'chargeHand': {
+      const name = safeCard(e.cardId)?.name ?? '';
+      return ev({
+        kind: 'charge',
+        text: e.player === 0 ? `「${name}」をチャージ（AP ${e.ap}）` : `相手がチャージ（AP ${e.ap}）`,
+        side: e.player, cardName: name, duration: 550,
+      });
+    }
+    case 'chargeDeck':
+      return ev({ kind: 'chargeDeck', text: e.player === 0 ? `デッキから${e.n}枚チャージ（AP ${e.ap}）` : `相手がデッキから${e.n}枚チャージ`, side: e.player, amount: e.n, duration: 850 });
+    case 'chargeTrash':
+      return ev({ kind: 'chargeTrash', text: e.player === 0 ? `トラッシュから${e.n}枚チャージ！` : `相手がトラッシュから${e.n}枚チャージ`, side: e.player, amount: e.n, duration: 850 });
+    case 'chargeAllHand':
+      return ev({ kind: 'chargeAll', text: e.player === 0 ? `手札を全てチャージ（${e.n}枚）！` : '相手が手札を全てチャージ', side: e.player, amount: e.n, duration: 900 });
+    case 'handTrash':
+      return ev({ kind: 'handTrash', text: e.player === 0 ? `手札を全てトラッシュ（${e.n}枚）` : '相手が手札を全てトラッシュ', side: e.player, amount: e.n, duration: 900 });
+    case 'mill':
+      return ev({ kind: 'mill', text: e.player === 0 ? `自分のデッキから${e.n}枚トラッシュ` : `相手のデッキから${e.n}枚トラッシュ！`, side: e.player, amount: e.n, duration: 850 });
+    case 'apTrash':
+      return ev({ kind: 'apTrash', text: e.player === 0 ? `APから${e.n}枚トラッシュ！` : `相手のAPから${e.n}枚トラッシュ！`, side: e.player, amount: e.n, duration: 900 });
+    case 'searchToHand': {
+      const name = safeCard(e.cardId)?.name ?? '';
+      return ev({ kind: 'search', text: `デッキから「${name}」を手札に！`, side: e.player, cardName: name, duration: 1275 });
+    }
+
+    case 'skillUsed': {
+      const card = safeCard(e.cardId);
+      return ev({ kind: 'play', text: `${charName(e.player, e.charIndex)}の「${card?.name}」！`, card, side: e.player, charIndex: e.charIndex, duration: 1600 });
+    }
+    case 'characterCardUsed': {
+      const card = safeCard(e.cardId);
+      return ev({ kind: 'play', text: `「${card?.name}」で同名キャラを回復！`, card, side: e.player, duration: 1500 });
+    }
+    case 'castFromDeck': {
+      const card = safeCard(e.cardId);
+      return ev({ kind: 'play', text: `デッキから「${card?.name}」が発動！`, card, side: e.player, charIndex: e.charIndex, duration: 1600 });
+    }
+    case 'attackDeclared': {
+      const name = safeCard(e.cardId)?.name ?? '';
+      return ev({
+        kind: 'attack',
+        text: e.noGuard ? `「${name}」はガード不可の攻撃！` : `「${name}」の攻撃！（ダメージ${e.value}）`,
+        amount: e.value, duration: 900,
+      });
+    }
+    case 'guardPlayed': {
+      const card = safeCard(e.cardId);
+      return ev({
+        kind: 'guard',
+        text: `ガード！「${card?.name}」 ${e.before}→${e.after}`,
+        card, side: e.player, charIndex: e.charIndex,
+        amountBefore: e.before, amount: e.after, duration: 1500,
+      });
+    }
+    case 'equip': {
+      const card = safeCard(e.cardId);
+      return ev({ kind: 'equip', text: `${sideName(e.player, charName(e.player, e.charIndex))}に「${card?.name}」を装備`, card, side: e.player, charIndex: e.charIndex, duration: 1500 });
+    }
+    case 'equipDestroyed': {
+      const name = safeCard(e.cardId)?.name ?? '';
+      return ev({ kind: 'equip', text: `${sideName(e.player, charName(e.player, e.charIndex))}の装備「${name}」を破壊！`, duration: 1275 });
+    }
+    case 'fieldSet': {
+      const card = safeCard(e.cardId);
+      return ev({ kind: 'field', text: `フィールド「${card?.name}」を展開！`, card, side: e.player, duration: 1500 });
+    }
+
+    case 'powerUp':
+      return ev({ kind: 'power', text: `${sideName(e.player, charName(e.player, e.charIndex))}の攻撃威力+${e.n}！`, side: e.player, charIndex: e.charIndex, amount: e.n, amountBefore: e.total, duration: 950 });
+    case 'guardBoost':
+      return ev({ kind: 'powerGuard', text: `ガード強化+${e.n}！`, side: e.player, charIndex: state.players[e.player].actorIndex, amount: e.n, amountBefore: e.remain, duration: 950 });
+    case 'damage':
+      return ev({ kind: 'damage', text: `${sideName(e.player, charName(e.player, e.charIndex))}に${e.n}ダメージ！`, side: e.player, charIndex: e.charIndex, amount: e.n, duration: 1125 });
+    case 'standbyImmune':
+      return ev({ kind: 'info', text: `${sideName(e.player, charName(e.player, e.charIndex))}は控えのため無傷！`, charName: '無傷', side: e.player, charIndex: e.charIndex, duration: 1200 });
+    case 'heal':
+      return ev({ kind: 'heal', text: `${sideName(e.player, charName(e.player, e.charIndex))}が${e.n}回復`, side: e.player, charIndex: e.charIndex, amount: e.n, duration: 1125 });
+    case 'ko':
+      return ev({ kind: 'ko', text: `${sideName(e.player, charName(e.player, e.charIndex))}は戦闘不能！`, side: e.player, charIndex: e.charIndex, duration: 1600 });
+    case 'revive':
+      return ev({ kind: 'revive', text: `${sideName(e.player, charName(e.player, e.charIndex))}が復活！`, side: e.player, charIndex: e.charIndex, amount: e.hp, duration: 1600 });
+
+    case 'actorChanged': {
+      const name = charName(e.player, e.charIndex);
+      return ev({
+        kind: 'actor',
+        text: e.forced
+          ? `${e.player === 1 ? '相手の' : ''}アクターは${name}に強制交代`
+          : e.player === 0
+            ? `アクターが${name}に交代`
+            : `相手のアクターが${name}に交代`,
+        side: e.player, charIndex: e.charIndex, charName: name,
+        duration: e.forced ? 1250 : 1125,
+      });
+    }
+    case 'actorLocked':
+      return ev({
+        kind: 'lock',
+        text: e.player === 0 ? '自分のアクターをロック（交代できない）' : '相手のアクターをロック！（交代できない）',
+        side: e.player, charIndex: state.players[e.player].actorIndex, amount: e.untilTurn, duration: 1275,
+      });
+    case 'actorUnlocked':
+      return ev({ kind: 'unlock', text: e.player === 0 ? 'ロック解除！' : '相手のロックが解除された', side: e.player, charIndex: state.players[e.player].actorIndex, duration: 900 });
+    case 'lockBlocked':
+      return ev({ kind: 'lock', text: 'ロック中で交代できない！', side: e.player, charIndex: state.players[e.player].actorIndex, duration: 1125 });
+
+    case 'attributeAdded':
+      return ev({ kind: 'attr', text: `${sideName(e.player, charName(e.player, e.charIndex))}に${e.attr}属性を追加`, attr: e.attr, side: e.player, charIndex: e.charIndex, duration: 1250 });
+    case 'abilityTriggered':
+      return ev({ kind: 'ability', text: `${e.label}！`, side: e.player, charIndex: e.charIndex, duration: 1100 });
+    case 'info':
+      return ev({ kind: 'info', text: e.text, duration: 1050 });
+    default:
+      return null;
+  }
 }
