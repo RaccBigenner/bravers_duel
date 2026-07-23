@@ -978,6 +978,8 @@ function ResultOverlay({ state, setup, onExit, onRematch }: {
   const [stars, setStars] = useState(0);
   const [reviewText, setReviewText] = useState('');
   const [reviewSent, setReviewSent] = useState(false);
+  // リザルトは2段階: まずレビュー → 送信(orスキップ)後にシェア・ボタン類
+  const [step, setStep] = useState<'review' | 'after'>('review');
 
   // バトル終了ログ（リザルト表示時に1回だけ）
   useEffect(() => {
@@ -1004,6 +1006,7 @@ function ResultOverlay({ state, setup, onExit, onRematch }: {
       turns: state.turn,
     });
     setReviewSent(true);
+    setStep('after');
   }
   const text = won
     ? `BRAVER'S DUEL β: 「${setup.playerDeckName}」で「${setup.enemy.name}」に勝利！（${reason}・${state.turn}ターン）`
@@ -1020,45 +1023,53 @@ function ResultOverlay({ state, setup, onExit, onRematch }: {
           <span className="stat"><b>{state.turn}</b><em>ターン</em></span>
           <span className="stat"><b>{setup.enemy.name}</b><em>対戦相手</em></span>
         </div>
-        {/* レビュー（毎回表示） */}
-        <div className="review-box">
-          {reviewSent ? (
-            <p className="review-thanks">ご意見ありがとうございました！</p>
-          ) : (
-            <>
-              <p className="review-title">このバトルはどうでしたか？</p>
-              <div className="review-stars">
-                {[1, 2, 3, 4, 5].map((n) => (
-                  <span
-                    key={n}
-                    className={`review-star ${n <= stars ? 'on' : ''}`}
-                    onClick={() => setStars(n)}
-                  >
-                    ★
-                  </span>
-                ))}
-              </div>
-              <textarea
-                className="review-text"
-                placeholder="気づいたこと・感想があれば（任意・1000文字まで）"
-                maxLength={1000}
-                rows={2}
-                value={reviewText}
-                onChange={(e) => setReviewText(e.target.value)}
-              />
-              <button className="chip" disabled={stars === 0} onClick={sendReview}>
-                {stars === 0 ? '星を選んでください' : '送信する'}
-              </button>
-            </>
-          )}
-        </div>
-        <a className="big-btn slim share" href={shareUrl} target="_blank" rel="noreferrer">
-          𝕏 で結果をシェア
-        </a>
-        <div className="dialog-btns">
-          <button className="chip" onClick={onExit}>ホームへ</button>
-          <button className="big-btn slim" onClick={onRematch}>もう一回</button>
-        </div>
+        {step === 'review' ? (
+          /* 第1段階: レビュー（毎回表示） */
+          <div className="review-box">
+            <p className="review-title">このバトルはどうでしたか？</p>
+            <div className="review-stars">
+              {[1, 2, 3, 4, 5].map((n) => (
+                <span
+                  key={n}
+                  className={`review-star ${n <= stars ? 'on' : ''}`}
+                  onClick={() => setStars(n)}
+                >
+                  ★
+                </span>
+              ))}
+            </div>
+            <label className="review-text-label" htmlFor="review-text">
+              ひとことメモ（任意・1000文字まで）
+            </label>
+            <textarea
+              id="review-text"
+              className="review-text"
+              placeholder="ここをタップして感想・気づいたことを入力…"
+              maxLength={1000}
+              rows={3}
+              value={reviewText}
+              onChange={(e) => setReviewText(e.target.value)}
+            />
+            <button className="big-btn review-send" disabled={stars === 0} onClick={sendReview}>
+              {stars === 0 ? '★を選んで送信' : '送信する'}
+            </button>
+            <button className="review-skip" onClick={() => setStep('after')}>
+              今回はスキップ
+            </button>
+          </div>
+        ) : (
+          /* 第2段階: シェアと次の行動 */
+          <>
+            {reviewSent && <p className="review-thanks">ご意見ありがとうございました！</p>}
+            <a className="big-btn slim share" href={shareUrl} target="_blank" rel="noreferrer">
+              𝕏 で結果をシェア
+            </a>
+            <div className="dialog-btns">
+              <button className="chip" onClick={onExit}>ホームへ</button>
+              <button className="big-btn slim" onClick={onRematch}>もう一回</button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
