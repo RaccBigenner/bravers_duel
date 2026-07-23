@@ -178,11 +178,14 @@ export function classify(state: BattleState, line: string, actor: 0 | 1): NarrEv
     const hit = findChar(state, m[1], (1 - actor) as 0 | 1);
     return ev({ kind: 'actor', text: `相手のアクターが${m[1]}に変更された！`, charName: m[1], side: hit?.[0], charIndex: hit?.[1], duration: 1125 });
   }
+  if ((m = line.match(/^発動:(.+)＠P(\d)の(\d)番手$/))) {
+    // エンジンが位置を明示している（名前検索での取り違いが起きない）
+    const side = (Number(m[2]) - 1) as 0 | 1;
+    return ev({ kind: 'ability', text: `${m[1]}！`, side, charIndex: Number(m[3]) - 1, duration: 1100 });
+  }
   if ((m = line.match(/^発動:(.+)$/))) {
-    // 「[名前]の能力」形式ならキャラの頭上に出せるよう位置を特定する
-    const nameMatch = m[1].match(/^(.+?)の(バトル開始能力|ターン開始の選択|能力)$/);
-    const who = nameMatch ? findChar(state, nameMatch[1], actor) : null;
-    return ev({ kind: 'ability', text: `${m[1]}！`, charName: nameMatch?.[1], side: who?.[0], charIndex: who?.[1], duration: 1100 });
+    // 位置情報なし（古い形式）: 頭上には出さず、位置の推測はしない
+    return ev({ kind: 'ability', text: `${m[1]}！`, duration: 1100 });
   }
   if ((m = line.match(/^P(\d)の(.+)に(.+)を装備$/))) {
     const side = (Number(m[1]) - 1) as 0 | 1;

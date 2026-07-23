@@ -99,7 +99,7 @@ export function DeckSelect({ onStart, onBack, custom, onBuild }: {
       <section>
         <div className="section-head">
           <h3>自分のデッキ</h3>
-          <button className="chip" onClick={onBuild}>🛠 デッキを作る</button>
+          <button className="chip" onClick={onBuild}>デッキを作る</button>
         </div>
         <div className="deck-list">
           {customEntry && (

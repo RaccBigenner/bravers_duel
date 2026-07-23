@@ -3,6 +3,7 @@ import {
   effectiveAttributes,
   isCharAlive,
   maxHpOf,
+  predictSkill,
   skillEffectOf,
   type BattleAction,
   type BattleState,
@@ -145,7 +146,7 @@ export function Battle(props: { setup: BattleSetup; onExit: () => void; onRematc
   if (!ready) {
     return (
       <div className="battle-loading">
-        <span className="loading-emblem">⚔</span>
+        <img className="loading-emblem" src={IMG('icon_sword')} alt="" />
         <p>デュエル準備中…</p>
       </div>
     );
@@ -229,14 +230,14 @@ function BattleInner({ setup, onExit, onRematch }: {
 
   // キャラの頭上に出る小さなプレート（能力発動・威力アップ・ガード結果など）
   // 位置は出す瞬間に固定する（後から並び直すとガタガタ動いて見えるため）
-  interface Plate { key: number; side: 0 | 1; charIndex: number; text: string; cls: string; offset: number }
+  interface Plate { key: number; side: 0 | 1; charIndex: number; text: string; cls: string; offset: number; icon?: string }
   const [plates, setPlates] = useState<Plate[]>([]);
 
-  function spawnPlate(side: 0 | 1 | undefined, charIndex: number | undefined, text: string, cls = '', life = 1500) {
+  function spawnPlate(side: 0 | 1 | undefined, charIndex: number | undefined, text: string, cls = '', life = 1500, icon?: string) {
     if (side === undefined || charIndex === undefined) return;
     setPlates((prev) => {
       const offset = prev.filter((p) => p.side === side && p.charIndex === charIndex).length * 26;
-      const plate: Plate = { key: flightKey++, side, charIndex, text, cls, offset };
+      const plate: Plate = { key: flightKey++, side, charIndex, text, cls, offset, icon };
       window.setTimeout(() => setPlates((pp) => pp.filter((p) => p.key !== plate.key)), life);
       return [...prev, plate];
     });
@@ -293,7 +294,7 @@ function BattleInner({ setup, onExit, onRematch }: {
         }
         // ガードは「いくつ → いくつ」を頭上に大きく出す
         if (current.kind === 'guard' && current.amountBefore !== undefined) {
-          spawnPlate(current.side, current.charIndex, `🛡 ${current.amountBefore} → ${current.amount}`, 'guard', 1900);
+          spawnPlate(current.side, current.charIndex, `${current.amountBefore} → ${current.amount}`, 'guard', 1900, 'icon_shield');
         }
         // カットインのあと、使ったカードがトラッシュへ飛ぶ
         window.setTimeout(() => {
@@ -315,28 +316,25 @@ function BattleInner({ setup, onExit, onRematch }: {
         break;
       case 'lock':
         spawnVfx(current.side, current.charIndex, [...lastAttrsRef.current.map((a) => `vfx_${a}`), 'vfx_lock']);
-        spawnPlate(current.side, current.charIndex, '🔒 ロック', 'lock');
+        spawnPlate(current.side, current.charIndex, 'ロック', 'lock', 1500, 'icon_lock');
         break;
       case 'unlock':
-        spawnPlate(current.side, current.charIndex, '🔓 ロック解除', 'lock');
+        spawnPlate(current.side, current.charIndex, 'ロック解除', 'lock', 1500, 'icon_lock');
         break;
       case 'ability': {
-        // パッシブ発動: キャラの頭上に能力プレート + 金の波動
-        const at = current.charIndex !== undefined && current.side !== undefined
-          ? { side: current.side, charIndex: current.charIndex }
-          : lastCasterRef.current;
-        if (at) {
-          spawnPlate(at.side, at.charIndex, `⚡ ${current.text.replace(/！$/, '')}`, 'passive', 1700);
-          spawnVfx(at.side, at.charIndex, ['css:passive']);
+        // パッシブ発動: エンジンが明示した位置にだけ出す（推測して間違った側に出さない）
+        if (current.charIndex !== undefined && current.side !== undefined) {
+          spawnPlate(current.side, current.charIndex, current.text.replace(/！$/, ''), 'passive', 1700, 'icon_bolt');
+          spawnVfx(current.side, current.charIndex, ['css:passive']);
         }
         break;
       }
       case 'power':
-        spawnPlate(current.side, current.charIndex, `⚔ 威力+${current.amount}`, 'power', 1400);
+        spawnPlate(current.side, current.charIndex, `威力+${current.amount}`, 'power', 1400, 'icon_sword');
         spawnVfx(current.side, current.charIndex, ['css:power']);
         break;
       case 'powerGuard':
-        spawnPlate(current.side, current.charIndex, `🛡 ガード+${current.amount}`, 'pguard', 1400);
+        spawnPlate(current.side, current.charIndex, `ガード+${current.amount}`, 'pguard', 1400, 'icon_shield');
         spawnVfx(current.side, current.charIndex, ['css:pguard']);
         break;
       case 'info':
@@ -543,7 +541,7 @@ function BattleInner({ setup, onExit, onRematch }: {
       )}
       {/* 相手情報バー（表層UI） */}
       <div className="info-bar">
-        <span className="deck-name">🆚 {setup.enemy.name}</span>
+        <span className="deck-name"><em className="vs">vs</em> {setup.enemy.name}</span>
         <span className="phase-pill">
           <b className="turn-num">T{state.turn}</b>
           {isMyTurn ? (
@@ -560,7 +558,7 @@ function BattleInner({ setup, onExit, onRematch }: {
           onClick={() => setSpeed(speed > 1 ? 1 : 2)}
           title="演出の速さを切り替え"
         >
-          ⏩{speed > 1 ? '×2' : '×1'}
+          倍速{speed > 1 ? '×2' : '×1'}
         </button>
         <button className="chip small" onClick={() => setShowRules(true)}>？</button>
         <button className="chip small danger" onClick={() => setConfirmExit(true)}>投了</button>
@@ -669,7 +667,7 @@ function BattleInner({ setup, onExit, onRematch }: {
                 {...handPeek}
               >
                 <CardFrame card={card} width={handW} upright />
-                {picked && <span className="pick-badge">⚡</span>}
+                {picked && <img className="pick-badge" src={IMG('icon_bolt')} alt="チャージ予定" />}
                 {showCost && (
                   <span className={`cost-chip ${lackAp ? 'lack' : ''}`} title={lackAp ? 'APが足りない' : `コスト${card.costAp}`}>
                     {card.costAp}
@@ -691,7 +689,7 @@ function BattleInner({ setup, onExit, onRematch }: {
             <button className="chip" onClick={() => setTargeting(null)}>やめる</button>
           </>
         ) : state.phase === 'choice' ? (
-          <span className="hint">🌀 ターン開始の能力を選択中…</span>
+          <span className="hint">ターン開始の能力を選択中…</span>
         ) : guardPhase ? (
           <span className="hint danger">相手の攻撃！ ガードで割り込めます</span>
         ) : !isMyTurn || finished ? (
@@ -777,6 +775,30 @@ function BattleInner({ setup, onExit, onRematch }: {
         <div className="overlay preview" onClick={() => setPreviewHand(null)}>
           <div className="preview-inner" onClick={(e) => e.stopPropagation()}>
             <CardFrame card={cardById(me.hand[previewHand])} width={Math.min(300, Math.max(230, window.innerWidth * 0.72))} upright />
+            {(() => {
+              // 今使ったらどうなるか（状況で変わるスキルの予想値）
+              const card = cardById(me.hand[previewHand]);
+              if (card.type !== 'skill' || !isMyTurn) return null;
+              const p = predictSkill(state, PLAYER, card);
+              if (!p) return null;
+              return (
+                <div className="predict-row">
+                  {p.kind === 'attack' && (
+                    <span className="predict atk">
+                      予想ダメージ <b>{p.value}</b>
+                      {p.targets > 1 && <em>×{p.targets}体</em>}
+                      {p.value !== card.baseValue && <em className="mod">（基本{card.baseValue}）</em>}
+                    </span>
+                  )}
+                  {p.kind === 'heal' && <span className="predict heal">回復量 <b>{p.value}</b></span>}
+                  {p.kind === 'guard' && <span className="predict grd">ガード軽減 <b>{p.value}</b></span>}
+                  <span className="predict cost">
+                    コスト <b>{p.cost}</b>
+                    {p.cost !== card.costAp && <em className="mod">（基本{card.costAp}）</em>}
+                  </span>
+                </div>
+              );
+            })()}
             <div className="dialog-btns">
               {handPlayable.has(previewHand) ? (
                 <button className="big-btn slim" onClick={() => playFromPreview(previewHand)}>このカードを使う</button>
@@ -857,7 +879,7 @@ function Formation({ side, state, pops, targeting, onTap, koShown, cardW, vfxLis
   koShown: Set<string>;
   cardW: number;
   vfxList: { key: number; side: 0 | 1; charIndex: number; img: string; delay: number }[];
-  plates: { key: number; side: 0 | 1; charIndex: number; text: string; cls: string; offset: number }[];
+  plates: { key: number; side: 0 | 1; charIndex: number; text: string; cls: string; offset: number; icon?: string }[];
   onZoom?: (cardId: string) => void;
 }) {
   const p = state.players[side];
@@ -925,7 +947,7 @@ function Formation({ side, state, pops, targeting, onTap, koShown, cardW, vfxLis
             </div>
             {koVisible && <img src={IMG('back')} className="ko-back" />}
             {isActor && state.turn <= p.actorLockUntilTurn && (
-              <span className="lock-badge" title="ロック中: アクターを交代できない">🔒</span>
+              <img className="lock-badge" src={IMG('icon_lock')} title="ロック中: アクターを交代できない" alt="ロック" />
             )}
             {c.equipmentCardId && (
               <span
@@ -981,6 +1003,7 @@ function Formation({ side, state, pops, targeting, onTap, koShown, cardW, vfxLis
               .filter((pl) => pl.side === side && pl.charIndex === i)
               .map((pl) => (
                 <span key={pl.key} className={`char-plate ${pl.cls}`} style={{ top: -26 - pl.offset }}>
+                  {pl.icon && <img className="plate-ico" src={IMG(pl.icon)} alt="" />}
                   {pl.text}
                 </span>
               ))}
@@ -1077,17 +1100,9 @@ function FlyGhost({ flight }: { flight: Flight }) {
   );
 }
 
-const KIND_ICON: Record<string, string> = {
-  turn: '🔄', draw: '🃏', charge: '⚡', chargeDeck: '⚡', mill: '🗑️', play: '✨',
-  guard: '🛡️', attack: '⚔️', damage: '💥', heal: '💚', ko: '💀', revive: '🌟',
-  actor: '👉', ability: '⚡', equip: '🛡️', field: '🌍', attr: '➕', search: '🔍',
-  lock: '🔒', end: '🏁', info: '💬',
-};
-
 function NarrationBanner({ ev, mini = false }: { ev: NarrEvent; mini?: boolean }) {
   return (
     <div key={ev.key} className={`narration kind-${ev.kind} ${mini ? 'mini' : ''}`}>
-      <span className="narr-icon">{KIND_ICON[ev.kind] ?? '💬'}</span>
       <span className="narr-text">{ev.text}</span>
     </div>
   );

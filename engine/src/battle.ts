@@ -236,7 +236,13 @@ function finish(state: BattleState, winner: PlayerIndex | null, reason: EndReaso
  * 効果をスナップショット保護つきで実行する。
  * 効果が例外を投げたら、状態を実行前に巻き戻してログを残し、バトルを続行する。
  */
-function runEffectSafely(state: BattleState, label: string, fn: () => void): void {
+function runEffectSafely(
+  state: BattleState,
+  label: string,
+  fn: () => void,
+  /** 発動したキャラの位置（演出の表示先。必ず渡すこと: 名前検索での取り違いを防ぐ） */
+  anchor?: { player: PlayerIndex; charIndex: number },
+): void {
   if (state.phase === 'finished') return;
   if (state.effectDepth >= MAX_EFFECT_DEPTH) {
     pushLog(state, `効果の連鎖が深すぎるためスキップ: ${label}`);
@@ -253,7 +259,8 @@ function runEffectSafely(state: BattleState, label: string, fn: () => void): voi
     rngState: state.rngState,
   });
   state.effectDepth++;
-  pushLog(state, `発動:${label}`);
+  // ＠P◯の◯番手 は演出がキャラ位置を正確に特定するための機械可読な印
+  pushLog(state, anchor ? `発動:${label}＠P${anchor.player + 1}の${anchor.charIndex + 1}番手` : `発動:${label}`);
   try {
     fn();
   } catch (e) {
@@ -563,14 +570,14 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
       const card = cardById(id) as SkillCard;
       p.trash.push(id);
       pushLog(state, `デッキから${card.name}をコストなしで使用`);
-      // スキルを本当に「使用」する（効果込み）。奇襲扱いでguard割り込みは不可
+      // スキルを本当に「使用」する（効果込み）。奇襲扱いでguard割り込みは不可。
+      // もとのスキルの効果の一部なので、ここでは絶対にローテーションさせない
+      // （させると「1スキルで2回スイッチ」が起きる）
       if (card.valueType === 'attack') {
-        beginAttack(state, card, ownerChar, undefined, true);
+        beginAttack(state, card, ownerChar, undefined, true, true);
       } else {
-        const wasActor = ownerChar === me().actorIndex;
         resolveNonAttack(state, card, ownerChar);
-        if (wasActor) rotateActorAfterSkill(state, owner);
-        else if (state.skipRotationFor === owner) state.skipRotationFor = null;
+        // ローテーションは外側のスキルの処理に任せる（skipRotationForもそのまま引き継ぐ）
       }
     },
     log: (message) => pushLog(state, message),
@@ -615,8 +622,11 @@ function applyDamage(
 
   // 被ダメージ時の常時能力（ミルオン・ボーダン）。アクター判定は攻撃列の開始時点で行う
   if (actual > 0 && eff?.onDamaged && isCharAlive(state, player, charIndex)) {
-    runEffectSafely(state, `${c.name}の被ダメージ能力`, () =>
-      eff.onDamaged!(makeApi(state, player, charIndex), actual, charIndex === actorRef),
+    runEffectSafely(
+      state,
+      `${c.name}の被ダメージ能力`,
+      () => eff.onDamaged!(makeApi(state, player, charIndex), actual, charIndex === actorRef),
+      { player, charIndex },
     );
   }
 
@@ -628,7 +638,7 @@ function applyDamage(
       const allyEff = characterEffectOf(ally.cardId);
       if (!allyEff?.onAllyKo) return;
       if (i !== charIndex && !isCharAlive(state, player, i)) return;
-      runEffectSafely(state, `${ally.name}の能力`, () => allyEff.onAllyKo!(makeApi(state, player, i)));
+      runEffectSafely(state, `${ally.name}の能力`, () => allyEff.onAllyKo!(makeApi(state, player, i)), { player, charIndex: i });
     });
     if (battleOver(state)) return actual;
     if (aliveCount(state, player) === 0) {
@@ -656,8 +666,11 @@ function healCharacter(state: BattleState, player: PlayerIndex, charIndex: numbe
     pushLog(state, `P${player + 1}の${c.name}を${healed}回復`);
     const eff = characterEffectOf(c.cardId);
     if (eff?.onHealed) {
-      runEffectSafely(state, `${c.name}の回復時能力`, () =>
-        eff.onHealed!(makeApi(state, player, charIndex), healed),
+      runEffectSafely(
+        state,
+        `${c.name}の回復時能力`,
+        () => eff.onHealed!(makeApi(state, player, charIndex), healed),
+        { player, charIndex },
       );
     }
   }
@@ -753,8 +766,11 @@ export function createBattle(
     state.players[pIdx].characters.forEach((c, i) => {
       const eff = characterEffectOf(c.cardId);
       if (eff?.onBattleStart) {
-        runEffectSafely(state, `${c.name}のバトル開始能力`, () =>
-          eff.onBattleStart!(makeApi(state, pIdx, i)),
+        runEffectSafely(
+          state,
+          `${c.name}のバトル開始能力`,
+          () => eff.onBattleStart!(makeApi(state, pIdx, i)),
+          { player: pIdx, charIndex: i },
         );
       }
     });
@@ -797,8 +813,11 @@ function runAutoTurnStart(state: BattleState): void {
     const eff = characterEffectOf(c.cardId);
     if (!eff?.onOwnTurnStart) return;
     if (state.manualFor === state.active && eff.turnStartAction) return;
-    runEffectSafely(state, `${c.name}のターン開始能力`, () =>
-      eff.onOwnTurnStart!(makeApi(state, state.active, i), i === p.actorIndex),
+    runEffectSafely(
+      state,
+      `${c.name}のターン開始能力`,
+      () => eff.onOwnTurnStart!(makeApi(state, state.active, i), i === p.actorIndex),
+      { player: state.active, charIndex: i },
     );
   });
 }
@@ -1072,8 +1091,11 @@ export function applyAction(state: BattleState, action: BattleAction): void {
       );
       const eff = skillEffectOf(card.id);
       if (eff?.onGuardDeclare) {
-        runEffectSafely(state, `${card.name}のguard効果`, () =>
-          eff.onGuardDeclare!(makeApi(state, defender, p.actorIndex)),
+        runEffectSafely(
+          state,
+          `${card.name}のguard効果`,
+          () => eff.onGuardDeclare!(makeApi(state, defender, p.actorIndex)),
+          { player: defender, charIndex: p.actorIndex },
         );
       }
 
@@ -1156,8 +1178,11 @@ export function applyAction(state: BattleState, action: BattleAction): void {
       }
       const eff = characterEffectOf(c.cardId);
       if (!eff?.turnStartAction) throw new Error('任意のターン開始能力がありません');
-      runEffectSafely(state, `${c.name}のターン開始能力`, () =>
-        eff.turnStartAction!(makeApi(state, state.active, action.charIndex)),
+      runEffectSafely(
+        state,
+        `${c.name}のターン開始能力`,
+        () => eff.turnStartAction!(makeApi(state, state.active, action.charIndex)),
+        { player: state.active, charIndex: action.charIndex },
       );
       if (!battleOver(state)) drawPhase(state);
       return;
@@ -1194,14 +1219,20 @@ export function applyAction(state: BattleState, action: BattleAction): void {
         if (!isCharAlive(state, state.active, i)) return;
         const eff = characterEffectOf(c.cardId);
         if (eff?.onOwnTurnEnd) {
-          runEffectSafely(state, `${c.name}のターン終了能力`, () =>
-            eff.onOwnTurnEnd!(makeApi(state, state.active, i), i === p.actorIndex),
+          runEffectSafely(
+            state,
+            `${c.name}のターン終了能力`,
+            () => eff.onOwnTurnEnd!(makeApi(state, state.active, i), i === p.actorIndex),
+            { player: state.active, charIndex: i },
           );
         }
         const equipEff = c.equipmentCardId ? equipmentEffectOf(c.equipmentCardId) : null;
         if (equipEff?.onOwnTurnEnd) {
-          runEffectSafely(state, `${c.name}の装備効果`, () =>
-            equipEff.onOwnTurnEnd!(makeApi(state, state.active, i)),
+          runEffectSafely(
+            state,
+            `${c.name}の装備効果`,
+            () => equipEff.onOwnTurnEnd!(makeApi(state, state.active, i)),
+            { player: state.active, charIndex: i },
           );
         }
       });
@@ -1242,6 +1273,63 @@ function requirePhase(state: BattleState, phase: Phase): void {
   }
 }
 
+/** スキルを使う前の予想値（UI表示用）。状況で効果が変わるスキルの「今使ったらどうなるか」 */
+export interface SkillPrediction {
+  kind: 'attack' | 'heal' | 'guard' | 'support';
+  /** 予想ダメージ / 回復量 / ガード軽減量（supportは0） */
+  value: number;
+  /** 攻撃の対象数（attack以外は0） */
+  targets: number;
+  cost: number;
+}
+
+export function predictSkill(
+  state: BattleState,
+  player: PlayerIndex,
+  card: SkillCard,
+  usingIndex?: number,
+): SkillPrediction | null {
+  const usingChar = resolveUsingChar(state, player, card, usingIndex);
+  if (usingChar === null) return null;
+  const cost = effectiveSkillCost(state, player, card, usingChar);
+
+  if (card.valueType === 'attack') {
+    // 実際の宣言処理をクローン上で走らせて、修正込みのダメージを読む
+    const clone = structuredClone(state);
+    clone.active = player;
+    const eff = skillEffectOf(card.id);
+    clone.pendingAttack = {
+      skillId: card.id,
+      skillName: card.name,
+      value: card.baseValue,
+      targeting: eff?.targeting ?? 'actor',
+      chosenIndex: undefined,
+      noGuard: eff?.noGuard ?? false,
+      attackerChar: usingChar,
+      attackerWasActor: usingChar === clone.players[player].actorIndex,
+      guard: null,
+    };
+    try {
+      eff?.onAttackDeclare?.(makeApi(clone, player, usingChar));
+      const charEff = characterEffectOf(clone.players[player].characters[usingChar].cardId);
+      charEff?.onAttackDeclare?.(makeApi(clone, player, usingChar));
+    } catch {
+      /* 予測なので効果エラーは無視 */
+    }
+    const value = clone.pendingAttack?.value ?? card.baseValue;
+    const targets = clone.pendingAttack ? resolveAttackTargets(clone, clone.pendingAttack).length : 0;
+    return { kind: 'attack', value, targets, cost };
+  }
+  if (card.valueType === 'heal') {
+    const value = skillEffectOf(card.id)?.healTargeting === 'ko' ? Math.max(1, card.baseValue) : card.baseValue;
+    return { kind: 'heal', value, targets: 0, cost };
+  }
+  if (card.valueType === 'guard') {
+    return { kind: 'guard', value: card.baseValue, targets: 0, cost };
+  }
+  return { kind: 'support', value: 0, targets: 0, cost };
+}
+
 function cardAtHand(p: PlayerBattle, handIndex: number) {
   const id = p.hand[handIndex];
   if (id === undefined) throw new Error(`手札にない番号です: ${handIndex}`);
@@ -1256,6 +1344,7 @@ function beginAttack(
   usingChar: number,
   targetIndex?: number,
   forceNoGuard = false,
+  noRotate = false, // 効果の中から放つ攻撃（デッキから使用など）は1スキル扱いなので回転させない
 ): void {
   const defenderIdx = (1 - state.active) as PlayerIndex;
   const eff = skillEffectOf(card.id);
@@ -1268,26 +1357,35 @@ function beginAttack(
     chosenIndex: eff?.targeting === 'choose' ? targetIndex : undefined,
     noGuard: forceNoGuard || (eff?.noGuard ?? false),
     attackerChar: usingChar,
-    attackerWasActor: usingChar === state.players[state.active].actorIndex,
+    attackerWasActor: !noRotate && usingChar === state.players[state.active].actorIndex,
     guard: null,
   };
 
   // ダメージ修正（スキル効果 → 使用キャラの常時能力の順）
   if (eff?.onAttackDeclare) {
-    runEffectSafely(state, `${card.name}の攻撃効果`, () =>
-      eff.onAttackDeclare!(makeApi(state, state.active, usingChar)),
+    runEffectSafely(
+      state,
+      `${card.name}の攻撃効果`,
+      () => eff.onAttackDeclare!(makeApi(state, state.active, usingChar)),
+      { player: state.active, charIndex: usingChar },
     );
   }
   const charEff = characterEffectOf(state.players[state.active].characters[usingChar].cardId);
   if (charEff?.onAttackDeclare) {
-    runEffectSafely(state, `使用キャラの攻撃能力`, () =>
-      charEff.onAttackDeclare!(makeApi(state, state.active, usingChar)),
+    runEffectSafely(
+      state,
+      `使用キャラの攻撃能力`,
+      () => charEff.onAttackDeclare!(makeApi(state, state.active, usingChar)),
+      { player: state.active, charIndex: usingChar },
     );
   }
   // プレイ時の付随効果（属性追加・アクター化など）
   if (eff?.onPlay) {
-    runEffectSafely(state, `${card.name}のプレイ効果`, () =>
-      eff.onPlay!(makeApi(state, state.active, usingChar)),
+    runEffectSafely(
+      state,
+      `${card.name}のプレイ効果`,
+      () => eff.onPlay!(makeApi(state, state.active, usingChar)),
+      { player: state.active, charIndex: usingChar },
     );
   }
   if (state.phase === 'finished') return;
@@ -1342,8 +1440,11 @@ function resolvePendingAttack(state: BattleState): void {
   if (!battleOver(state)) {
     const eff = skillEffectOf(pending.skillId);
     if (eff?.onAttackResolved) {
-      runEffectSafely(state, `${pending.skillName}の攻撃後効果`, () =>
-        eff.onAttackResolved!(makeApi(state, attackerIdx, pending.attackerChar), dealtTotal, damagedCount),
+      runEffectSafely(
+        state,
+        `${pending.skillName}の攻撃後効果`,
+        () => eff.onAttackResolved!(makeApi(state, attackerIdx, pending.attackerChar), dealtTotal, damagedCount),
+        { player: attackerIdx, charIndex: pending.attackerChar },
       );
     }
   }
@@ -1378,8 +1479,11 @@ function resolveNonAttack(state: BattleState, card: SkillCard, usingChar: number
   }
   const eff = skillEffectOf(card.id);
   if (eff?.onPlay) {
-    runEffectSafely(state, `${card.name}の効果`, () =>
-      eff.onPlay!(makeApi(state, state.active, usingChar)),
+    runEffectSafely(
+      state,
+      `${card.name}の効果`,
+      () => eff.onPlay!(makeApi(state, state.active, usingChar)),
+      { player: state.active, charIndex: usingChar },
     );
   }
 }
