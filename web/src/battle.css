@@ -164,7 +164,9 @@
 }
 /* アクターの金色オーラは廃止（テキストの裏で光って見えるため）。
    アクターは「大きさ + 足元のスポットライト」で示す */
-.char-slot.ko { filter: saturate(0.2) brightness(0.7); }
+/* KO中は表面を完全に隠す（裏面が「透ける」ように見える事故防止で、
+   スロット全体へのフィルターは使わない） */
+.char-slot.ko .char-card { visibility: hidden; }
 .ko-back {
   position: absolute;
   inset: 0;
@@ -172,7 +174,6 @@
   height: 100%;
   object-fit: cover;
   border-radius: 6px;
-  opacity: 0.92;
   animation: ko-flip 0.6s ease;
 }
 @keyframes ko-flip {
@@ -1733,17 +1734,23 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
   object-fit: cover;
 }
 .ko-back.landscape {
-  /* 横長スロットの中で裏面を90度倒して比率を保つ。
-   * 回転前の幅 = スロット高さ（= 幅×300/417）にすると、回転後に
-   * ちょうどスロット全面（幅×高さ）へ収まる */
+  /* LLの裏面は横倒し。回転前の幅 = 300/417×スロット幅 にすると、
+   * 回転後の見た目がちょうど スロット幅×(スロット幅×300/417) になる。
+   * 注意: inset:auto は left/top より「先」に書くこと（後に書くと
+   * left/top が打ち消されてズレる。実際に起きた事故） */
+  inset: auto;
+  left: 50%;
+  top: 50%;
   width: calc(300 / 417 * 100%);
   height: auto;
   aspect-ratio: var(--card-ratio);
-  left: 50%;
-  top: 50%;
-  inset: auto;
   transform: translate(-50%, -50%) rotate(90deg);
   transform-origin: center;
+  animation: ko-flip-landscape 0.6s ease;
+}
+@keyframes ko-flip-landscape {
+  from { transform: translate(-50%, -50%) rotate(90deg) rotateY(90deg); }
+  to { transform: translate(-50%, -50%) rotate(90deg) rotateY(0deg); }
 }
 
 /* ロックアイコン: 薄すぎたので暗い光背つきでハッキリ見せる */

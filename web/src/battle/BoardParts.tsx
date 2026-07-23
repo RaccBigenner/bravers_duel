@@ -151,6 +151,7 @@ export function Formation({ side, state, pops, targeting, onTap, koShown, cardW,
           >
             <div
               className={[
+                'char-card',
                 myPops.some((d) => d.amount > 0) ? 'card-hit' : '',
                 ...myMotions.map((m) => m.cls),
               ].join(' ')}
