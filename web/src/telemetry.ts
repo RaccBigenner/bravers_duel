@@ -29,7 +29,9 @@ export function getUid(): string {
 }
 
 export function logEvent(type: string, payload: Record<string, unknown>): void {
-  if (!ENDPOINT) return;
+  // 開発中（npm run dev / ローカルビルド確認）は送らない。
+  // HMRの再マウントで開始ログが多重送信される事故が実際に起きたため
+  if (!ENDPOINT || !import.meta.env.PROD || location.hostname === 'localhost') return;
   try {
     const body = JSON.stringify({ v: 1, uid: getUid(), type, at: new Date().toISOString(), ...payload });
     // sendBeacon はページ遷移中でも送れる。使えない環境は keepalive fetch
