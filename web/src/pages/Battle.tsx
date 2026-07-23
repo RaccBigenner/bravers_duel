@@ -231,6 +231,7 @@ function BattleInner({ setup, onExit, onRematch }: {
       mill: ['se_card', 0.3],
       apTrash: ['se_break', 0.5],
       handTrash: ['se_break', 0.45],
+      trashToDeck: ['se_card', 0.35],
       search: ['se_draw', 0.4],
       play: ['se_play', 0.5],
       field: ['se_play', 0.5],
@@ -277,6 +278,9 @@ function BattleInner({ setup, onExit, onRematch }: {
         break;
       case 'handTrash':
         spawnFlight(handRefs[s].current, trashRefs[s].current, current.amount ?? 1);
+        break;
+      case 'trashToDeck':
+        spawnFlight(trashRefs[s].current, deckRefs[s].current, current.amount ?? 1);
         break;
       case 'play':
       case 'guard':

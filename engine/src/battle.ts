@@ -278,6 +278,7 @@ function runEffectSafely(
   state.effectDepth++;
   // ＠P◯の◯番手 は演出がキャラ位置を正確に特定するための機械可読な印
   pushLog(state, anchor ? `発動:${label}＠P${anchor.player + 1}の${anchor.charIndex + 1}番手` : `発動:${label}`);
+  const activationIndex = state.events.length;
   emit(state, { t: 'abilityTriggered', label, player: anchor?.player, charIndex: anchor?.charIndex });
   try {
     fn();
@@ -286,6 +287,15 @@ function runEffectSafely(
     pushLog(state, `効果でエラーが起きたためスキップ: ${label}（${e instanceof Error ? e.message : e}）`);
   } finally {
     state.effectDepth--;
+    // 効果が目に見える変化（後続イベント）を何も起こさなかった場合、
+    // 「発動」の演出も取り消す（条件不成立のパッシブが毎回光るのを防ぐ）
+    if (
+      state.events.length === activationIndex + 1 &&
+      state.events[activationIndex]?.t === 'abilityTriggered'
+    ) {
+      state.events.splice(activationIndex, 1);
+      state.eventSeq--;
+    }
   }
 }
 
@@ -502,6 +512,10 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
       const p = me();
       const moved = p.trash.splice(0, clampN(n));
       p.deck.push(...moved); // デッキの下に戻す
+      if (moved.length > 0) {
+        pushLog(state, `P${owner + 1}はトラッシュから${moved.length}枚をデッキに戻した`);
+        emit(state, { t: 'trashToDeck', player: owner, n: moved.length });
+      }
     },
     lockEnemyActor: () => {
       enemy().actorLockUntilTurn = state.turn + 1;
@@ -1492,6 +1506,10 @@ function beginAttack(
     if (pending.noGuard) {
       pushLog(state, `${card.name}は防御で割り込めない攻撃`);
       emit(state, { t: 'attackDeclared', player: state.active, cardId: card.id, value: pending.value, noGuard: true });
+    } else {
+      // 相手がガードできない場合も攻撃宣言の演出は必ず出す
+      pushLog(state, `${card.name}で攻撃（ダメージ${pending.value}）`);
+      emit(state, { t: 'attackDeclared', player: state.active, cardId: card.id, value: pending.value, noGuard: false });
     }
     resolvePendingAttack(state);
   }

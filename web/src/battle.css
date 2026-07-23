@@ -1444,17 +1444,15 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
 
 /* ---- 頭上プレート: 生成した金縁プレート画像に載せる ---- */
 .char-plate {
-  /* 枠は廃止（社長判断）。読みやすさは余白と縁取りで確保する */
-  background: none;
+  /* シンプルな黒帯+両端フェードアウト（社長指定） */
+  background: linear-gradient(90deg, transparent, rgba(0, 0, 0, 0.82) 22%, rgba(0, 0, 0, 0.82) 78%, transparent);
   border: none;
   border-radius: 0;
   box-shadow: none;
-  padding: 6px 14px;
+  padding: 5px 26px;
   font-size: 12.5px;
   color: #ffe9a0;
-  text-shadow:
-    -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000,
-    0 0 8px rgba(0, 0, 0, 0.95), 0 0 14px rgba(0, 0, 0, 0.8);
+  text-shadow: 0 1px 2px #000;
 }
 .char-plate.guard { color: #cfeaff; font-size: 14px; }
 .char-plate.power { color: #ffd0a8; }
@@ -1465,17 +1463,15 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
 
 /* ---- ナレーション（コイン・決着）も同じプレートに ---- */
 .narration {
-  background: none;
+  background: linear-gradient(90deg, transparent, rgba(0, 0, 0, 0.85) 20%, rgba(0, 0, 0, 0.85) 80%, transparent);
   border: none;
   border-radius: 0;
   box-shadow: none;
-  padding: 16px 28px;
+  padding: 12px 48px;
 }
 .narration .narr-text {
   font-size: 17px;
-  text-shadow:
-    -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000,
-    0 0 10px rgba(0, 0, 0, 0.95), 0 0 18px rgba(0, 0, 0, 0.85);
+  text-shadow: 0 1px 2px #000;
 }
 .narration.kind-ko { background-color: transparent; }
 
@@ -1680,3 +1676,12 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
 .predict.cost b { color: #ffd700; }
 .predict em { font-style: normal; font-size: 10.5px; color: #778; }
 .predict em.mod { color: #cfae4a; }
+
+
+/* デッキ選択: カスタムデッキの書き出し・編集ボタン列 */
+.custom-deck-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: -4px;
+}

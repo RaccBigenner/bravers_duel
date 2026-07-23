@@ -1,11 +1,26 @@
 /**
  * バトルのプレイヤーAI。
  * - randomAi: できる行動からランダムに選ぶ（エンジンの耐久テスト用）
- * - simpleAi: 一番強い攻撃を優先する素直なAI（バランス測定の基準用）
+ * - simpleAi: 行動を採点して選ぶヒューリスティックAI（対人のCPU・バランス測定の基準）
+ *
+ * simpleAi の考え方:
+ * - 攻撃は predictSkill（修正込みの予想ダメージ）で評価し、リーサルを最優先
+ * - 回復・復活は「実際に回復できる量」で評価
+ * - ガードは「アクターが落ちるのを防げるか」「軽減量が割に合うか」で判断
+ * - チャージは使えないカードから回す
  */
-import { legalActions, type BattleAction, type BattleState, type PlayerIndex } from './battle';
+import {
+  isCharAlive,
+  legalActions,
+  maxHpOf,
+  predictSkill,
+  type BattleAction,
+  type BattleState,
+  type PlayerIndex,
+} from './battle';
 import { cardById } from './cards';
 import { containsAll } from './decks';
+import { skillEffectOf } from './effects';
 import { mulberry32, pickOne, type Rng } from './rng';
 
 export interface BattleAi {
@@ -20,7 +35,6 @@ export function randomAi(seed: number): BattleAi {
     name: 'random',
     choose(state) {
       const actions = legalActions(state);
-      // ターンが無限に続かないよう、終了行動を少しだけ選ばれやすくする
       return pickOne(actions, rng);
     },
   };
@@ -31,7 +45,7 @@ export interface SimpleAiOptions {
   keepHand?: number;
 }
 
-/** 一番ダメージの大きい攻撃を優先する素直なAI */
+/** 行動を採点して選ぶヒューリスティックAI */
 export function simpleAi(options: SimpleAiOptions = {}): BattleAi {
   const keepHand = options.keepHand ?? 0;
 
@@ -40,49 +54,98 @@ export function simpleAi(options: SimpleAiOptions = {}): BattleAi {
     choose(state, me) {
       const actions = legalActions(state);
       const p = state.players[me];
+      const enemyIdx = (1 - me) as PlayerIndex;
+      const enemy = state.players[enemyIdx];
 
-      // 割り込み: 2以上のダメージが来るなら一番強いguardで軽減する
+      const hpLeft = (side: PlayerIndex, ci: number) =>
+        Math.max(0, maxHpOf(state, side, ci) - state.players[side].characters[ci].damage);
+
+      // ---------- 割り込み（ガード） ----------
       if (state.phase === 'guard') {
         const pending = state.pendingAttack;
-        if (pending && pending.value >= 2) {
-          let best: { action: BattleAction; value: number } | null = null;
-          for (const action of actions) {
-            if (action.type !== 'playGuard') continue;
-            const card = cardById(p.hand[action.handIndex]);
-            if (card.type !== 'skill') continue;
-            if (!best || card.baseValue > best.value) best = { action, value: card.baseValue };
-          }
-          if (best) return best.action;
+        if (!pending) return { type: 'pass' };
+        const actorHp = hpLeft(me, p.actorIndex);
+        const wouldDie = pending.value >= actorHp;
+
+        let best: { action: BattleAction; value: number; cost: number } | null = null;
+        for (const action of actions) {
+          if (action.type !== 'playGuard') continue;
+          const card = cardById(p.hand[action.handIndex]);
+          if (card.type !== 'skill') continue;
+          const cut = Math.min(card.baseValue, pending.value);
+          if (!best || cut > best.value) best = { action, value: cut, cost: card.costAp };
         }
+        if (!best) return { type: 'pass' };
+
+        // アクターが落ちるなら、生き残れる場合に必ずガード
+        if (wouldDie && pending.value - best.value < actorHp) return best.action;
+        // 落ちないなら、3以上のダメージをコスト効率よく削れる時だけガード
+        if (!wouldDie && pending.value >= 3 && best.value >= best.cost * 2) return best.action;
         return { type: 'pass' };
       }
 
+      // ---------- 選択フェーズ（アニマ等。AIはエンジンの自動判断があるので使わない） ----------
+      if (state.phase === 'choice') {
+        return { type: 'skipTurnStart' };
+      }
+
+      // ---------- プレイフェーズ: 行動を採点して一番良いものを選ぶ ----------
       if (state.phase === 'play') {
-        // 0. 装備は無料なので先に付ける（装備していないキャラにだけ。付け替えループ防止）
-        const equipAction = actions.find((a) => {
-          if (a.type !== 'playEquipment') return false;
-          return p.characters[a.targetIndex].equipmentCardId === null;
-        });
+        // 装備は無料なので先に付ける（未装備のキャラにだけ）
+        const equipAction = actions.find(
+          (a) => a.type === 'playEquipment' && p.characters[a.targetIndex].equipmentCardId === null,
+        );
         if (equipAction) return equipAction;
 
-        // 0.5 フィールドが出ていなければ出す（相手のフィールドの上書きもする）
+        // フィールドが無ければ出す
         const fieldAction = actions.find((a) => a.type === 'playField');
         if (fieldAction && (state.field === null || state.field.owner !== me)) return fieldAction;
 
-        // 1. 使える攻撃スキルのうち、ダメージが一番大きいもの
-        let best: { action: BattleAction; value: number } | null = null;
+        let best: { action: BattleAction; score: number } | null = null;
         for (const action of actions) {
           if (action.type !== 'playSkill') continue;
           const card = cardById(p.hand[action.handIndex]);
-          if (card.type !== 'skill' || card.valueType !== 'attack') continue;
-          if (card.baseValue <= 0) continue;
-          if (!best || card.baseValue > best.value) {
-            best = { action, value: card.baseValue };
+          if (card.type !== 'skill') continue;
+          const pred = predictSkill(state, me, card, action.usingIndex);
+          if (!pred) continue;
+          let score = -Infinity;
+
+          if (pred.kind === 'attack') {
+            if (pred.value > 0) {
+              // 修正込みダメージ × 対象数。リーサルを強く優先
+              score = pred.value * Math.max(1, pred.targets) * 10 - pred.cost * 4;
+              const targetIdx =
+                action.targetIndex ??
+                (isCharAlive(state, enemyIdx, enemy.actorIndex) ? enemy.actorIndex : -1);
+              if (targetIdx >= 0 && pred.targets <= 1 && pred.value >= hpLeft(enemyIdx, targetIdx)) {
+                score += 60; // 単体リーサル
+              }
+              if (pred.targets > 1) {
+                const kills = enemy.characters.filter(
+                  (_, i) => isCharAlive(state, enemyIdx, i) && pred.value >= hpLeft(enemyIdx, i),
+                ).length;
+                score += kills * 50; // 全体でまとめて倒す
+              }
+            }
+          } else if (pred.kind === 'heal') {
+            const eff = skillEffectOf(card.id);
+            if (eff?.healTargeting === 'ko') {
+              score = 55 - pred.cost * 3; // 復活はほぼ常に強い
+            } else {
+              const target = action.healTargetIndex ?? p.actorIndex;
+              const healable = Math.min(pred.value, p.characters[target]?.damage ?? 0);
+              if (healable >= 2) score = healable * 9 - pred.cost * 4;
+            }
+          } else if (pred.kind === 'support') {
+            // 軽い補助（ドロー・チャージ等）はテンポを崩さない範囲で使う
+            if (card.effectText !== '') score = 8 - pred.cost * 4;
           }
+
+          if (score > (best?.score ?? 0)) best = { action, score };
         }
         if (best) return best.action;
 
-        // 2. ダメージを受けた味方がいればキャラクターカードで回復
+        // ダメージを受けた味方がいればキャラクターカードで回復
         const characterPlay = actions.find((a) => {
           if (a.type !== 'playCharacter') return false;
           const card = cardById(p.hand[a.handIndex]);
@@ -93,10 +156,12 @@ export function simpleAi(options: SimpleAiOptions = {}): BattleAi {
         return { type: 'endPlay' };
       }
 
-      // チャージフェーズ: keepHand 枚残して、それ以外をチャージする
+      // ---------- チャージフェーズ ----------
       if (p.hand.length > keepHand) {
-        // 自分のキャラでは条件を満たせないスキルなど、使い道の薄いカードから
-        const chargeIndex = chooseChargeIndex(p.hand, p.characters.map((c) => [...c.attributes, ...c.addedAttributes]));
+        const chargeIndex = chooseChargeIndex(
+          p.hand,
+          p.characters.map((c) => [...c.attributes, ...c.addedAttributes]),
+        );
         return { type: 'charge', handIndex: chargeIndex };
       }
       return { type: 'endTurn' };

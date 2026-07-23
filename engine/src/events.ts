@@ -28,6 +28,7 @@ export type BattleEvent =
   | { t: 'mill'; player: PlayerIndex; n: number }
   | { t: 'apTrash'; player: PlayerIndex; n: number }
   | { t: 'searchToHand'; player: PlayerIndex; cardId: string }
+  | { t: 'trashToDeck'; player: PlayerIndex; n: number }
   // カードの使用
   | { t: 'skillUsed'; player: PlayerIndex; charIndex: number; cardId: string }
   | { t: 'characterCardUsed'; player: PlayerIndex; cardId: string }

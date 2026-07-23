@@ -17,7 +17,7 @@ type View =
   | { name: 'gallery' }
   | { name: 'deckSelect' }
   | { name: 'builder' }
-  | { name: 'battle'; setup: BattleSetup };
+  | { name: 'battle'; setup: BattleSetup; nonce: number };
 
 export function App() {
   const [view, setView] = useState<View>({ name: 'home' });
@@ -36,7 +36,7 @@ export function App() {
     case 'deckSelect':
       return (
         <DeckSelect
-          onStart={(setup) => setView({ name: 'battle', setup })}
+          onStart={(setup) => setView({ name: 'battle', setup, nonce: 1 })}
           onBack={() => setView({ name: 'home' })}
           custom={customDeck}
           onBuild={() => setView({ name: 'builder' })}
@@ -56,9 +56,11 @@ export function App() {
     case 'battle':
       return (
         <Battle
+          // key を変えて完全に作り直す（同じ setup の「もう一回」でも新しいバトルになる）
+          key={view.nonce}
           setup={view.setup}
           onExit={() => setView({ name: 'home' })}
-          onRematch={() => setView({ name: 'battle', setup: view.setup })}
+          onRematch={() => setView({ name: 'battle', setup: view.setup, nonce: view.nonce + 1 })}
         />
       );
   }

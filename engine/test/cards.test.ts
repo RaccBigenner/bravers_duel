@@ -24,10 +24,11 @@ describe('カードマスターデータ', () => {
     expect(() => cardById('存在しないID')).toThrow();
   });
 
-  it('効果なしスキルの基本値は (コスト+1)×2（バランス調整v1のルール）', () => {
+  it('効果なしスキルの基本値は (1+コスト)×2−1＋(条件属性数−1)（バランス調整v2のルール）', () => {
     for (const c of ALL_CARDS) {
       if (c.type === 'skill' && c.effectText === '') {
-        expect(c.baseValue, `${c.id} ${c.name}`).toBe((c.costAp + 1) * 2);
+        const expected = (c.costAp + 1) * 2 - 1 + (c.conditionAttribute.length - 1);
+        expect(c.baseValue, `${c.id} ${c.name}`).toBe(expected);
       }
     }
   });

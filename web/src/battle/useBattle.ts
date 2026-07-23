@@ -102,6 +102,11 @@ function applyEventToView(view: BattleState, ev: NarrEvent): void {
       p.trash.push(...p.hand.splice(0));
       break;
     }
+    case 'trashToDeck': {
+      const n = Math.min(ev.amount ?? 1, p.trash.length);
+      p.deck.push(...p.trash.splice(0, n));
+      break;
+    }
     case 'lock': {
       if (ev.side !== undefined) p.actorLockUntilTurn = ev.amount ?? view.turn;
       break;

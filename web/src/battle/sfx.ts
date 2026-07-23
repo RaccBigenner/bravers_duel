@@ -45,7 +45,11 @@ export function playSfx(name: string, volume = 0.5): void {
   if (!enabled) return;
   const c = ensureContext();
   const buf = buffers.get(name);
-  if (!c || !buf || c.state !== 'running') return;
+  if (!c || !buf) return;
+  if (c.state !== 'running') {
+    void c.resume(); // 次の再生からは鳴るように起こしておく
+    return;
+  }
   const now = performance.now();
   if (now - (lastPlayed.get(name) ?? -Infinity) < MIN_INTERVAL_MS) return;
   lastPlayed.set(name, now);

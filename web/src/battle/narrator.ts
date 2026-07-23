@@ -10,7 +10,7 @@ import { cardById, type BattleEvent, type BattleState, type Card } from '@braver
 
 export type FxKind =
   | 'coin' | 'turn' | 'draw' | 'charge' | 'chargeDeck' | 'chargeTrash' | 'chargeAll'
-  | 'mill' | 'apTrash' | 'handTrash' | 'play' | 'guard'
+  | 'mill' | 'apTrash' | 'handTrash' | 'trashToDeck' | 'play' | 'guard'
   | 'attack' | 'damage' | 'heal' | 'ko' | 'revive' | 'actor' | 'ability'
   | 'power' | 'powerGuard'
   | 'equip' | 'field' | 'attr' | 'search' | 'lock' | 'unlock' | 'end' | 'info';
@@ -95,6 +95,8 @@ export function narrate(state: BattleState, e: BattleEvent): NarrEvent | null {
       return ev({ kind: 'mill', text: e.player === 0 ? `自分のデッキから${e.n}枚トラッシュ` : `相手のデッキから${e.n}枚トラッシュ！`, side: e.player, amount: e.n, duration: 850 });
     case 'apTrash':
       return ev({ kind: 'apTrash', text: e.player === 0 ? `APから${e.n}枚トラッシュ！` : `相手のAPから${e.n}枚トラッシュ！`, side: e.player, amount: e.n, duration: 900 });
+    case 'trashToDeck':
+      return ev({ kind: 'trashToDeck', text: e.player === 0 ? `トラッシュから${e.n}枚をデッキへ` : `相手がトラッシュから${e.n}枚をデッキへ`, side: e.player, amount: e.n, duration: 850 });
     case 'searchToHand': {
       const name = safeCard(e.cardId)?.name ?? '';
       return ev({ kind: 'search', text: `デッキから「${name}」を手札に！`, side: e.player, cardName: name, duration: 1275 });

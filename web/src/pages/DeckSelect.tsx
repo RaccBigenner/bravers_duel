@@ -62,6 +62,7 @@ export function DeckSelect({ onStart, onBack, custom, onBuild }: {
   const [importText, setImportText] = useState('');
   const [importError, setImportError] = useState('');
   const [imported, setImported] = useState<CustomDeck | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const customEntry = imported ?? custom;
 
@@ -103,13 +104,56 @@ export function DeckSelect({ onStart, onBack, custom, onBuild }: {
         </div>
         <div className="deck-list">
           {customEntry && (
-            <DeckTile
-              name={customEntry.name}
-              concept="自分で組んだカスタムデッキ"
-              deck={customEntry.deck}
-              selected={mineIdx === 'custom'}
-              onClick={() => setMineIdx('custom')}
-            />
+            <>
+              <DeckTile
+                name={customEntry.name}
+                concept="自分で組んだカスタムデッキ"
+                deck={customEntry.deck}
+                selected={mineIdx === 'custom'}
+                onClick={() => setMineIdx('custom')}
+              />
+              {/* 確定済みデッキもいつでも書き出し・編集できる */}
+              <div className="custom-deck-actions">
+                <button
+                  className="chip"
+                  onClick={async () => {
+                    const json = JSON.stringify(
+                      { name: customEntry.name, characterIds: customEntry.deck.characterIds, cardIds: customEntry.deck.cardIds },
+                      null,
+                      1,
+                    );
+                    try {
+                      await navigator.clipboard.writeText(json);
+                      setCopied(true);
+                      window.setTimeout(() => setCopied(false), 1500);
+                    } catch {
+                      /* クリップボード不可の環境 */
+                    }
+                  }}
+                >
+                  {copied ? 'コピーした！' : 'JSONコピー'}
+                </button>
+                <button
+                  className="chip"
+                  onClick={() => {
+                    const json = JSON.stringify(
+                      { name: customEntry.name, characterIds: customEntry.deck.characterIds, cardIds: customEntry.deck.cardIds },
+                      null,
+                      1,
+                    );
+                    const blob = new Blob([json], { type: 'application/json' });
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = `${customEntry.name || 'deck'}.json`;
+                    a.click();
+                    URL.revokeObjectURL(a.href);
+                  }}
+                >
+                  ファイル保存
+                </button>
+                <button className="chip" onClick={onBuild}>編集</button>
+              </div>
+            </>
           )}
           {all.map((d, i) => (
             <DeckTile

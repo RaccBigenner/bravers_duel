@@ -26,6 +26,8 @@ interface ArchetypeSpec {
   preferAttrs: Attribute[];
   /** 種類ごとの目安枚数（キャラカード6枚を除いた34枚の内訳） */
   quota?: { attack: number; guard: number; support: number; heal: number };
+  /** アーキタイプの「顔」になるコアカード（最優先でピン留め） */
+  core?: [string, number][];
 }
 
 // キャラカード6枚 + 装備2枚 + フィールド1枚 + スキル41枚 = 50枚
@@ -39,12 +41,14 @@ const SPECS: ArchetypeSpec[] = [
     concept: 'トランザードの闇5属性で重い闇スキルを叩き込む',
     characterIds: ['1-A004-USR', '1-A009-SR', '1-A006-USR'],
     preferAttrs: ['闇'],
+    core: [['1-A038-USR', 3]], // カオスフレア: 闇5属性でAoE+5の切り札
   },
   {
     name: '斬の勇者',
     concept: 'クラウディアとレオンの斬・聖で素直に殴る',
     characterIds: ['1-A003-USR', '1-A007-SSR', '1-A005-USR'],
     preferAttrs: ['斬', '聖', '雷'],
+    core: [['1-A059-R', 4]], // 大裂斬: 斬×2の主砲
   },
   {
     name: '氷結コントロール',
@@ -52,6 +56,7 @@ const SPECS: ArchetypeSpec[] = [
     characterIds: ['1-A008-SSR', '1-A018-R', '1-A013-SR'],
     preferAttrs: ['氷', '守'],
     quota: { attack: 16, guard: 13, support: 9, heal: 3 },
+    core: [['1-A066-R', 4], ['1-A069-R', 3]], // 氷強化ガード + ロック攻撃
   },
   {
     name: '竜の猛攻',
@@ -59,6 +64,7 @@ const SPECS: ArchetypeSpec[] = [
     characterIds: ['1-A002-LSR', '1-A020-R'], // ジエンドは大型で2枠
     preferAttrs: ['竜', '闇', '打'],
     quota: { attack: 24, guard: 5, support: 10, heal: 2 },
+    core: [['1-A042-SR', 3], ['1-A102-UC', 4]], // ドラゴンズメテオ + 全力補給（加速）
   },
   {
     name: '聖光の癒し',
@@ -66,18 +72,21 @@ const SPECS: ArchetypeSpec[] = [
     characterIds: ['1-A019-R', '1-A023-R', '1-A010-SR'],
     preferAttrs: ['聖', '木'],
     quota: { attack: 17, guard: 8, support: 8, heal: 8 },
+    core: [['1-A049-SR', 3], ['1-A040-USR', 2]], // 聖なる風（全体回復） + ティアグレイス（復活）
   },
   {
     name: '獣と風',
     concept: 'アイのドロー強化と獣・飛のすばやい攻めで手数を出す',
     characterIds: ['1-A001-LSR', '1-A022-R'], // アイは大型で2枠
     preferAttrs: ['獣', '風', '飛', '射'],
+    core: [['1-A136-C', 3]], // ジェット飛行: 飛び出して手札補充
   },
   {
     name: '突撃槍衾',
     concept: 'ストミーの突2属性で突スキルのスケーリングを活かす',
     characterIds: ['1-A011-SR', '1-A005-USR', '1-A020-R'],
     preferAttrs: ['突', '打'],
+    core: [['1-A044-SR', 3], ['1-A120-C', 4]], // サウザンドスパイク + コンボスタブ
   },
   {
     name: '雷土の重撃',
@@ -85,6 +94,7 @@ const SPECS: ArchetypeSpec[] = [
     characterIds: ['1-A021-R', '1-A017-R', '1-A015-SR'],
     preferAttrs: ['雷', '土', '打', '守'],
     quota: { attack: 18, guard: 11, support: 9, heal: 3 },
+    core: [['1-A057-R', 4]], // 打スケール攻撃+チャージ回収
   },
 ];
 
@@ -124,6 +134,9 @@ function buildDeck(spec: ArchetypeSpec, rules: DeckRules): DeckList {
 
   // 1. キャラクターカード2枚ずつ（回復札）
   for (const ch of chars) add(ch.id, 2);
+
+  // 1.2 アーキタイプのコアカードを最優先でピン留め
+  for (const [id, copies] of spec.core ?? []) add(id, copies);
 
   // 1.5 装備2枚（好み属性に合うもの）とフィールド1枚
   const equips = ALL_CARDS.filter((c) => c.type === 'equipment')
