@@ -747,7 +747,11 @@ function BattleInner({ setup, onExit, onRematch }: {
                 <button className="chip" onClick={() => setChargeSel(new Set())}>選び直す</button>
               </>
             ) : (
-              <button className="chip" onClick={() => act({ type: 'endTurn' })}>チャージせずターンエンド</button>
+              state.players[PLAYER].hand.length >= 5 && state.players[PLAYER].chargedThisTurn === 0 ? (
+                <span className="hint">手札が5枚以上: 1枚以上チャージしてください</span>
+              ) : (
+                <button className="chip" onClick={() => act({ type: 'endTurn' })}>チャージせずターンエンド</button>
+              )
             )}
           </>
         )}

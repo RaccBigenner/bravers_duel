@@ -59,6 +59,8 @@ export interface PlayerBattle {
   nextDrawDelta: number; // スノウドロップ等（マイナス値）。次のドローで消費
   actorLockUntilTurn: number; // state.turn がこの値以下の間、アクター変更不可
   incomingDamageReduction: { value: number; untilTurn: number } | null;
+  /** このターンのチャージフェーズでチャージした枚数（毎ターンリセット） */
+  chargedThisTurn: number;
 }
 
 export type Phase = 'choice' | 'play' | 'guard' | 'charge' | 'finished';
@@ -822,6 +824,7 @@ export function createBattle(
       nextDrawDelta: 0,
       actorLockUntilTurn: 0,
       incomingDamageReduction: null,
+      chargedThisTurn: 0,
     };
     return player;
   }) as [PlayerBattle, PlayerBattle];
@@ -879,6 +882,7 @@ export function createBattle(
 function beginTurn(state: BattleState): void {
   const p = state.players[state.active];
   p.skillsUsedThisTurn = 0;
+  p.chargedThisTurn = 0;
 
   // 任意のターン開始能力（アニマ等）は「ドローの前に1回だけ」選択する
   const hasManualChoice =
@@ -1110,8 +1114,12 @@ export function legalActions(state: BattleState): BattleAction[] {
   }
 
   if (state.phase === 'charge') {
-    state.players[state.active].hand.forEach((_, handIndex) => actions.push({ type: 'charge', handIndex }));
-    actions.push({ type: 'endTurn' });
+    const p = state.players[state.active];
+    p.hand.forEach((_, handIndex) => actions.push({ type: 'charge', handIndex }));
+    // 手札が5枚以上のままではターンを終えられない（1枚以上チャージ必須）
+    if (p.hand.length < HAND_REFILL_TO || p.chargedThisTurn > 0) {
+      actions.push({ type: 'endTurn' });
+    }
   }
 
   return actions;
@@ -1324,12 +1332,21 @@ export function applyAction(state: BattleState, action: BattleAction): void {
       const card = cardAtHand(p, action.handIndex);
       p.hand.splice(action.handIndex, 1);
       p.ap.push(card.id);
+      p.chargedThisTurn++;
       pushLog(state, `プレイヤー${state.active + 1}が${card.name}をチャージ（AP: ${p.ap.length}）`);
       emit(state, { t: 'chargeHand', player: state.active, cardId: card.id, ap: p.ap.length });
       return;
     }
 
     case 'endTurn': {
+      // 手札が5枚以上のままターンを終えることはできない（1枚以上のチャージが必須）。
+      // 手札を抱え込んで山札が動かず、バトルが進まなくなるのを防ぐ（2026-07-23 社長決定）
+      {
+        const p = state.players[state.active];
+        if (state.phase === 'charge' && p.hand.length >= HAND_REFILL_TO && p.chargedThisTurn === 0) {
+          throw new Error(`手札が${HAND_REFILL_TO}枚以上あるため、1枚以上チャージしてください`);
+        }
+      }
       requirePhase(state, 'charge');
       // ターン終了時の常時能力（ジエンド・ヤクビ・グロウ）
       const p = state.players[state.active];

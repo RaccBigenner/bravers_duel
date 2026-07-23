@@ -207,6 +207,11 @@ export function simpleAi(options: SimpleAiOptions = {}): BattleAi {
         const chargeIndex = chooseChargeIndex(p.hand, attrsByChar);
         return { type: 'charge', handIndex: chargeIndex };
       }
+      // ルール: 手札5枚以上のままターンは終えられない（1枚以上チャージ必須）
+      if (p.hand.length >= 5 && p.chargedThisTurn === 0) {
+        const chargeIndex = chooseChargeIndex(p.hand, attrsByChar);
+        return { type: 'charge', handIndex: chargeIndex };
+      }
       return { type: 'endTurn' };
     },
   };

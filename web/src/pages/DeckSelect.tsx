@@ -11,8 +11,7 @@ import { CardFrame } from '../CardFrame';
 import { IMG } from '../cardAssets';
 import type { CustomDeck } from './DeckBuilder';
 
-/** 敵に使うスタンダード4デッキ（要件: バランス中位の4種） */
-const ENEMY_DECK_NAMES = ['剣聖の一閃', '魔王の柩', '氷獄の女王', '聖歌隊'];
+// 敵デッキも自分と同じ8種の共通プリセットから選ぶ（2026-07-23 社長決定）
 
 /** メインキャラベースのデッキタイル */
 function DeckTile({ name, concept, deck, selected, onClick, onView, extra }: {
@@ -68,7 +67,7 @@ export function DeckSelect({ onStart, onBack, custom, onBuild }: {
   onBuild: () => void;
 }) {
   const all = useMemo(() => sampleArchetypeDecks(), []);
-  const enemies = all.filter((d) => ENEMY_DECK_NAMES.includes(d.name));
+  const enemies = all; // 敵も同じ8種
 
   const [mineIdx, setMineIdx] = useState<number | 'custom'>(custom ? 'custom' : 0);
   const [enemyIdx, setEnemyIdx] = useState<number | 'random'>('random');
@@ -115,9 +114,16 @@ export function DeckSelect({ onStart, onBack, custom, onBuild }: {
       <section>
         <div className="section-head">
           <h3>自分のデッキ</h3>
-          <button className="chip" onClick={onBuild}>デッキを作る</button>
         </div>
         <div className="deck-list">
+          {/* デッキ構築の入口も他のデッキと同じタイルサイズで置く */}
+          <button className="deck-tile build" onClick={onBuild}>
+            <div className="deck-tile-art random-art">＋</div>
+            <div className="deck-tile-info">
+              <b>デッキを作る</b>
+              <span className="deck-tile-concept">キャラ3枠とカード40枚を自由に構築</span>
+            </div>
+          </button>
           {customEntry && (
             <>
               <DeckTile
@@ -206,7 +212,7 @@ export function DeckSelect({ onStart, onBack, custom, onBuild }: {
             <div className="deck-tile-art random-art">？</div>
             <div className="deck-tile-info">
               <b>ランダム</b>
-              <span className="deck-tile-concept">4つのスタンダードデッキからおまかせ</span>
+              <span className="deck-tile-concept">スタンダード8デッキからおまかせ</span>
             </div>
           </button>
           {enemies.map((d) => {

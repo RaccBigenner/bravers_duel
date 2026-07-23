@@ -44,6 +44,15 @@ function giveAp(state: BattleState, player: PlayerIndex, count: number, cardId: 
 const atkCard = cardById(ATK) as SkillCard;
 const guardCard = cardById(GUARD) as SkillCard;
 
+/** ルール「手札5枚以上なら1枚以上チャージ必須」を満たしつつターンを終える */
+function endTurnCharging(state: BattleState) {
+  const pp = state.players[state.active];
+  if (pp.hand.length >= 5 && pp.chargedThisTurn === 0) {
+    applyAction(state, { type: 'charge', handIndex: pp.hand.length - 1 });
+  }
+  applyAction(state, { type: 'endTurn' });
+}
+
 describe('デッキのルール', () => {
   it('サンプルデッキはルールに合格する', () => {
     for (const seed of [1, 2, 3, 4, 5]) {
@@ -213,11 +222,11 @@ describe('ターン進行', () => {
     applyAction(state, { type: 'endPlay' });
     applyAction(state, { type: 'charge', handIndex: 0 });
     applyAction(state, { type: 'charge', handIndex: 0 });
-    applyAction(state, { type: 'endTurn' });
+    endTurnCharging(state);
     expect(state.active).toBe(1);
     expect(state.players[1].hand).toHaveLength(5);
     applyAction(state, { type: 'endPlay' });
-    applyAction(state, { type: 'endTurn' });
+    endTurnCharging(state);
     expect(state.players[0].hand).toHaveLength(5);
   });
 
@@ -226,7 +235,7 @@ describe('ターン進行', () => {
     state.players[1].deck = [];
     state.players[1].hand = state.players[1].hand.slice(0, 2);
     applyAction(state, { type: 'endPlay' });
-    applyAction(state, { type: 'endTurn' });
+    endTurnCharging(state);
     expect(state.phase).toBe('finished');
     expect(state.winner).toBe(0);
     expect(state.endReason).toBe('deckout');

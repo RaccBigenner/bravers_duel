@@ -1878,11 +1878,11 @@
     "type": "skill",
     "effectText": "敵全体に攻撃。",
     "flavorText": "",
-    "costAp": 2,
+    "costAp": 4,
     "conditionAttribute": [
       "竜"
     ],
-    "baseValue": 1,
+    "baseValue": 3,
     "valueType": "attack"
   },
   {
