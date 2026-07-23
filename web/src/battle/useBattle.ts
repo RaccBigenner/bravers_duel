@@ -77,9 +77,35 @@ function applyEventToView(view: BattleState, ev: NarrEvent): void {
       p.ap.push(...p.deck.splice(0, n));
       break;
     }
+    case 'chargeTrash': {
+      const n = Math.min(ev.amount ?? 1, p.trash.length);
+      p.ap.push(...p.trash.splice(0, n));
+      break;
+    }
+    case 'chargeAll': {
+      p.ap.push(...p.hand.splice(0));
+      break;
+    }
     case 'mill': {
       const n = Math.min(ev.amount ?? 1, p.deck.length);
       p.trash.push(...p.deck.splice(0, n));
+      break;
+    }
+    case 'apTrash': {
+      const n = Math.min(ev.amount ?? 1, p.ap.length);
+      p.trash.push(...p.ap.splice(0, n));
+      break;
+    }
+    case 'handTrash': {
+      p.trash.push(...p.hand.splice(0));
+      break;
+    }
+    case 'lock': {
+      if (ev.side !== undefined) p.actorLockUntilTurn = ev.amount ?? view.turn;
+      break;
+    }
+    case 'unlock': {
+      if (ev.side !== undefined) p.actorLockUntilTurn = 0;
       break;
     }
     case 'play':

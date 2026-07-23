@@ -15,6 +15,35 @@
     linear-gradient(#171a22, #10131b 45%, #171a22);
   overflow: hidden;
   position: relative;
+  /* ピンチズーム等で画面がずれて山札やAPが見えなくなるのを防ぐ */
+  touch-action: none;
+}
+
+/* 対象選択中は手札を触れなくして、盤面のキャラ選択を邪魔しない */
+.battle-root.targeting-mode .my-hand {
+  pointer-events: none;
+  opacity: 0.35;
+  filter: grayscale(0.5);
+  transition: opacity 0.2s ease;
+}
+
+/* アクターのロック表示（交代できない間ずっと出る） */
+.lock-badge {
+  position: absolute;
+  top: -10px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 16px;
+  background: rgba(20, 22, 30, 0.92);
+  border: 1px solid #a4f;
+  border-radius: 50%;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 8;
+  box-shadow: 0 0 8px rgba(170, 68, 255, 0.6);
 }
 
 .info-bar {
@@ -113,8 +142,15 @@
   box-shadow: 0 0 0 3px #6cf, 0 0 14px 4px rgba(80, 180, 255, 0.6);
   cursor: pointer;
 }
-.char-slot.selectable { animation: pulse 1s infinite alternate; }
-@keyframes pulse { from { transform: scale(1); } to { transform: scale(1.04); } }
+/* 注意: .char-slot 自体の transform はホイール配置に使っているので、
+ * アニメーションで transform を上書きしてはいけない（位置が壊れる）。
+ * 光らせるだけにして、タップしやすいよう重なり順も最前面へ。 */
+.char-slot.selectable { z-index: 40 !important; }
+.char-slot.selectable > div:first-child { animation: pulse-glow 0.9s infinite alternate; }
+@keyframes pulse-glow {
+  from { filter: brightness(1); }
+  to { filter: brightness(1.35) drop-shadow(0 0 6px rgba(80, 180, 255, 0.8)); }
+}
 
 .hp-chip {
   position: absolute;
@@ -379,7 +415,8 @@
   border-radius: 8px;
   margin: 8px 0;
   font-family: monospace;
-  font-size: 11px;
+  /* 16px未満だとiOSがフォーカス時に画面をズームして表示がずれる */
+  font-size: 16px;
   padding: 8px;
 }
 .error { color: #f88; font-size: 12px; }
@@ -470,7 +507,8 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
   border-radius: 8px;
   color: #dde;
   padding: 6px 10px;
-  font-size: 13px;
+  /* 16px未満だとiOSがフォーカス時に画面をズームして表示がずれる */
+  font-size: 16px;
   min-width: 120px;
 }
 .filter-row .count { font-size: 11px; color: #9ab; white-space: nowrap; }

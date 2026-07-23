@@ -87,7 +87,8 @@ input, textarea { -webkit-user-select: text; user-select: text; }
   color: #eee;
   border-radius: 6px;
   padding: 5px 10px;
-  font-size: 13px;
+  /* 16px未満だとiOSがフォーカス時に画面をズームして表示がずれる */
+  font-size: 16px;
   width: 220px;
 }
 
@@ -97,6 +98,7 @@ select {
   color: #eee;
   border-radius: 6px;
   padding: 4px 8px;
+  font-size: 16px;
 }
 
 .count { margin-left: auto; font-size: 13px; color: #aaa; }

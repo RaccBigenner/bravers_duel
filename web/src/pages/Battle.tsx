@@ -176,8 +176,20 @@ export function Battle({ setup, onExit, onRematch }: {
       case 'chargeDeck':
         spawnFlight(deckRefs[s].current, apRefs[s].current, current.amount ?? 1);
         break;
+      case 'chargeTrash':
+        spawnFlight(trashRefs[s].current, apRefs[s].current, current.amount ?? 1);
+        break;
+      case 'chargeAll':
+        spawnFlight(handRefs[s].current, apRefs[s].current, current.amount ?? 1);
+        break;
       case 'mill':
         spawnFlight(deckRefs[s].current, trashRefs[s].current, current.amount ?? 1);
+        break;
+      case 'apTrash':
+        spawnFlight(apRefs[s].current, trashRefs[s].current, current.amount ?? 1);
+        break;
+      case 'handTrash':
+        spawnFlight(handRefs[s].current, trashRefs[s].current, current.amount ?? 1);
         break;
       case 'play':
       case 'guard':
@@ -335,7 +347,7 @@ export function Battle({ setup, onExit, onRematch }: {
   const choicePhase = state.phase === 'choice' && isMyTurn && !busy;
 
   return (
-    <div className={`battle-root ${finished ? '' : isMyTurn ? 'my-turn' : 'enemy-turn'}`}>
+    <div className={`battle-root ${finished ? '' : isMyTurn ? 'my-turn' : 'enemy-turn'} ${targeting ? 'targeting-mode' : ''}`}>
       {/* ターンバッジ（常時表示） */}
       {!finished && (
         <div className={`turn-badge ${isMyTurn ? 'mine' : 'theirs'}`}>
@@ -664,6 +676,9 @@ function Formation({ side, state, pops, targeting, onTap, koShown, cardW, vfxLis
               <CardFrame card={cardById(c.cardId)} width={frontW} />
             </div>
             {koVisible && <img src={IMG('back')} className="ko-back" />}
+            {isActor && state.turn <= p.actorLockUntilTurn && (
+              <span className="lock-badge" title="ロック中: アクターを交代できない">🔒</span>
+            )}
             {c.equipmentCardId && (
               <span
                 className="equip-thumb"

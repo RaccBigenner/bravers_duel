@@ -208,6 +208,11 @@ function actorLocked(state: BattleState, player: PlayerIndex): boolean {
   return state.turn <= state.players[player].actorLockUntilTurn;
 }
 
+/** アクターがロック中か（UI表示用に公開） */
+export function isActorLocked(state: BattleState, player: PlayerIndex): boolean {
+  return actorLocked(state, player);
+}
+
 /** バトルが終了したか（効果処理の途中で決着した場合の検出用。TSの型絞り込みを避けるため関数にしている） */
 function battleOver(state: BattleState): boolean {
   return state.phase === 'finished';
@@ -306,37 +311,50 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
     },
 
     chargeFromDeck: (who, n) => {
-      const p = who === 'me' ? me() : enemy();
+      const idx = who === 'me' ? owner : enemyIdx;
+      const p = state.players[idx];
       const moved = p.deck.splice(0, clampN(n));
       p.ap.push(...moved);
-      if (moved.length > 0) pushLog(state, `デッキから${moved.length}枚チャージ（AP: ${p.ap.length}）`);
+      if (moved.length > 0) pushLog(state, `P${idx + 1}はデッキから${moved.length}枚チャージ（AP: ${p.ap.length}）`);
     },
     chargeAllHand: () => {
       const p = me();
+      const n = p.hand.length;
       p.ap.push(...p.hand.splice(0));
+      if (n > 0) pushLog(state, `P${owner + 1}は手札を全てチャージ（${n}枚）`);
     },
     chargeFromTrashBottom: (n) => {
       const p = me();
       const moved = p.trash.splice(0, clampN(n));
       p.ap.push(...moved);
+      if (moved.length > 0) pushLog(state, `P${owner + 1}はトラッシュから${moved.length}枚チャージ（AP: ${p.ap.length}）`);
     },
     drawCards: (who, n) => {
-      const p = who === 'me' ? me() : enemy();
+      const idx = who === 'me' ? owner : enemyIdx;
+      const p = state.players[idx];
+      const before = p.hand.length;
       p.hand.push(...p.deck.splice(0, clampN(n)));
+      const drawn = p.hand.length - before;
+      if (drawn > 0) pushLog(state, `プレイヤー${idx + 1}が${drawn}枚ドロー`);
     },
     discardHandAll: () => {
       const p = me();
+      const n = p.hand.length;
       p.trash.push(...p.hand.splice(0));
+      if (n > 0) pushLog(state, `P${owner + 1}は手札を全てトラッシュ（${n}枚）`);
     },
     millDeck: (who, n) => {
-      const p = who === 'me' ? me() : enemy();
+      const idx = who === 'me' ? owner : enemyIdx;
+      const p = state.players[idx];
       const moved = p.deck.splice(0, clampN(n));
       p.trash.push(...moved);
-      if (moved.length > 0) pushLog(state, `デッキから${moved.length}枚トラッシュ`);
+      if (moved.length > 0) pushLog(state, `P${idx + 1}のデッキから${moved.length}枚トラッシュ`);
     },
     discardEnemyAp: (n) => {
       const p = enemy();
-      p.trash.push(...p.ap.splice(0, clampN(n)));
+      const moved = p.ap.splice(0, clampN(n));
+      p.trash.push(...moved);
+      if (moved.length > 0) pushLog(state, `P${enemyIdx + 1}のAPから${moved.length}枚トラッシュ`);
     },
     damageEnemyActor: (n) => {
       applyDamage(state, enemyIdx, enemy().actorIndex, clampN(n));
@@ -360,7 +378,7 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
       // 全対象処理後にまとめて強制交代
       if (state.phase !== 'finished' && !isCharAlive(state, enemyIdx, enemy().actorIndex)) {
         enemy().actorIndex = nextAliveIndex(state, enemyIdx, enemy().actorIndex);
-        pushLog(state, `P${enemyIdx + 1}のアクターが${enemy().characters[enemy().actorIndex].name}に強制交代`);
+        pushLog(state, `P${enemyIdx + 1}のアクターが${enemy().characters[enemy().actorIndex].name}（${enemy().actorIndex + 1}番手）に強制交代`);
       }
     },
     damageTarget: (n) => {
@@ -408,12 +426,14 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
     },
     lockEnemyActor: () => {
       enemy().actorLockUntilTurn = state.turn + 1;
-      pushLog(state, `相手のアクターをロック（ターン${state.turn + 1}終了まで）`);
+      pushLog(state, `P${enemyIdx + 1}のアクターをロック（ターン${state.turn + 1}終了まで）`);
     },
     lockMyActor: () => {
       me().actorLockUntilTurn = state.turn + 1;
+      pushLog(state, `P${owner + 1}のアクターをロック（ターン${state.turn + 1}終了まで）`);
     },
     unlockMyActor: () => {
+      if (actorLocked(state, owner)) pushLog(state, `P${owner + 1}のアクターのロックを解除`);
       me().actorLockUntilTurn = 0;
     },
     forceChangeEnemyActor: () => {
@@ -423,7 +443,7 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
       }
       const p = enemy();
       p.actorIndex = nextAliveIndex(state, enemyIdx, p.actorIndex, rotationSkip(state, enemyIdx));
-      pushLog(state, `相手のアクターが${p.characters[p.actorIndex].name}に変更`);
+      pushLog(state, `P${enemyIdx + 1}のアクターが${p.characters[p.actorIndex].name}（${p.actorIndex + 1}番手）に変更`);
     },
     changeMyActor: (skip = 0) => {
       if (actorLocked(state, owner)) {
@@ -432,13 +452,13 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
       }
       const p = me();
       p.actorIndex = nextAliveIndex(state, owner, p.actorIndex, skip);
-      pushLog(state, `プレイヤー${owner + 1}のアクターが${p.characters[p.actorIndex].name}に交代`);
+      pushLog(state, `プレイヤー${owner + 1}のアクターが${p.characters[p.actorIndex].name}（${p.actorIndex + 1}番手）に交代`);
       state.skipRotationFor = owner; // 効果でアクターを動かしたので自動交代はしない
     },
     becomeActor: () => {
       if (isCharAlive(state, owner, ownerChar)) {
         me().actorIndex = ownerChar;
-        pushLog(state, `プレイヤー${owner + 1}のアクターが${me().characters[ownerChar].name}に交代`);
+        pushLog(state, `プレイヤー${owner + 1}のアクターが${me().characters[ownerChar].name}（${ownerChar + 1}番手）に交代`);
         state.skipRotationFor = owner; // 効果でアクターを決めたので自動交代はしない
       }
     },
@@ -491,6 +511,7 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
       const p = me();
       const n = p.ap.length;
       p.trash.push(...p.ap.splice(0));
+      if (n > 0) pushLog(state, `P${owner + 1}のAPから${n}枚トラッシュ`);
       return n;
     },
     damageSelf: (n) => {
@@ -589,7 +610,7 @@ function applyDamage(
     // 全体攻撃などの複数対象処理中は、処理が終わるまで陣形を維持する（deferForcedSwitch）
     if (charIndex === p.actorIndex && !deferForcedSwitch) {
       p.actorIndex = nextAliveIndex(state, player, p.actorIndex);
-      pushLog(state, `P${player + 1}のアクターが${p.characters[p.actorIndex].name}に強制交代`);
+      pushLog(state, `P${player + 1}のアクターが${p.characters[p.actorIndex].name}（${p.actorIndex + 1}番手）に強制交代`);
     }
   }
   return actual;
@@ -693,6 +714,10 @@ export function createBattle(
     log: [`バトル開始。先攻: プレイヤー${firstPlayer + 1}`],
     logSeq: 1,
   };
+  pushLog(
+    state,
+    `後攻のP${(1 - firstPlayer) + 1}はデッキから${SECOND_PLAYER_STARTING_AP}枚チャージ（AP: ${second.ap.length}）`,
+  );
 
   // バトル開始時の常時能力（先攻側から）
   for (const pIdx of [firstPlayer, (1 - firstPlayer) as PlayerIndex]) {
@@ -1261,7 +1286,7 @@ function resolvePendingAttack(state: BattleState): void {
   // 全対象の処理が終わってからアクターの強制交代
   if (!battleOver(state) && !isCharAlive(state, defenderIdx, defender.actorIndex)) {
     defender.actorIndex = nextAliveIndex(state, defenderIdx, defender.actorIndex);
-    pushLog(state, `P${defenderIdx + 1}のアクターが${defender.characters[defender.actorIndex].name}に強制交代`);
+    pushLog(state, `P${defenderIdx + 1}のアクターが${defender.characters[defender.actorIndex].name}（${defender.actorIndex + 1}番手）に強制交代`);
   }
 
   if (!battleOver(state)) {
@@ -1305,6 +1330,6 @@ function rotateActorAfterSkill(state: BattleState, player: PlayerIndex): void {
   const before = p.actorIndex;
   p.actorIndex = nextAliveIndex(state, player, p.actorIndex, rotationSkip(state, player));
   if (p.actorIndex !== before) {
-    pushLog(state, `プレイヤー${player + 1}のアクターが${p.characters[p.actorIndex].name}に交代`);
+    pushLog(state, `プレイヤー${player + 1}のアクターが${p.characters[p.actorIndex].name}（${p.actorIndex + 1}番手）に交代`);
   }
 }
