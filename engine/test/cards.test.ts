@@ -24,10 +24,10 @@ describe('カードマスターデータ', () => {
     expect(() => cardById('存在しないID')).toThrow();
   });
 
-  it('効果なしスキルの基本値は (1+コスト)×2−1＋(条件属性数−1)、guardはさらに+1（バランス調整v2）', () => {
+  it('効果なしスキルの基本値は (1+コスト)×2−1＋(条件属性数−1)、盾（守属性guard）はさらに+1（バランス調整v2）', () => {
     for (const c of ALL_CARDS) {
       if (c.type === 'skill' && c.effectText === '') {
-        const guardBonus = c.valueType === 'guard' ? 1 : 0;
+        const guardBonus = c.valueType === 'guard' && c.conditionAttribute.includes('守') ? 1 : 0;
         const expected = (c.costAp + 1) * 2 - 1 + (c.conditionAttribute.length - 1) + guardBonus;
         expect(c.baseValue, `${c.id} ${c.name}`).toBe(expected);
       }

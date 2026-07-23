@@ -79,8 +79,9 @@ export function simpleAi(options: SimpleAiOptions = {}): BattleAi {
 
         // アクターが落ちるなら、生き残れる場合に必ずガード
         if (wouldDie && pending.value - best.value < actorHp) return best.action;
-        // 落ちないなら、3以上のダメージをコスト効率よく削れる時だけガード
-        if (!wouldDie && pending.value >= 3 && best.value >= best.cost * 2) return best.action;
+        // 落ちないなら、4以上のダメージをコスト効率よく削れる時だけガード
+        // （軽いダメージまでガードすると膠着して山札切れに向かうため）
+        if (!wouldDie && pending.value >= 4 && best.value >= best.cost * 2) return best.action;
         return { type: 'pass' };
       }
 
@@ -113,7 +114,7 @@ export function simpleAi(options: SimpleAiOptions = {}): BattleAi {
           if (pred.kind === 'attack') {
             if (pred.value > 0) {
               // 修正込みダメージ × 対象数。リーサルを強く優先
-              score = pred.value * Math.max(1, pred.targets) * 10 - pred.cost * 4;
+              score = pred.value * Math.max(1, pred.targets) * 10 - pred.cost * 2;
               const targetIdx =
                 action.targetIndex ??
                 (isCharAlive(state, enemyIdx, enemy.actorIndex) ? enemy.actorIndex : -1);
@@ -157,11 +158,20 @@ export function simpleAi(options: SimpleAiOptions = {}): BattleAi {
       }
 
       // ---------- チャージフェーズ ----------
-      if (p.hand.length > keepHand) {
-        const chargeIndex = chooseChargeIndex(
-          p.hand,
-          p.characters.map((c) => [...c.attributes, ...c.addedAttributes]),
-        );
+      // 重要: チャージした枚数だけ次のターンのドローが増え、山札が早く減る。
+      // 人間のように「使う予定のAPまで」しかチャージしない（山札切れ自滅の防止）。
+      const attrsByChar = p.characters.map((c) => [...c.attributes, ...c.addedAttributes]);
+      const usableCosts = p.hand
+        .map((id) => cardById(id))
+        .filter(
+          (c): c is Extract<typeof c, { type: 'skill' }> =>
+            c.type === 'skill' && attrsByChar.some((attrs) => containsAll(attrs, c.conditionAttribute)),
+        )
+        .map((c) => c.costAp);
+      // 目標AP = 手札で一番重い使えるスキルのコスト+2（何も使えないなら3）
+      const targetAp = Math.min(9, (usableCosts.length > 0 ? Math.max(...usableCosts) : 1) + 3);
+      if (p.ap.length < targetAp && p.hand.length > keepHand) {
+        const chargeIndex = chooseChargeIndex(p.hand, attrsByChar);
         return { type: 'charge', handIndex: chargeIndex };
       }
       return { type: 'endTurn' };

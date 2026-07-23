@@ -1034,7 +1034,7 @@
     "conditionAttribute": [
       "氷"
     ],
-    "baseValue": 4,
+    "baseValue": 3,
     "valueType": "guard"
   },
   {
@@ -1183,7 +1183,7 @@
     "conditionAttribute": [
       "闇"
     ],
-    "baseValue": 6,
+    "baseValue": 5,
     "valueType": "guard"
   },
   {
@@ -1657,7 +1657,7 @@
     "conditionAttribute": [
       "土"
     ],
-    "baseValue": 6,
+    "baseValue": 5,
     "valueType": "guard"
   },
   {
@@ -1963,7 +1963,7 @@
     "conditionAttribute": [
       "斬"
     ],
-    "baseValue": 4,
+    "baseValue": 3,
     "valueType": "guard"
   },
   {
@@ -1979,7 +1979,7 @@
     "conditionAttribute": [
       "突"
     ],
-    "baseValue": 4,
+    "baseValue": 3,
     "valueType": "guard"
   },
   {
@@ -2142,7 +2142,7 @@
     "conditionAttribute": [
       "雷"
     ],
-    "baseValue": 2,
+    "baseValue": 1,
     "valueType": "guard"
   },
   {
@@ -2191,7 +2191,7 @@
     "conditionAttribute": [
       "飛"
     ],
-    "baseValue": 1,
+    "baseValue": 0,
     "valueType": "guard"
   },
   {
