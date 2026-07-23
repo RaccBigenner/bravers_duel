@@ -901,7 +901,7 @@
     "conditionAttribute": [
       "雷"
     ],
-    "baseValue": 5,
+    "baseValue": 7,
     "valueType": "attack"
   },
   {
@@ -985,7 +985,7 @@
       "炎",
       "氷"
     ],
-    "baseValue": 8,
+    "baseValue": 9,
     "valueType": "attack"
   },
   {
@@ -1267,7 +1267,7 @@
       "斬",
       "雷"
     ],
-    "baseValue": 2,
+    "baseValue": 4,
     "valueType": "attack"
   },
   {
@@ -1834,7 +1834,7 @@
     "conditionAttribute": [
       "雷"
     ],
-    "baseValue": 3,
+    "baseValue": 4,
     "valueType": "attack"
   },
   {
@@ -2142,7 +2142,7 @@
     "conditionAttribute": [
       "雷"
     ],
-    "baseValue": 0,
+    "baseValue": 1,
     "valueType": "guard"
   },
   {
