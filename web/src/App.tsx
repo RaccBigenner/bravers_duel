@@ -31,6 +31,16 @@ export function App() {
   const [view, setView] = useState<View>({ name: 'home' });
   const [customDeck, setCustomDeck] = useState<CustomDeck | null>(null);
 
+  // 公開βのログ: 全ページのアクセスを記録（どこから来たかも）
+  useEffect(() => {
+    logEvent('page_view', {
+      page: view.name,
+      ...(view.name === 'sharedLog' ? { sharedLog: `${view.log.pd} vs ${view.log.ed}` } : {}),
+      ...(document.referrer ? { referrer: document.referrer } : {}),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view.name]);
+
   // シェアされたバトルログURL（#log=…）で開かれたらプレビューを表示
   // （開いた時 + 開いたままURLを貼られた時の両方）
   useEffect(() => {
