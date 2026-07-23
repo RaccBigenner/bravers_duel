@@ -1,24 +1,69 @@
-import { deckProblems, sampleArchetypeDecks, type DeckList } from '@bravers/engine';
+import {
+  cardById,
+  deckProblems,
+  sampleArchetypeDecks,
+  type CharacterCard,
+  type DeckList,
+} from '@bravers/engine';
 import { useMemo, useState } from 'react';
 import type { BattleSetup } from '../App';
+import { IMG } from '../cardAssets';
+import type { CustomDeck } from './DeckBuilder';
 
 /** 敵に使うスタンダード4デッキ（要件: バランス中位の4種） */
 const ENEMY_DECK_NAMES = ['斬の勇者', '闇単アグロ', '氷結コントロール', '聖光の癒し'];
 
-export function DeckSelect({ onStart, onBack }: {
+/** メインキャラベースのデッキタイル */
+function DeckTile({ name, concept, deck, selected, onClick, extra }: {
+  name: string;
+  concept: string;
+  deck: DeckList;
+  selected: boolean;
+  onClick: () => void;
+  extra?: React.ReactNode;
+}) {
+  const main = deck.characterIds[0] ? (cardById(deck.characterIds[0]) as CharacterCard) : null;
+  return (
+    <button className={`deck-tile ${selected ? 'on' : ''}`} onClick={onClick}>
+      {main && (
+        <div className="deck-tile-art" style={{ backgroundImage: `url(${IMG(main.id)})` }} />
+      )}
+      <div className="deck-tile-info">
+        <b>{name}</b>
+        <span className="deck-tile-concept">{concept}</span>
+        <div className="deck-tile-chars">
+          {deck.characterIds.map((id) => {
+            const c = cardById(id) as CharacterCard;
+            return (
+              <span key={id} className="deck-tile-char" title={c.name}>
+                <img src={IMG(id)} alt={c.name} />
+              </span>
+            );
+          })}
+          <span className="deck-tile-main">{main?.name.replace(/^\[[^\]]*\]/, '')}</span>
+        </div>
+      </div>
+      {extra}
+    </button>
+  );
+}
+
+export function DeckSelect({ onStart, onBack, custom, onBuild }: {
   onStart: (setup: BattleSetup) => void;
   onBack: () => void;
+  custom: CustomDeck | null;
+  onBuild: () => void;
 }) {
   const all = useMemo(() => sampleArchetypeDecks(), []);
   const enemies = all.filter((d) => ENEMY_DECK_NAMES.includes(d.name));
 
-  const [mineIdx, setMineIdx] = useState(0);
+  const [mineIdx, setMineIdx] = useState<number | 'custom'>(custom ? 'custom' : 0);
   const [enemyIdx, setEnemyIdx] = useState<number | 'random'>('random');
-  const [imported, setImported] = useState<{ name: string; deck: DeckList } | null>(null);
   const [importText, setImportText] = useState('');
   const [importError, setImportError] = useState('');
+  const [imported, setImported] = useState<CustomDeck | null>(null);
 
-  const useImported = imported !== null && mineIdx === -1;
+  const customEntry = imported ?? custom;
 
   function tryImport(text: string) {
     try {
@@ -30,7 +75,7 @@ export function DeckSelect({ onStart, onBack }: {
         return;
       }
       setImported({ name: json.name || '読み込んだデッキ', deck });
-      setMineIdx(-1);
+      setMineIdx('custom');
       setImportError('');
     } catch {
       setImportError('JSONが読み取れませんでした');
@@ -39,8 +84,8 @@ export function DeckSelect({ onStart, onBack }: {
 
   function start() {
     const enemy = enemyIdx === 'random' ? enemies[Math.floor(Math.random() * enemies.length)] : enemies[enemyIdx];
-    const playerDeck = useImported ? imported!.deck : all[mineIdx].deck;
-    const playerDeckName = useImported ? imported!.name : all[mineIdx].name;
+    const playerDeck = mineIdx === 'custom' && customEntry ? customEntry.deck : all[mineIdx === 'custom' ? 0 : mineIdx].deck;
+    const playerDeckName = mineIdx === 'custom' && customEntry ? customEntry.name : all[mineIdx === 'custom' ? 0 : mineIdx].name;
     onStart({ playerDeck, playerDeckName, enemy });
   }
 
@@ -52,27 +97,30 @@ export function DeckSelect({ onStart, onBack }: {
       </header>
 
       <section>
-        <h3>自分のデッキ</h3>
+        <div className="section-head">
+          <h3>自分のデッキ</h3>
+          <button className="chip" onClick={onBuild}>🛠 デッキを作る</button>
+        </div>
         <div className="deck-list">
-          {all.map((d, i) => (
-            <button
-              key={d.name}
-              className={mineIdx === i ? 'deck-item on' : 'deck-item'}
-              onClick={() => setMineIdx(i)}
-            >
-              <b>{d.name}</b>
-              <span>{d.concept}</span>
-            </button>
-          ))}
-          {imported && (
-            <button
-              className={useImported ? 'deck-item on' : 'deck-item'}
-              onClick={() => setMineIdx(-1)}
-            >
-              <b>{imported.name}</b>
-              <span>JSONから読み込んだデッキ</span>
-            </button>
+          {customEntry && (
+            <DeckTile
+              name={customEntry.name}
+              concept="自分で組んだカスタムデッキ"
+              deck={customEntry.deck}
+              selected={mineIdx === 'custom'}
+              onClick={() => setMineIdx('custom')}
+            />
           )}
+          {all.map((d, i) => (
+            <DeckTile
+              key={d.name}
+              name={d.name}
+              concept={d.concept}
+              deck={d.deck}
+              selected={mineIdx === i}
+              onClick={() => setMineIdx(i)}
+            />
+          ))}
         </div>
         <details className="import-box">
           <summary>デッキJSONを読み込む</summary>
@@ -91,26 +139,32 @@ export function DeckSelect({ onStart, onBack }: {
         <h3>相手のデッキ</h3>
         <div className="deck-list">
           <button
-            className={enemyIdx === 'random' ? 'deck-item on' : 'deck-item'}
+            className={`deck-tile random ${enemyIdx === 'random' ? 'on' : ''}`}
             onClick={() => setEnemyIdx('random')}
           >
-            <b>ランダム</b>
-            <span>4つのスタンダードデッキからおまかせ</span>
+            <div className="deck-tile-art random-art">？</div>
+            <div className="deck-tile-info">
+              <b>ランダム</b>
+              <span className="deck-tile-concept">4つのスタンダードデッキからおまかせ</span>
+            </div>
           </button>
-          {enemies.map((d, i) => (
-            <button
-              key={d.name}
-              className={enemyIdx === i ? 'deck-item on' : 'deck-item'}
-              onClick={() => setEnemyIdx(i)}
-            >
-              <b>{d.name}</b>
-              <span>{d.concept}</span>
-            </button>
-          ))}
+          {enemies.map((d) => {
+            const i = enemies.indexOf(d);
+            return (
+              <DeckTile
+                key={d.name}
+                name={d.name}
+                concept={d.concept}
+                deck={d.deck}
+                selected={enemyIdx === i}
+                onClick={() => setEnemyIdx(i)}
+              />
+            );
+          })}
         </div>
       </section>
 
-      <button className="big-btn" onClick={start}>バトル開始</button>
+      <button className="big-btn start-btn" onClick={start}>バトル開始</button>
     </div>
   );
 }

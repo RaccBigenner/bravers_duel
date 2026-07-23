@@ -103,6 +103,11 @@ function buildDeck(spec: ArchetypeSpec, rules: DeckRules): DeckList {
     return attrFit * 10 + efficiency + hasEffect;
   };
 
+  // 「回るデッキ」のためのコストカーブ配分（attack枠の内訳）
+  // 低コスト(0-1)で序盤を動かし、中コスト(2-3)を主軸に、高コスト(4+)は切り札だけ
+  const curveShare = { low: 0.3, mid: 0.45, high: 0.25 };
+  const costBand = (s: SkillCard) => (s.costAp <= 1 ? 'low' : s.costAp <= 3 ? 'mid' : 'high');
+
   const cardIds: string[] = [];
   const counts = new Map<string, number>();
   const add = (id: string, copies: number): number => {
@@ -146,13 +151,42 @@ function buildDeck(spec: ArchetypeSpec, rules: DeckRules): DeckList {
     fieldTaken += add(f.id, 1);
   }
 
-  // 2. 種類ごとに、点数の高い順に3枚ずつ
+  // 2. 種類ごとに、点数の高い順に取る。attackはコストカーブを守って序盤〜終盤が回るように
   for (const [type, want] of Object.entries(quota) as [SkillCard['valueType'], number][]) {
     const pool = usable.filter((s) => s.valueType === type).sort((a, b) => score(b) - score(a));
-    let taken = 0;
-    for (const s of pool) {
-      if (taken >= want) break;
-      taken += add(s.id, Math.min(rules.maxCopies, want - taken));
+    if (type === 'attack') {
+      const bandWant: Record<string, number> = {
+        low: Math.round(want * curveShare.low),
+        mid: Math.round(want * curveShare.mid),
+        high: 0,
+      };
+      bandWant.high = Math.max(0, want - bandWant.low - bandWant.mid);
+      const bandTaken: Record<string, number> = { low: 0, mid: 0, high: 0 };
+      let taken = 0;
+      // 1周目: バンドの枠内で取る
+      for (const s of pool) {
+        if (taken >= want) break;
+        const band = costBand(s);
+        if (bandTaken[band] >= bandWant[band]) continue;
+        const got = add(s.id, Math.min(rules.maxCopies, want - taken, bandWant[band] - bandTaken[band]));
+        bandTaken[band] += got;
+        taken += got;
+      }
+      // 2周目: 枠が余ったら低コスト優先で埋める（重さで詰まらないように）
+      if (taken < want) {
+        for (const s of [...pool].sort((a, b) => a.costAp - b.costAp)) {
+          if (taken >= want) break;
+          taken += add(s.id, Math.min(rules.maxCopies, want - taken));
+        }
+      }
+    } else {
+      // guard/support/heal は軽いカードを優先（重いguardは腐りやすい）
+      const sorted = [...pool].sort((a, b) => score(b) - score(a) + (a.costAp - b.costAp) * 1.5);
+      let taken = 0;
+      for (const s of sorted) {
+        if (taken >= want) break;
+        taken += add(s.id, Math.min(rules.maxCopies, want - taken));
+      }
     }
   }
 
