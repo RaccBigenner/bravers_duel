@@ -7,6 +7,7 @@ import {
 } from '@bravers/engine';
 import { useMemo, useState } from 'react';
 import type { BattleSetup } from '../App';
+import { CardFrame } from '../CardFrame';
 import { IMG } from '../cardAssets';
 import type { CustomDeck } from './DeckBuilder';
 
@@ -14,12 +15,13 @@ import type { CustomDeck } from './DeckBuilder';
 const ENEMY_DECK_NAMES = ['剣聖の一閃', '魔王の柩', '氷獄の女王', '聖歌隊'];
 
 /** メインキャラベースのデッキタイル */
-function DeckTile({ name, concept, deck, selected, onClick, extra }: {
+function DeckTile({ name, concept, deck, selected, onClick, onView, extra }: {
   name: string;
   concept: string;
   deck: DeckList;
   selected: boolean;
   onClick: () => void;
+  onView?: () => void;
   extra?: React.ReactNode;
 }) {
   const main = deck.characterIds[0] ? (cardById(deck.characterIds[0]) as CharacterCard) : null;
@@ -43,6 +45,17 @@ function DeckTile({ name, concept, deck, selected, onClick, extra }: {
           <span className="deck-tile-main">{main?.name.replace(/^\[[^\]]*\]/, '')}</span>
         </div>
       </div>
+      {onView && (
+        <span
+          className="chip small deck-view"
+          onClick={(e) => {
+            e.stopPropagation();
+            onView();
+          }}
+        >
+          中身
+        </span>
+      )}
       {extra}
     </button>
   );
@@ -63,6 +76,8 @@ export function DeckSelect({ onStart, onBack, custom, onBuild }: {
   const [importError, setImportError] = useState('');
   const [imported, setImported] = useState<CustomDeck | null>(null);
   const [copied, setCopied] = useState(false);
+  const [viewDeck, setViewDeck] = useState<{ name: string; deck: DeckList } | null>(null);
+  const [zoomCard, setZoomCard] = useState<string | null>(null);
 
   const customEntry = imported ?? custom;
 
@@ -111,6 +126,7 @@ export function DeckSelect({ onStart, onBack, custom, onBuild }: {
                 deck={customEntry.deck}
                 selected={mineIdx === 'custom'}
                 onClick={() => setMineIdx('custom')}
+                onView={() => setViewDeck(customEntry)}
               />
               {/* 確定済みデッキもいつでも書き出し・編集できる */}
               <div className="custom-deck-actions">
@@ -163,6 +179,7 @@ export function DeckSelect({ onStart, onBack, custom, onBuild }: {
               deck={d.deck}
               selected={mineIdx === i}
               onClick={() => setMineIdx(i)}
+              onView={() => setViewDeck(d)}
             />
           ))}
         </div>
@@ -202,6 +219,7 @@ export function DeckSelect({ onStart, onBack, custom, onBuild }: {
                 deck={d.deck}
                 selected={enemyIdx === i}
                 onClick={() => setEnemyIdx(i)}
+                onView={() => setViewDeck(d)}
               />
             );
           })}
@@ -209,6 +227,47 @@ export function DeckSelect({ onStart, onBack, custom, onBuild }: {
       </section>
 
       <button className="big-btn start-btn" onClick={start}>バトル開始</button>
+
+      {/* デッキの中身閲覧 */}
+      {viewDeck && (
+        <div className="overlay" onClick={() => setViewDeck(null)}>
+          <div className="dialog deck-view-dialog" onClick={(e) => e.stopPropagation()}>
+            <h3>{viewDeck.name}</h3>
+            <div className="deck-view-scroll">
+              <p className="deck-view-label">キャラクター</p>
+              <div className="deck-view-grid">
+                {viewDeck.deck.characterIds.map((id, i) => (
+                  <div key={`c${i}`} className="deck-view-card" onClick={() => setZoomCard(id)}>
+                    <CardFrame card={cardById(id)} width={74} upright />
+                  </div>
+                ))}
+              </div>
+              <p className="deck-view-label">デッキ（{viewDeck.deck.cardIds.length}枚）</p>
+              <div className="deck-view-grid">
+                {[...new Map(viewDeck.deck.cardIds.map((id) => [id, viewDeck.deck.cardIds.filter((x) => x === id).length])).entries()]
+                  .sort(([a], [b]) => a.localeCompare(b))
+                  .map(([id, n]) => (
+                    <div key={id} className="deck-view-card" onClick={() => setZoomCard(id)}>
+                      <CardFrame card={cardById(id)} width={74} upright />
+                      <span className="deck-view-count">×{n}</span>
+                    </div>
+                  ))}
+              </div>
+            </div>
+            <button className="chip" onClick={() => setViewDeck(null)}>とじる</button>
+          </div>
+        </div>
+      )}
+
+      {/* カード拡大 */}
+      {zoomCard && (
+        <div className="overlay preview" onClick={() => setZoomCard(null)}>
+          <div className="preview-inner" onClick={(e) => e.stopPropagation()}>
+            <CardFrame card={cardById(zoomCard)} width={Math.min(300, Math.max(230, window.innerWidth * 0.72))} upright />
+            <button className="chip" onClick={() => setZoomCard(null)}>とじる</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
