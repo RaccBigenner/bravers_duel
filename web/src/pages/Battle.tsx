@@ -31,9 +31,17 @@ type Targeting = {
 function useViewportHeight(): number {
   const [vh, setVh] = useState(() => window.innerHeight);
   useEffect(() => {
-    const onResize = () => setVh(window.innerHeight);
+    // リサイズは間引く（頻繁なレイアウト変更で画面がガタつくのを防ぐ）
+    let timer = 0;
+    const onResize = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => setVh(window.innerHeight), 180);
+    };
     window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('resize', onResize);
+    };
   }, []);
   return vh;
 }
@@ -424,9 +432,20 @@ export function Battle({ setup, onExit, onRematch }: {
         <div className="board" ref={boardRef}>
           {/* 相手の手札（裏向きの扇） */}
           <div className="enemy-hand" ref={handRefE}>
-            {foe.hand.map((_, i) => (
-              <img key={i} src={IMG('back')} className="hand-back" style={{ marginLeft: i === 0 ? 0 : -22 }} />
-            ))}
+            {foe.hand.map((_, i) => {
+              const off = i - (foe.hand.length - 1) / 2;
+              return (
+                <img
+                  key={i}
+                  src={IMG('back')}
+                  className="hand-back"
+                  style={{
+                    marginLeft: i === 0 ? 0 : -22,
+                    transform: `translateY(${Math.round(off * off * 1.4)}px) rotate(${180 - off * 5}deg)`,
+                  }}
+                />
+              );
+            })}
           </div>
 
           {/* 相手エリア: 左にゾーン（鏡写し）、右に陣形 */}
@@ -470,38 +489,56 @@ export function Battle({ setup, onExit, onRematch }: {
         </div>
       </div>
 
-      {/* 自分の手札（手に持っているので傾けない） */}
-      <div className="my-hand" ref={handRefP}>
-        {me.hand.map((id, i) => {
-          const card = safeCard(id);
-          if (!card) return null;
-          const playable = isMyTurn && state.phase === 'play' && handPlayable.has(i);
-          const chargeable = isMyTurn && state.phase === 'charge' && !busy;
-          const picked = chargeSel.has(i);
-          const showCost = card.type === 'skill' && isMyTurn && state.phase === 'play' && !busy;
-          const lackAp = card.type === 'skill' && me.ap.length < card.costAp;
-          return (
-            <div
-              key={`${id}-${i}`}
-              className={[
-                'hand-card',
-                picked ? 'raised' : '',
-                playable || chargeable ? 'playable' : '',
-              ].join(' ')}
-              style={{ marginLeft: i === 0 ? 0 : -Math.round(handW * 0.37), zIndex: i }}
-              onClick={() => tapHand(i)}
-              {...longPressHandlers(() => setZoomCard(id))}
-            >
-              <CardFrame card={card} width={handW} upright />
-              {picked && <span className="pick-badge">⚡</span>}
-              {showCost && (
-                <span className={`cost-chip ${lackAp ? 'lack' : ''}`} title={lackAp ? 'APが足りない' : `コスト${card.costAp}`}>
-                  {card.costAp}
-                </span>
-              )}
-            </div>
-          );
-        })}
+      {/* 自分の手札（扇状に持つ。カードの増減はキーを固定してなめらかに詰める） */}
+      <div className="my-hand" ref={handRefP} style={{ height: Math.round(handW * 1.52) }}>
+        {(() => {
+          const seen = new Map<string, number>();
+          const n = me.hand.length;
+          const step = Math.round(handW * 0.63);
+          return me.hand.map((id, i) => {
+            // 同名カードは「何枚目か」でキーを固定する（indexキーだと全カードが
+            // 再マウントされて手札全体がガタつく）
+            const nth = seen.get(id) ?? 0;
+            seen.set(id, nth + 1);
+            const card = safeCard(id);
+            if (!card) return null;
+            const playable = isMyTurn && state.phase === 'play' && handPlayable.has(i);
+            const chargeable = isMyTurn && state.phase === 'charge' && !busy;
+            const picked = chargeSel.has(i);
+            const showCost = card.type === 'skill' && isMyTurn && state.phase === 'play' && !busy;
+            const lackAp = card.type === 'skill' && me.ap.length < card.costAp;
+            const off = i - (n - 1) / 2;
+            const arcRot = off * 4;
+            const arcY = off * off * 2.4 + (picked ? -26 : 0);
+            return (
+              <div
+                key={`${id}#${nth}`}
+                className={[
+                  'hand-card',
+                  picked ? 'raised' : '',
+                  playable || chargeable ? 'playable' : '',
+                ].join(' ')}
+                style={{
+                  left: `calc(50% + ${Math.round(off * step)}px)`,
+                  top: 8,
+                  zIndex: i,
+                  transform: `translateX(-50%) rotate(${arcRot}deg) translateY(${Math.round(arcY)}px)${picked ? ' scale(1.08)' : ''}`,
+                  transformOrigin: '50% 115%',
+                }}
+                onClick={() => tapHand(i)}
+                {...longPressHandlers(() => setZoomCard(id))}
+              >
+                <CardFrame card={card} width={handW} upright />
+                {picked && <span className="pick-badge">⚡</span>}
+                {showCost && (
+                  <span className={`cost-chip ${lackAp ? 'lack' : ''}`} title={lackAp ? 'APが足りない' : `コスト${card.costAp}`}>
+                    {card.costAp}
+                  </span>
+                )}
+              </div>
+            );
+          });
+        })()}
       </div>
 
       {/* アクションバー */}
@@ -832,7 +869,7 @@ function ZoneCol({ side, p, deckRef, apRef, trashRef, onOpenPile }: {
   const deck = (
     <div className="pile deck" ref={deckRef} key="deck">
       <img src={IMG('back')} className="pile-card" />
-      <span className="pile-count">{p.deck.length}</span>
+      <span className={`pile-count ${p.deck.length <= 10 ? 'low' : ''}`}>{p.deck.length}</span>
       <span className="pile-label">山札</span>
     </div>
   );
@@ -872,7 +909,8 @@ function FlyGhost({ flight }: { flight: Flight }) {
     return () => cancelAnimationFrame(raf);
   }, [flight]);
   return (
-    <div className="fly-ghost" style={{ left: pos.x, top: pos.y }}>
+    // left/top ではなく transform で動かす（レイアウト計算を起こさず、カクつかない）
+    <div className="fly-ghost" style={{ transform: `translate(${pos.x}px, ${pos.y}px)` }}>
       {flight.faceCardId ? (
         <div className="fly-face">
           <CardFrame card={cardById(flight.faceCardId)} width={54} />
