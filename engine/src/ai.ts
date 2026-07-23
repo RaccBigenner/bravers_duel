@@ -10,6 +10,7 @@
  * - チャージは使えないカードから回す
  */
 import {
+  effectiveAttributes,
   isCharAlive,
   legalActions,
   maxHpOf,
@@ -158,19 +159,48 @@ export function simpleAi(options: SimpleAiOptions = {}): BattleAi {
       }
 
       // ---------- チャージフェーズ ----------
-      // 重要: チャージした枚数だけ次のターンのドローが増え、山札が早く減る。
-      // 人間のように「使う予定のAPまで」しかチャージしない（山札切れ自滅の防止）。
-      const attrsByChar = p.characters.map((c) => [...c.attributes, ...c.addedAttributes]);
-      const usableCosts = p.hand
+      // 山札はチャージ・プレイした枚数だけ翌ターンのドローで減る。
+      // 人間のプレイを真似る:
+      // - 手札は「山札の貯金」なので、なるべく満タンのまま持つ（引く枚数を0に近づける）
+      // - 自分のキャラで使えない「死に札」だけは気軽にAPへ回す
+      // - 使える札は「攻撃に必要なAPが足りない時」にだけ最小限チャージする
+      const attrsByChar = p.characters.map((_, i) => effectiveAttributes(state, me, i));
+      const isUsable = (id: string): boolean => {
+        const card = cardById(id);
+        if (card.type === 'equipment' || card.type === 'field') return false; // 2枚目以降は死に札扱い
+        if (card.type === 'skill') {
+          return attrsByChar.some((attrs) => containsAll(attrs, card.conditionAttribute));
+        }
+        // キャラカード: 同名キャラが場にいれば回復札として温存
+        return p.characters.some((c) => c.name === card.name);
+      };
+      // 「今のアクターで実際に撃てる」攻撃だけを基準にする
+      // （アクターが使えない札のためにAPを貯めても手詰まりのままなので）
+      const actorAttrs = attrsByChar[p.actorIndex] ?? [];
+      const actorAttackCosts = p.hand
         .map((id) => cardById(id))
         .filter(
           (c): c is Extract<typeof c, { type: 'skill' }> =>
-            c.type === 'skill' && attrsByChar.some((attrs) => containsAll(attrs, c.conditionAttribute)),
+            c.type === 'skill' && c.valueType !== 'guard' && c.valueType !== 'heal' &&
+            containsAll(actorAttrs, c.conditionAttribute),
         )
         .map((c) => c.costAp);
-      // 目標AP = 手札で一番重い使えるスキルのコスト+2（何も使えないなら3）
-      const targetAp = Math.min(9, (usableCosts.length > 0 ? Math.max(...usableCosts) : 1) + 3);
-      if (p.ap.length < targetAp && p.hand.length > keepHand) {
+      const cheapest = actorAttackCosts.length > 0 ? Math.min(...actorAttackCosts) : Infinity;
+      const heaviest = actorAttackCosts.length > 0 ? Math.max(...actorAttackCosts) : 0;
+
+      // 1. 死に札（チームの誰も使えない）は自由にAPへ
+      const deadIndex = p.hand.findIndex((id) => !isUsable(id));
+      if (deadIndex >= 0 && p.ap.length < Math.min(9, Math.max(heaviest + 2, 4))) {
+        return { type: 'charge', handIndex: deadIndex };
+      }
+      // 2. アクターの一番安い攻撃が撃てるまで最小限チャージ
+      if (cheapest !== Infinity && p.ap.length < cheapest && p.hand.length > 1) {
+        const chargeIndex = chooseChargeIndex(p.hand, attrsByChar);
+        return { type: 'charge', handIndex: chargeIndex };
+      }
+      // 3. アクターで撃てる攻撃が手札に無い（手札が腐っている）なら、
+      //    1枚チャージして山札を回し、手札を入れ替える（膠着防止）
+      if (cheapest === Infinity && p.hand.length > 1) {
         const chargeIndex = chooseChargeIndex(p.hand, attrsByChar);
         return { type: 'charge', handIndex: chargeIndex };
       }
