@@ -319,8 +319,16 @@ export function Battle({ setup, onExit, onRematch }: {
 
   const fieldCard = view.field ? cardById(view.field.cardId) : null;
 
+  const choicePhase = state.phase === 'choice' && isMyTurn && !busy;
+
   return (
-    <div className="battle-root">
+    <div className={`battle-root ${finished ? '' : isMyTurn ? 'my-turn' : 'enemy-turn'}`}>
+      {/* ターンバッジ（常時表示） */}
+      {!finished && (
+        <div className={`turn-badge ${isMyTurn ? 'mine' : 'theirs'}`}>
+          {isMyTurn ? 'あなたのターン' : '相手のターン'}
+        </div>
+      )}
       {/* 相手情報バー（表層UI） */}
       <div className="info-bar">
         <span className="deck-name">{setup.enemy.name}</span>
@@ -359,9 +367,7 @@ export function Battle({ setup, onExit, onRematch }: {
             <div className="field-slot">
               {fieldCard ? <CardFrame card={fieldCard} width={40} /> : <div className="field-empty">FIELD</div>}
             </div>
-            <div className="guide-zone">
-              {guideText(state.phase, isMyTurn, busy, targeting !== null, guardPhase)}
-            </div>
+            <GuideTicker text={guideText(state.phase, isMyTurn, busy, targeting !== null, guardPhase)} />
           </div>
 
           {/* 自分エリア: 左に陣形、右にゾーン（山札が一番右） */}
@@ -428,18 +434,7 @@ export function Battle({ setup, onExit, onRematch }: {
         ) : !isMyTurn || finished ? (
           <span className="hint">{finished ? 'バトル終了' : '相手のターン…'}</span>
         ) : state.phase === 'play' ? (
-          <>
-            {myActions.filter((a) => a.type === 'turnStartAbility').map((a) => {
-              const ci = (a as { charIndex: number }).charIndex;
-              const name = me.characters[ci]?.name ?? '';
-              return (
-                <button key={ci} className="big-btn slim" onClick={() => act(a)}>
-                  {name.replace(/^\[.*\]/, '')}をアクターにする
-                </button>
-              );
-            })}
-            <button className="chip" onClick={() => act({ type: 'endPlay' })}>チャージへ →</button>
-          </>
+          <button className="chip" onClick={() => act({ type: 'endPlay' })}>チャージへ →</button>
         ) : (
           <>
             {chargeSel.size > 0 ? (
@@ -455,6 +450,27 @@ export function Battle({ setup, onExit, onRematch }: {
           </>
         )}
       </div>
+
+      {/* ターン開始の選択（アニマ等。ドロー前に1回だけ） */}
+      {choicePhase && (
+        <div className="overlay">
+          <div className="dialog">
+            <p>ターン開始の能力を使いますか？</p>
+            <div className="dialog-btns" style={{ flexDirection: 'column', gap: 8 }}>
+              {myActions.filter((a) => a.type === 'turnStartAbility').map((a) => {
+                const ci = (a as { charIndex: number }).charIndex;
+                const name = me.characters[ci]?.name.replace(/^\[[^\]]*\]/, '') ?? '';
+                return (
+                  <button key={ci} className="big-btn slim" onClick={() => act(a)}>
+                    {name}をアクターにする
+                  </button>
+                );
+              })}
+              <button className="chip" onClick={() => act({ type: 'skipTurnStart' })}>使わない</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ガード割り込みシート */}
       {guardPhase && state.pendingAttack && (
@@ -634,7 +650,9 @@ function Formation({ side, state, pops, targeting, onTap, koShown, cardW, vfxLis
             onClick={() => onTap(side, i)}
             {...longPressHandlers(() => onZoom?.(c.cardId))}
           >
-            <CardFrame card={cardById(c.cardId)} width={frontW} />
+            <div className={myPops.some((d) => d.amount > 0) ? 'card-hit' : ''}>
+              <CardFrame card={cardById(c.cardId)} width={frontW} />
+            </div>
             {koVisible && <img src={IMG('back')} className="ko-back" />}
             {c.equipmentCardId && (
               <span
@@ -784,8 +802,27 @@ function NarrationBanner({ ev }: { ev: NarrEvent }) {
   );
 }
 
+/** 1行の電光掲示板。はみ出す場合は流れる */
+function GuideTicker({ text }: { text: string }) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  const spanRef = useRef<HTMLSpanElement>(null);
+  const [scroll, setScroll] = useState(false);
+  useEffect(() => {
+    const box = boxRef.current;
+    const span = spanRef.current;
+    if (!box || !span) return;
+    setScroll(span.scrollWidth > box.clientWidth + 4);
+  }, [text]);
+  return (
+    <div className="guide-zone ticker" ref={boxRef}>
+      <span ref={spanRef} className={scroll ? 'ticker-run' : ''}>{text}</span>
+    </div>
+  );
+}
+
 function guideText(phase: string, isMyTurn: boolean, busy: boolean, targeting: boolean, guardPhase: boolean): string {
   if (busy) return '⏳ 何が起きているか、上のナレーションを見てね';
+  if (phase === 'choice') return '🌀 ターン開始の能力を使うか選ぼう';
   if (guardPhase) return '🛡️ 相手の攻撃！ガードカードで割り込むか、そのまま受けるか選ぼう';
   if (targeting) return '🎯 対象のキャラクターをタップしよう';
   if (!isMyTurn) return '⏳ 相手のターン。ようすを見よう';

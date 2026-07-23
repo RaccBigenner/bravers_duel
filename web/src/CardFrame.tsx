@@ -55,10 +55,11 @@ export function CardFrame({ card, width = 300, upright = false }: Props) {
         style={{
           width: rotate ? h : outerW,
           height: rotate ? w : outerH,
+          // 縦持ち: 左上原点で「右へw*scaleずらしてから90度回転→縮小」で枠にぴったり収める
           transform: rotate
-            ? `scale(${scale}) translate(${(w - h) / 2}px, ${(h - w) / 2}px) rotate(90deg)`
+            ? `translate(${w * scale}px, 0) rotate(90deg) scale(${scale})`
             : `scale(${scale})`,
-          transformOrigin: rotate ? 'center' : 'top left',
+          transformOrigin: 'top left',
         }}
       >
         <RarityFrame rarity={card.rarity} w={w} collectorNo={collectorNo}>

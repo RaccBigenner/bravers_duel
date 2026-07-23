@@ -60,7 +60,7 @@ export interface PlayerBattle {
   incomingDamageReduction: { value: number; untilTurn: number } | null;
 }
 
-export type Phase = 'play' | 'guard' | 'charge' | 'finished';
+export type Phase = 'choice' | 'play' | 'guard' | 'charge' | 'finished';
 export type EndReason = 'wipeout' | 'deckout' | 'turnLimit';
 
 export interface PendingAttack {
@@ -101,7 +101,8 @@ export type BattleAction =
   | { type: 'playCharacter'; handIndex: number }
   | { type: 'playEquipment'; handIndex: number; targetIndex: number }
   | { type: 'playField'; handIndex: number }
-  | { type: 'turnStartAbility'; charIndex: number } // アニマ等の任意能力（手動）
+  | { type: 'turnStartAbility'; charIndex: number } // アニマ等の任意能力（ドロー前の選択）
+  | { type: 'skipTurnStart' } // 任意能力を使わない
   | { type: 'endPlay' }
   | { type: 'playGuard'; handIndex: number }
   | { type: 'pass' }
@@ -354,7 +355,12 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
       const judgedActor = enemy().actorIndex; // 途中の強制交代に影響されない
       for (const i of targets) {
         if (state.phase === 'finished') return;
-        if (isCharAlive(state, enemyIdx, i)) applyDamage(state, enemyIdx, i, clampN(n), judgedActor);
+        if (isCharAlive(state, enemyIdx, i)) applyDamage(state, enemyIdx, i, clampN(n), judgedActor, true);
+      }
+      // 全対象処理後にまとめて強制交代
+      if (state.phase !== 'finished' && !isCharAlive(state, enemyIdx, enemy().actorIndex)) {
+        enemy().actorIndex = nextAliveIndex(state, enemyIdx, enemy().actorIndex);
+        pushLog(state, `P${enemyIdx + 1}のアクターが${enemy().characters[enemy().actorIndex].name}に強制交代`);
       }
     },
     damageTarget: (n) => {
@@ -537,6 +543,7 @@ function applyDamage(
   charIndex: number,
   amount: number,
   judgedActor?: number,
+  deferForcedSwitch = false,
 ): number {
   if (state.phase === 'finished' || amount <= 0) return 0;
   const p = state.players[player];
@@ -579,7 +586,8 @@ function applyDamage(
       return actual;
     }
     // アクターが倒れたら強制交代（ロックより優先）
-    if (charIndex === p.actorIndex) {
+    // 全体攻撃などの複数対象処理中は、処理が終わるまで陣形を維持する（deferForcedSwitch）
+    if (charIndex === p.actorIndex && !deferForcedSwitch) {
       p.actorIndex = nextAliveIndex(state, player, p.actorIndex);
       pushLog(state, `P${player + 1}のアクターが${p.characters[p.actorIndex].name}に強制交代`);
     }
@@ -708,6 +716,43 @@ function beginTurn(state: BattleState): void {
   const p = state.players[state.active];
   p.skillsUsedThisTurn = 0;
 
+  // 任意のターン開始能力（アニマ等）は「ドローの前に1回だけ」選択する
+  const hasManualChoice =
+    state.manualFor === state.active &&
+    p.characters.some(
+      (c, i) =>
+        isCharAlive(state, state.active, i) &&
+        i !== p.actorIndex &&
+        characterEffectOf(c.cardId)?.turnStartAction,
+    );
+  if (hasManualChoice) {
+    state.phase = 'choice';
+    return; // 選択（またはスキップ）後に runTurnStartAndDraw が呼ばれる
+  }
+
+  runAutoTurnStart(state);
+  if (!battleOver(state)) drawPhase(state);
+}
+
+/** AI側などの自動ターン開始能力（ドロー前） */
+function runAutoTurnStart(state: BattleState): void {
+  const p = state.players[state.active];
+  p.characters.forEach((c, i) => {
+    if (battleOver(state)) return;
+    if (!isCharAlive(state, state.active, i)) return;
+    const eff = characterEffectOf(c.cardId);
+    if (!eff?.onOwnTurnStart) return;
+    if (state.manualFor === state.active && eff.turnStartAction) return;
+    runEffectSafely(state, `${c.name}のターン開始能力`, () =>
+      eff.onOwnTurnStart!(makeApi(state, state.active, i), i === p.actorIndex),
+    );
+  });
+}
+
+/** ドローフェーズ本体 */
+function drawPhase(state: BattleState): void {
+  const p = state.players[state.active];
+
   // 手札上限（アイ: +1）
   let cap = HAND_REFILL_TO;
   p.characters.forEach((c, i) => {
@@ -724,7 +769,6 @@ function beginTurn(state: BattleState): void {
     const drawn = Math.min(drawCount, p.deck.length);
     p.hand.push(...p.deck.splice(0, drawn));
     if (drawn > 0) pushLog(state, `プレイヤー${state.active + 1}が${drawn}枚ドロー`);
-    // 山札切れで手札を5枚にできなければ負け
     if (p.hand.length < HAND_REFILL_TO && p.deck.length === 0 && drawn < drawCount) {
       pushLog(state, `プレイヤー${state.active + 1}は山札切れで手札を${HAND_REFILL_TO}枚にできない`);
       finish(state, (1 - state.active) as PlayerIndex, 'deckout');
@@ -732,19 +776,6 @@ function beginTurn(state: BattleState): void {
     }
   }
   state.phase = 'play';
-
-  // ターン開始時の常時能力（アニマなど。ドロー後に発動）
-  // 手動プレイヤー（人間）の任意能力は自動発動せず、turnStartAbility アクションで発動する
-  p.characters.forEach((c, i) => {
-    if (battleOver(state)) return;
-    if (!isCharAlive(state, state.active, i)) return;
-    const eff = characterEffectOf(c.cardId);
-    if (!eff?.onOwnTurnStart) return;
-    if (state.manualFor === state.active && eff.turnStartAction) return;
-    runEffectSafely(state, `${c.name}のターン開始能力`, () =>
-      eff.onOwnTurnStart!(makeApi(state, state.active, i), i === p.actorIndex),
-    );
-  });
 }
 
 // ---------------------------------------------------------------- スキルの使用判定
@@ -829,6 +860,18 @@ export function legalActions(state: BattleState): BattleAction[] {
   if (state.phase === 'finished') return [];
   const actions: BattleAction[] = [];
 
+  if (state.phase === 'choice') {
+    const p = state.players[state.active];
+    p.characters.forEach((c, i) => {
+      if (!isCharAlive(state, state.active, i) || i === p.actorIndex) return;
+      if (characterEffectOf(c.cardId)?.turnStartAction) {
+        actions.push({ type: 'turnStartAbility', charIndex: i });
+      }
+    });
+    actions.push({ type: 'skipTurnStart' });
+    return actions;
+  }
+
   if (state.phase === 'play') {
     const p = state.players[state.active];
     const enemyIdx = (1 - state.active) as PlayerIndex;
@@ -872,15 +915,6 @@ export function legalActions(state: BattleState): BattleAction[] {
         actions.push({ type: 'playField', handIndex });
       }
     });
-    // 任意のターン開始能力（アニマ等・手動プレイヤーのみ・そのターン最初の行動として）
-    if (state.manualFor === state.active && p.skillsUsedThisTurn === 0) {
-      p.characters.forEach((c, i) => {
-        if (!isCharAlive(state, state.active, i) || i === p.actorIndex) return;
-        if (characterEffectOf(c.cardId)?.turnStartAction) {
-          actions.push({ type: 'turnStartAbility', charIndex: i });
-        }
-      });
-    }
     actions.push({ type: 'endPlay' });
   }
 
@@ -972,7 +1006,8 @@ export function applyAction(state: BattleState, action: BattleAction): void {
       }
       pushLog(state, `${card.name}で割り込み（${before} → 残りダメージ${state.pendingAttack?.value ?? 0}）`);
 
-      if (state.phase === 'guard' && guardOptions(state, defender).length === 0) {
+      // ガードは1回の攻撃に1枚まで。使ったら即解決する
+      if (state.phase === 'guard') {
         resolvePendingAttack(state);
       }
       return;
@@ -1042,7 +1077,7 @@ export function applyAction(state: BattleState, action: BattleAction): void {
     }
 
     case 'turnStartAbility': {
-      requirePhase(state, 'play');
+      requirePhase(state, 'choice');
       const p = state.players[state.active];
       const c = p.characters[action.charIndex];
       if (!c || !isCharAlive(state, state.active, action.charIndex)) {
@@ -1050,10 +1085,16 @@ export function applyAction(state: BattleState, action: BattleAction): void {
       }
       const eff = characterEffectOf(c.cardId);
       if (!eff?.turnStartAction) throw new Error('任意のターン開始能力がありません');
-      if (p.skillsUsedThisTurn > 0) throw new Error('ターンの最初にだけ使えます');
       runEffectSafely(state, `${c.name}のターン開始能力`, () =>
         eff.turnStartAction!(makeApi(state, state.active, action.charIndex)),
       );
+      if (!battleOver(state)) drawPhase(state);
+      return;
+    }
+
+    case 'skipTurnStart': {
+      requirePhase(state, 'choice');
+      drawPhase(state);
       return;
     }
 
@@ -1212,9 +1253,15 @@ function resolvePendingAttack(state: BattleState): void {
   for (const ti of targets) {
     if (battleOver(state)) break;
     if (!isCharAlive(state, defenderIdx, ti)) continue;
-    const dealt = applyDamage(state, defenderIdx, ti, Math.max(0, pending.value - reduction), judgedActor);
+    // 複数対象の処理中は陣形（ポジション）を維持し、交代は全処理後に行う
+    const dealt = applyDamage(state, defenderIdx, ti, Math.max(0, pending.value - reduction), judgedActor, true);
     dealtTotal += dealt;
     if (dealt > 0) damagedCount++;
+  }
+  // 全対象の処理が終わってからアクターの強制交代
+  if (!battleOver(state) && !isCharAlive(state, defenderIdx, defender.actorIndex)) {
+    defender.actorIndex = nextAliveIndex(state, defenderIdx, defender.actorIndex);
+    pushLog(state, `P${defenderIdx + 1}のアクターが${defender.characters[defender.actorIndex].name}に強制交代`);
   }
 
   if (!battleOver(state)) {

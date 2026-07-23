@@ -495,12 +495,16 @@ describe('アニマの手動発動と使用キャラ選択', () => {
       { characterIds: [DADA, OWU], cardIds: Array(20).fill(VANILLA_ATK) },
     ];
     const state = createBattle(decks, 7, { firstPlayer: 0, validate: false, manualFor: 0 });
+    // ドロー前に選択フェーズになる
+    expect(state.phase).toBe('choice');
     expect(state.players[0].actorIndex).toBe(0); // 自動でアクターにならない
     const acts = legalActions(state);
-    const ability = acts.find((a: { type: string }) => a.type === 'turnStartAbility');
+    const ability = acts.find((a) => a.type === 'turnStartAbility');
     expect(ability).toBeTruthy();
-    applyAction(state, ability);
+    expect(acts.some((a) => a.type === 'skipTurnStart')).toBe(true);
+    applyAction(state, ability!);
     expect(state.players[0].actorIndex).toBe(1); // 発動でアクターに
+    expect(state.phase).toBe('play'); // 選択後はドローを経てプレイフェーズへ
   });
 
   it('控えから使えるスキルは、使用キャラごとに行動が列挙される', () => {

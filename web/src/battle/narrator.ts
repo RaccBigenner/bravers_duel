@@ -5,7 +5,7 @@
 import { ALL_CARDS, type BattleState, type Card } from '@bravers/engine';
 
 export type FxKind =
-  | 'turn' | 'draw' | 'charge' | 'chargeDeck' | 'mill' | 'play' | 'guard'
+  | 'coin' | 'turn' | 'draw' | 'charge' | 'chargeDeck' | 'mill' | 'play' | 'guard'
   | 'attack' | 'damage' | 'heal' | 'ko' | 'revive' | 'actor' | 'ability'
   | 'equip' | 'field' | 'attr' | 'search' | 'lock' | 'end' | 'info';
 
@@ -66,34 +66,34 @@ export function classify(state: BattleState, line: string, actor: 0 | 1): NarrEv
 
   if ((m = line.match(/^--- ターン(\d+): プレイヤー(\d) ---$/))) {
     const side = (Number(m[2]) - 1) as 0 | 1;
-    return ev({ kind: 'turn', text: side === 0 ? `ターン${m[1]} あなたの番！` : `ターン${m[1]} 相手の番`, side, duration: 1350 });
+    return ev({ kind: 'turn', text: side === 0 ? `ターン${m[1]} あなたの番！` : `ターン${m[1]} 相手の番`, side, duration: 1400 });
   }
   if ((m = line.match(/^プレイヤー(\d)が(\d+)枚ドロー$/))) {
     const side = (Number(m[1]) - 1) as 0 | 1;
-    return ev({ kind: 'draw', text: side === 0 ? `${m[2]}枚ドロー！` : `相手が${m[2]}枚ドロー`, side, amount: Number(m[2]), duration: 1050 });
+    return ev({ kind: 'draw', text: side === 0 ? `${m[2]}枚ドロー！` : `相手が${m[2]}枚ドロー`, side, amount: Number(m[2]), duration: 750 });
   }
   if ((m = line.match(/^(.+)が(.+)を使用$/))) {
     const card = CARD_BY_NAME.get(m[2]);
     const who = findChar(state, m[1], actor);
-    return ev({ kind: 'play', text: `${m[1]}の「${m[2]}」！`, card, side: who?.[0] ?? actor, duration: 1875 });
+    return ev({ kind: 'play', text: `${m[1]}の「${m[2]}」！`, card, side: who?.[0] ?? actor, duration: 1600 });
   }
   if ((m = line.match(/^(.+)のカードを使用$/))) {
     const card = CARD_BY_NAME.get(m[1]);
-    return ev({ kind: 'play', text: `「${m[1]}」で同名キャラを回復！`, card, side: actor, duration: 1725 });
+    return ev({ kind: 'play', text: `「${m[1]}」で同名キャラを回復！`, card, side: actor, duration: 1500 });
   }
   if ((m = line.match(/^デッキから(.+)をコストなしで使用$/))) {
     const card = CARD_BY_NAME.get(m[1]);
-    return ev({ kind: 'play', text: `デッキから「${m[1]}」が発動！`, card, side: actor, duration: 1875 });
+    return ev({ kind: 'play', text: `デッキから「${m[1]}」が発動！`, card, side: actor, duration: 1600 });
   }
   if ((m = line.match(/^(.+)で割り込み（(.+)）$/))) {
     const card = CARD_BY_NAME.get(m[1]);
-    return ev({ kind: 'guard', text: `ガード！「${m[1]}」（${m[2]}）`, card, duration: 1725 });
+    return ev({ kind: 'guard', text: `ガード！「${m[1]}」（${m[2]}）`, card, duration: 1400 });
   }
   if ((m = line.match(/^(.+)で攻撃 → 相手は割り込みできる（ダメージ(\d+)）$/))) {
-    return ev({ kind: 'attack', text: `「${m[1]}」の攻撃！（ダメージ${m[2]}）`, amount: Number(m[2]), duration: 1275 });
+    return ev({ kind: 'attack', text: `「${m[1]}」の攻撃！（ダメージ${m[2]}）`, amount: Number(m[2]), duration: 900 });
   }
   if ((m = line.match(/^(.+)は防御で割り込めない攻撃$/))) {
-    return ev({ kind: 'attack', text: `「${m[1]}」はガード不可の攻撃！`, duration: 1200 });
+    return ev({ kind: 'attack', text: `「${m[1]}」はガード不可の攻撃！`, duration: 900 });
   }
   if ((m = line.match(/^P(\d)の(.+)に(\d+)ダメージ（残りHP: (\d+)）$/))) {
     const side = (Number(m[1]) - 1) as 0 | 1;
@@ -109,15 +109,15 @@ export function classify(state: BattleState, line: string, actor: 0 | 1): NarrEv
   }
   if ((m = line.match(/^P(\d)の(.+)は戦闘不能$/))) {
     const side = (Number(m[1]) - 1) as 0 | 1;
-    return ev({ kind: 'ko', text: `${sideName(side, m[2])}は戦闘不能！`, side, charIndex: charOnSide(state, side, m[2]), duration: 1425 });
+    return ev({ kind: 'ko', text: `${sideName(side, m[2])}は戦闘不能！`, side, charIndex: charOnSide(state, side, m[2]), duration: 1600 });
   }
   if ((m = line.match(/^P(\d)の(.+)が復活（HP(\d+)）$/))) {
     const side = (Number(m[1]) - 1) as 0 | 1;
-    return ev({ kind: 'revive', text: `${sideName(side, m[2])}が復活！`, side, charIndex: charOnSide(state, side, m[2]), amount: Number(m[3]), duration: 1425 });
+    return ev({ kind: 'revive', text: `${sideName(side, m[2])}が復活！`, side, charIndex: charOnSide(state, side, m[2]), amount: Number(m[3]), duration: 1600 });
   }
   if ((m = line.match(/^P(\d)のアクターが(.+)に強制交代$/))) {
     const side = (Number(m[1]) - 1) as 0 | 1;
-    return ev({ kind: 'actor', text: `${side === 1 ? '相手の' : ''}アクターは${m[2]}に強制交代`, charName: m[2], side, charIndex: charOnSide(state, side, m[2]), duration: 1125 });
+    return ev({ kind: 'actor', text: `${side === 1 ? '相手の' : ''}アクターは${m[2]}に強制交代`, charName: m[2], side, charIndex: charOnSide(state, side, m[2]), duration: 1250 });
   }
   if ((m = line.match(/^プレイヤー(\d)のアクターが(.+)に交代$/))) {
     const side = (Number(m[1]) - 1) as 0 | 1;
@@ -129,7 +129,7 @@ export function classify(state: BattleState, line: string, actor: 0 | 1): NarrEv
     return ev({ kind: 'actor', text: `相手のアクターが${m[1]}に変更された！`, charName: m[1], side: hit?.[0], charIndex: hit?.[1], duration: 1125 });
   }
   if ((m = line.match(/^発動:(.+)$/))) {
-    return ev({ kind: 'ability', text: `${m[1]}！`, duration: 1200 });
+    return ev({ kind: 'ability', text: `${m[1]}！`, duration: 1000 });
   }
   if ((m = line.match(/^P(\d)の(.+)に(.+)を装備$/))) {
     const side = (Number(m[1]) - 1) as 0 | 1;
@@ -145,24 +145,24 @@ export function classify(state: BattleState, line: string, actor: 0 | 1): NarrEv
   }
   if ((m = line.match(/^フィールド(.+)を展開$/))) {
     const card = CARD_BY_NAME.get(m[1]);
-    return ev({ kind: 'field', text: `フィールド「${m[1]}」を展開！`, card, side: actor, duration: 1725 });
+    return ev({ kind: 'field', text: `フィールド「${m[1]}」を展開！`, card, side: actor, duration: 1500 });
   }
   if ((m = line.match(/^(.+)は上書きされてトラッシュへ$/))) {
     return ev({ kind: 'info', text: `「${m[1]}」は上書きされた`, duration: 1050 });
   }
   if ((m = line.match(/^プレイヤー(\d)が(.+)をチャージ（AP: (\d+)）$/))) {
     const side = (Number(m[1]) - 1) as 0 | 1;
-    return ev({ kind: 'charge', text: side === 0 ? `「${m[2]}」をチャージ（AP ${m[3]}）` : `相手がチャージ（AP ${m[3]}）`, side, cardName: m[2], duration: 825 });
+    return ev({ kind: 'charge', text: side === 0 ? `「${m[2]}」をチャージ（AP ${m[3]}）` : `相手がチャージ（AP ${m[3]}）`, side, cardName: m[2], duration: 550 });
   }
   if ((m = line.match(/^デッキから(\d+)枚チャージ（AP: (\d+)）$/))) {
-    return ev({ kind: 'chargeDeck', text: `デッキから${m[1]}枚チャージ（AP ${m[2]}）`, amount: Number(m[1]), duration: 1125 });
+    return ev({ kind: 'chargeDeck', text: `デッキから${m[1]}枚チャージ（AP ${m[2]}）`, amount: Number(m[1]), duration: 850 });
   }
   if ((m = line.match(/^デッキから(\d+)枚トラッシュ$/))) {
-    return ev({ kind: 'mill', text: `デッキから${m[1]}枚トラッシュ`, amount: Number(m[1]), duration: 1125 });
+    return ev({ kind: 'mill', text: `デッキから${m[1]}枚トラッシュ`, amount: Number(m[1]), duration: 850 });
   }
   if ((m = line.match(/^P(\d)の(.+)に(.)属性を追加$/))) {
     const side = (Number(m[1]) - 1) as 0 | 1;
-    return ev({ kind: 'attr', text: `${sideName(side, m[2])}に${m[3]}属性を追加`, charName: m[2], attr: m[3], side, charIndex: charOnSide(state, side, m[2]), duration: 1125 });
+    return ev({ kind: 'attr', text: `${sideName(side, m[2])}に${m[3]}属性を追加`, charName: m[2], attr: m[3], side, charIndex: charOnSide(state, side, m[2]), duration: 1250 });
   }
   if ((m = line.match(/^デッキから(.+)を手札に加えた$/))) {
     return ev({ kind: 'search', text: `デッキから「${m[1]}」を手札に！`, duration: 1275 });
@@ -188,7 +188,10 @@ export function classify(state: BattleState, line: string, actor: 0 | 1): NarrEv
   if (line.startsWith('決着つかず')) {
     return ev({ kind: 'end', text: '引き分け…', duration: 1200 });
   }
-  if (line.startsWith('バトル開始')) return null;
+  if ((m = line.match(/^バトル開始。先攻: プレイヤー(\d)$/))) {
+    const side = (Number(m[1]) - 1) as 0 | 1;
+    return ev({ kind: 'coin', text: side === 0 ? '先攻はあなた！' : '先攻は相手！', side, duration: 2200 });
+  }
 
   // 未知のログはそのまま情報として出す
   return ev({ kind: 'info', text: line, duration: 1050 });
