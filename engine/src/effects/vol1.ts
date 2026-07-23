@@ -48,7 +48,8 @@ export const VOL1_EFFECTS: Record<string, CardEffect> = {
   '1-A009-SR': {
     kind: 'character',
     onOwnTurnEnd: (api, isActor) => {
-      if (isActor) {
+      // 交代できる控えがいない（生存が自分だけ）なら発動しない（2026-07-23 社長決定）
+      if (isActor && api.myAliveCount() > 1) {
         api.damageAllEnemies(2);
         api.changeMyActor();
       }

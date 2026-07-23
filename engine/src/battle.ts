@@ -302,6 +302,7 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
     },
     myDamage: () => me().characters[ownerChar].damage,
     myKoCount: () => me().characters.filter((_, i) => !isCharAlive(state, owner, i)).length,
+    myAliveCount: () => me().characters.filter((_, i) => isCharAlive(state, owner, i)).length,
     skillsUsedThisTurn: () => me().skillsUsedThisTurn,
 
     addDamage: (n) => {

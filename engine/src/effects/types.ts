@@ -30,6 +30,8 @@ export interface EffectApi {
   myDamage(): number;
   /** 自分の戦闘不能キャラの数 */
   myKoCount(): number;
+  /** 自分の生きている味方の数（自分含む） */
+  myAliveCount(): number;
   /** このターン自分が使ったスキルの数（このスキルを含む） */
   skillsUsedThisTurn(): number;
 

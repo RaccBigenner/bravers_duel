@@ -228,14 +228,18 @@ function BattleInner({ setup, onExit, onRematch }: {
   }
 
   // キャラの頭上に出る小さなプレート（能力発動・威力アップ・ガード結果など）
-  interface Plate { key: number; side: 0 | 1; charIndex: number; text: string; cls: string }
+  // 位置は出す瞬間に固定する（後から並び直すとガタガタ動いて見えるため）
+  interface Plate { key: number; side: 0 | 1; charIndex: number; text: string; cls: string; offset: number }
   const [plates, setPlates] = useState<Plate[]>([]);
 
   function spawnPlate(side: 0 | 1 | undefined, charIndex: number | undefined, text: string, cls = '', life = 1500) {
     if (side === undefined || charIndex === undefined) return;
-    const plate: Plate = { key: flightKey++, side, charIndex, text, cls };
-    setPlates((prev) => [...prev, plate]);
-    window.setTimeout(() => setPlates((prev) => prev.filter((p) => p.key !== plate.key)), life);
+    setPlates((prev) => {
+      const offset = prev.filter((p) => p.side === side && p.charIndex === charIndex).length * 26;
+      const plate: Plate = { key: flightKey++, side, charIndex, text, cls, offset };
+      window.setTimeout(() => setPlates((pp) => pp.filter((p) => p.key !== plate.key)), life);
+      return [...prev, plate];
+    });
   }
 
   // ナレーションイベントに合わせて「カードが飛ぶ」物理演出
@@ -853,7 +857,7 @@ function Formation({ side, state, pops, targeting, onTap, koShown, cardW, vfxLis
   koShown: Set<string>;
   cardW: number;
   vfxList: { key: number; side: 0 | 1; charIndex: number; img: string; delay: number }[];
-  plates: { key: number; side: 0 | 1; charIndex: number; text: string; cls: string }[];
+  plates: { key: number; side: 0 | 1; charIndex: number; text: string; cls: string; offset: number }[];
   onZoom?: (cardId: string) => void;
 }) {
   const p = state.players[side];
@@ -975,8 +979,8 @@ function Formation({ side, state, pops, targeting, onTap, koShown, cardW, vfxLis
             )}
             {plates
               .filter((pl) => pl.side === side && pl.charIndex === i)
-              .map((pl, k) => (
-                <span key={pl.key} className={`char-plate ${pl.cls}`} style={{ marginTop: -k * 22 }}>
+              .map((pl) => (
+                <span key={pl.key} className={`char-plate ${pl.cls}`} style={{ top: -26 - pl.offset }}>
                   {pl.text}
                 </span>
               ))}
@@ -1060,7 +1064,8 @@ function FlyGhost({ flight }: { flight: Flight }) {
   }, [flight]);
   return (
     // left/top ではなく transform で動かす（レイアウト計算を起こさず、カクつかない）
-    <div className="fly-ghost" style={{ transform: `translate(${pos.x}px, ${pos.y}px)` }}>
+    // 末尾の translate(-50%,-50%) はカード自身の中心合わせ（無いと半カード分ズレる）
+    <div className="fly-ghost" style={{ transform: `translate(${pos.x}px, ${pos.y}px) translate(-50%, -50%)` }}>
       {flight.faceCardId ? (
         <div className="fly-face">
           <CardFrame card={cardById(flight.faceCardId)} width={54} />
