@@ -1642,7 +1642,9 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
   margin-bottom: 6px;
 }
 .home-card {
-  line-height: 0;
+  /* 注意: line-height:0 は使わない（CardFrame内の文字が潰れる事故が起きた）。
+     インライン隙間はflexで消す */
+  display: flex;
   filter: drop-shadow(0 8px 14px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 10px rgba(255, 215, 0, 0.18));
 }
 .home-card.c img {
@@ -1904,6 +1906,19 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
   padding: 6px 12px;
 }
 .review-thanks { margin: 6px 0; font-size: 13px; color: #8e8; }
+
+/* カードリスト詳細行の属性アイコン */
+.attr-inline {
+  display: inline-flex;
+  gap: 2px;
+  vertical-align: -2px;
+  margin-left: 2px;
+}
+.attr-inline img {
+  width: 13px;
+  height: 13px;
+  object-fit: contain;
+}
 
 /* あそびかたモーダル内の注釈 */
 .rules-note {

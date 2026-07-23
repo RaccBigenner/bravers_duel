@@ -20,6 +20,18 @@ export interface CustomDeck {
   deck: DeckList;
 }
 
+/** 属性アイコンの小さな並び（カードリストの詳細行用） */
+function AttrIcons({ attrs }: { attrs: readonly string[] }) {
+  if (attrs.length === 0) return <>なし</>;
+  return (
+    <span className="attr-inline">
+      {attrs.map((a, i) => (
+        <img key={i} src={IMG(a)} alt={a} title={`属性: ${a}`} />
+      ))}
+    </span>
+  );
+}
+
 const TYPE_CHIPS = [
   { key: 'skill', label: 'スキル' },
   { key: 'character', label: 'キャラ' },
@@ -40,8 +52,9 @@ export function DeckBuilder({ initial, onUse, onBack }: {
     return m;
   });
   const [tab, setTab] = useState<'chars' | 'cards'>(chars.length === 0 ? 'chars' : 'cards');
-  const [typeFilter, setTypeFilter] = useState<string | null>('skill');
-  const [onlyUsable, setOnlyUsable] = useState(true);
+  // フィルターは全部OFFで始める（全カードが見える状態がデフォルト）
+  const [typeFilter, setTypeFilter] = useState<string | null>(null);
+  const [onlyUsable, setOnlyUsable] = useState(false);
   const [query, setQuery] = useState('');
   const [zoom, setZoom] = useState<Card | null>(null);
   const [copied, setCopied] = useState(false);
@@ -198,10 +211,26 @@ export function DeckBuilder({ initial, onUse, onBack }: {
                   </div>
                   <div className="builder-info" onClick={() => setZoom(c)}>
                     <b>{c.name}</b>
-                    <span>
-                      {c.type === 'skill'
-                        ? `${(c as SkillCard).valueType.toUpperCase()}・コスト${(c as SkillCard).costAp}・値${(c as SkillCard).baseValue}`
-                        : c.type}
+                    <span className="builder-detail">
+                      {c.type === 'skill' && (
+                        <>
+                          {`${c.valueType.toUpperCase()}・コスト${c.costAp}・値${c.baseValue}・条件`}
+                          <AttrIcons attrs={c.conditionAttribute} />
+                        </>
+                      )}
+                      {c.type === 'character' && (
+                        <>
+                          {`キャラ・HP${c.hp}・属性`}
+                          <AttrIcons attrs={c.attribute} />
+                        </>
+                      )}
+                      {c.type === 'equipment' && (
+                        <>
+                          装備・属性付与
+                          <AttrIcons attrs={c.addAttribute} />
+                        </>
+                      )}
+                      {c.type === 'field' && 'フィールド'}
                     </span>
                   </div>
                   <div className="builder-count">
