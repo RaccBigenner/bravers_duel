@@ -7,7 +7,7 @@ import {
   type BattleState,
   type Card,
 } from '@bravers/engine';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { BattleSetup } from '../App';
 import { CardFrame } from '../CardFrame';
 import { IMG, IMG_PNG } from '../cardAssets';
@@ -18,6 +18,25 @@ import '../battle.css';
 
 const PLAYER = 0 as const;
 const ENEMY = 1 as const;
+
+/** 画面の高さ（リサイズ追従） */
+function useViewportHeight(): number {
+  const [vh, setVh] = useState(() => window.innerHeight);
+  useEffect(() => {
+    const onResize = () => setVh(window.innerHeight);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  return vh;
+}
+
+/** 1画面に収まるカード幅を高さから決める */
+function cardWidthFor(vh: number): number {
+  if (vh >= 840) return 92;
+  if (vh >= 760) return 82;
+  if (vh >= 700) return 74;
+  return 66;
+}
 
 type Targeting =
   | null
@@ -37,6 +56,8 @@ export function Battle({ setup, onExit, onRematch }: {
   const [showRules, setShowRules] = useState(false);
   const [guideOn, setGuideOn] = useState(true);
 
+  const vh = useViewportHeight();
+  const cardW = cardWidthFor(vh);
   const me = state.players[PLAYER];
   const foe = state.players[ENEMY];
   const finished = state.phase === 'finished';
@@ -136,7 +157,7 @@ export function Battle({ setup, onExit, onRematch }: {
       <ZoneRow side={ENEMY} p={foe} />
 
       {/* 相手キャラクター */}
-      <CharRow side={ENEMY} state={state} pops={pops} targeting={targeting} onTap={tapChar} koShown={koShown} />
+      <CharRow side={ENEMY} state={state} pops={pops} targeting={targeting} onTap={tapChar} koShown={koShown} cardW={cardW} />
 
       {/* 中央: フィールド + ログ */}
       <div className="center-strip">
@@ -153,7 +174,7 @@ export function Battle({ setup, onExit, onRematch }: {
       </div>
 
       {/* 自分キャラクター */}
-      <CharRow side={PLAYER} state={state} pops={pops} targeting={targeting} onTap={tapChar} koShown={koShown} />
+      <CharRow side={PLAYER} state={state} pops={pops} targeting={targeting} onTap={tapChar} koShown={koShown} cardW={cardW} />
 
       {/* 自分の資源ゾーン */}
       <ZoneRow side={PLAYER} p={me} />
@@ -172,10 +193,10 @@ export function Battle({ setup, onExit, onRematch }: {
                 selectedHand === i ? 'raised' : '',
                 playable || chargeable ? 'playable' : '',
               ].join(' ')}
-              style={{ marginLeft: i === 0 ? 0 : -34, zIndex: selectedHand === i ? 50 : i }}
+              style={{ marginLeft: i === 0 ? 0 : -Math.round(cardW * 0.37), zIndex: selectedHand === i ? 50 : i }}
               onClick={() => tapHand(i)}
             >
-              <CardFrame card={card} width={92} />
+              <CardFrame card={card} width={cardW} />
             </div>
           );
         })}
@@ -237,7 +258,7 @@ export function Battle({ setup, onExit, onRematch }: {
               const hi = (a as { handIndex: number }).handIndex;
               return (
                 <div key={hi} className="hand-card playable" onClick={() => act(a)}>
-                  <CardFrame card={cardById(me.hand[hi])} width={92} />
+                  <CardFrame card={cardById(me.hand[hi])} width={cardW} />
                 </div>
               );
             })}
@@ -306,13 +327,14 @@ function ZoneRow({ side, p }: { side: 0 | 1; p: BattleState['players'][number] }
 }
 
 /** キャラクターの列 */
-function CharRow({ side, state, pops, targeting, onTap, koShown }: {
+function CharRow({ side, state, pops, targeting, onTap, koShown, cardW }: {
   side: 0 | 1;
   state: BattleState;
   pops: DamagePop[];
   targeting: Targeting;
   onTap: (side: 0 | 1, index: number) => void;
   koShown: Set<string>;
+  cardW: number;
 }) {
   const p = state.players[side];
   const selectable =
@@ -338,7 +360,7 @@ function CharRow({ side, state, pops, targeting, onTap, koShown }: {
             ].join(' ')}
             onClick={() => onTap(side, i)}
           >
-            <CardFrame card={cardById(c.cardId)} width={92} />
+            <CardFrame card={cardById(c.cardId)} width={cardW} />
             {koVisible && <img src={IMG('back')} className="ko-back" />}
             {alive && (
               <span className="hp-chip">

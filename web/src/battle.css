@@ -3,7 +3,7 @@
 .battle-root {
   max-width: 440px;
   margin: 0 auto;
-  min-height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -86,7 +86,6 @@
   justify-content: center;
   gap: 10px;
   padding: 6px 0;
-  min-height: 132px;
 }
 .char-slot {
   position: relative;
@@ -215,8 +214,7 @@
 .my-hand {
   display: flex;
   justify-content: center;
-  padding: 12px 0 4px;
-  min-height: 140px;
+  padding: 10px 0 2px;
 }
 .hand-card {
   transition: transform 0.18s ease;
@@ -328,7 +326,7 @@
 
 /* ホーム・デッキ選択まわり */
 .home {
-  min-height: 100vh;
+  height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -445,3 +443,23 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
 .rules-body h3 { font-size: 14px; color: #ffd700; margin: 0 0 4px; }
 .rules-body p { font-size: 12.5px; color: #ccd; margin: 0; line-height: 1.7; }
 .dialog.rules .big-btn { margin-top: 10px; align-self: center; }
+
+
+/* 画面が低い端末向けの圧縮（1画面に収める） */
+@media (max-height: 780px) {
+  .battle-root { gap: 2px; padding: 4px 8px 6px; }
+  .enemy-hand { height: 26px; }
+  .hand-back { width: 24px; }
+  .pile-card { width: 30px; }
+  .pile-card.empty, .pile-card.trash-top { height: 42px; }
+  .pile { width: 34px; }
+  .pile-label { font-size: 8px; }
+  .char-row { padding: 3px 0; gap: 8px; }
+  .my-hand { padding: 8px 0 0; }
+  .action-bar { min-height: 38px; }
+  .guide-bar { padding: 4px 8px; }
+  .guide-text { font-size: 10.5px; }
+  .center-strip { padding: 0 6px; }
+  .field-empty { width: 44px; height: 62px; }
+  .log-line { font-size: 10px; }
+}

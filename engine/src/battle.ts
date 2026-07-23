@@ -334,9 +334,10 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
     },
     damageAllEnemies: (n) => {
       const targets = enemy().characters.map((_, i) => i);
+      const judgedActor = enemy().actorIndex; // 途中の強制交代に影響されない
       for (const i of targets) {
         if (state.phase === 'finished') return;
-        if (isCharAlive(state, enemyIdx, i)) applyDamage(state, enemyIdx, i, clampN(n));
+        if (isCharAlive(state, enemyIdx, i)) applyDamage(state, enemyIdx, i, clampN(n), judgedActor);
       }
     },
     damageTarget: (n) => {
@@ -500,16 +501,29 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
 
 // ---------------------------------------------------------------- ダメージ・回復の共通処理
 
-/** ダメージ適用（効果ダメージ・攻撃解決の両方が通る唯一の道） */
-function applyDamage(state: BattleState, player: PlayerIndex, charIndex: number, amount: number): number {
+/**
+ * ダメージ適用（効果ダメージ・攻撃解決の両方が通る唯一の道）。
+ * judgedActor: 「アクターかどうか」の判定に使うアクター番号。
+ * 全体攻撃の途中でアクターが戦闘不能→強制交代しても、後続の対象が
+ * 「攻撃開始時点では控えだった」ことを正しく扱うために、呼び出し側が
+ * 攻撃列の開始時点のアクターを渡せる（省略時は現在のアクター）。
+ */
+function applyDamage(
+  state: BattleState,
+  player: PlayerIndex,
+  charIndex: number,
+  amount: number,
+  judgedActor?: number,
+): number {
   if (state.phase === 'finished' || amount <= 0) return 0;
   const p = state.players[player];
   const c = p.characters[charIndex];
   if (!isCharAlive(state, player, charIndex)) return 0;
+  const actorRef = judgedActor ?? p.actorIndex;
 
   // ビコウ: 控えにいる時はダメージを受けない
   const eff = characterEffectOf(c.cardId);
-  if (eff?.standbyImmune && charIndex !== p.actorIndex) {
+  if (eff?.standbyImmune && charIndex !== actorRef) {
     pushLog(state, `${c.name}は控えのためダメージを受けない`);
     return 0;
   }
@@ -519,10 +533,10 @@ function applyDamage(state: BattleState, player: PlayerIndex, charIndex: number,
   c.damage += actual;
   pushLog(state, `${c.name}に${actual}ダメージ（残りHP: ${maxHp - c.damage}）`);
 
-  // 被ダメージ時の常時能力（ミルオン・ボーダン）
+  // 被ダメージ時の常時能力（ミルオン・ボーダン）。アクター判定は攻撃列の開始時点で行う
   if (actual > 0 && eff?.onDamaged && isCharAlive(state, player, charIndex)) {
     runEffectSafely(state, `${c.name}の被ダメージ能力`, () =>
-      eff.onDamaged!(makeApi(state, player, charIndex), actual, charIndex === p.actorIndex),
+      eff.onDamaged!(makeApi(state, player, charIndex), actual, charIndex === actorRef),
     );
   }
 
@@ -1120,10 +1134,11 @@ function resolvePendingAttack(state: BattleState): void {
 
   let dealtTotal = 0;
   let damagedCount = 0;
+  const judgedActor = defender.actorIndex; // 途中で強制交代が起きても判定は攻撃開始時点で固定
   for (const ti of pending.targets) {
     if (battleOver(state)) break;
     if (!isCharAlive(state, defenderIdx, ti)) continue;
-    const dealt = applyDamage(state, defenderIdx, ti, Math.max(0, pending.value - reduction));
+    const dealt = applyDamage(state, defenderIdx, ti, Math.max(0, pending.value - reduction), judgedActor);
     dealtTotal += dealt;
     if (dealt > 0) damagedCount++;
   }

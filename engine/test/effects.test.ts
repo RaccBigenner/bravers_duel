@@ -299,6 +299,42 @@ describe('サイズ・雷雲召喚・デッキから使用', () => {
   });
 });
 
+describe('アクター判定のタイミング（全体攻撃の途中で強制交代が起きた場合）', () => {
+  it('控えのミルオンは、直前にアクターが倒れても反射しない', () => {
+    const skill = cardById('1-A056-R') as SkillCard; // エンシェントブレス（全体攻撃）
+    const ch = charForSkill('1-A056-R');
+    // 敵: ダダ（アクター・あと1で戦闘不能）、ミルオン（控え）
+    const state = battleWith([ch.id, ORUS], '1-A056-R', [DADA, '1-A018-R'], VANILLA_ATK);
+    const dada = state.players[1].characters[0];
+    dada.damage = dada.maxHp - 1;
+    giveAp(state, 0, skill.costAp);
+    const attackerDamageBefore = state.players[0].characters.map((c) => c.damage);
+    const defenderDeckBefore = state.players[1].deck.length;
+
+    applyAction(state, { type: 'playSkill', handIndex: 0 });
+
+    // ダダは倒れてミルオンに強制交代するが、ミルオンは「攻撃開始時は控え」なので反射しない
+    expect(isCharAlive(state, 1, 0)).toBe(false);
+    expect(state.players[0].characters.map((c) => c.damage)).toEqual(attackerDamageBefore);
+    expect(state.players[1].deck).toHaveLength(defenderDeckBefore); // 自己トラッシュも起きない
+  });
+
+  it('ビコウの控え無敵も攻撃開始時点で判定される（アクターが倒れても後続の全体ダメージを受けない）', () => {
+    const skill = cardById('1-A056-R') as SkillCard;
+    const ch = charForSkill('1-A056-R');
+    // 敵: ダダ（アクター・あと1）、ビコウ（控え）
+    const state = battleWith([ch.id, ORUS], '1-A056-R', [DADA, '1-A017-R'], VANILLA_ATK);
+    const dada = state.players[1].characters[0];
+    dada.damage = dada.maxHp - 1;
+    giveAp(state, 0, skill.costAp);
+
+    applyAction(state, { type: 'playSkill', handIndex: 0 });
+
+    expect(isCharAlive(state, 1, 0)).toBe(false);
+    expect(state.players[1].characters[1].damage).toBe(0); // ビコウは無傷
+  });
+});
+
 describe('効果レジストリとサンプルデッキ', () => {
   it('効果の実装数が想定どおり（新カード追加時はここを更新）', () => {
     expect(implementedEffectCount()).toBeGreaterThanOrEqual(99);

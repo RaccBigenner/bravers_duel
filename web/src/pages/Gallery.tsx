@@ -47,6 +47,7 @@ export function Gallery({ onBack }: { onBack?: () => void }) {
   const [sortKey, setSortKey] = useState<SortKey>('code');
   const [sortDesc, setSortDesc] = useState(false);
   const [cardWidth, setCardWidth] = useState(220);
+  const [filtersOpen, setFiltersOpen] = useState(true);
 
   const toggle = (set: Set<string>, update: (s: Set<string>) => void, key: string) => {
     const next = new Set(set);
@@ -82,8 +83,13 @@ export function Gallery({ onBack }: { onBack?: () => void }) {
             </button>
           )}
           BRAVER'S DUEL カード一覧
+          <button className="chip" style={{ marginLeft: 'auto' }} onClick={() => setFiltersOpen(!filtersOpen)}>
+            {filtersOpen ? '絞り込みを閉じる ▲' : '絞り込み ▼'}
+          </button>
+          {!filtersOpen && <span className="count" style={{ marginLeft: 8 }}>{cards.length} / {ALL_CARDS.length} 枚</span>}
         </h1>
 
+        {filtersOpen && (<>
         <div className="filter-row">
           <span className="filter-label">種類</span>
           {TYPES.map((t) => (
@@ -162,6 +168,7 @@ export function Gallery({ onBack }: { onBack?: () => void }) {
           />
           <span className="count">{cards.length} / {ALL_CARDS.length} 枚</span>
         </div>
+        </>)}
       </header>
 
       <main className="gallery">

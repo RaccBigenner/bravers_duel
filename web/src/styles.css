@@ -6,15 +6,26 @@
 
 * { margin: 0; }
 
+/* アプリ的な挙動: ページ全体はスクロールせず、必要な領域だけ内部スクロール */
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 body {
   font-family: 'Murecho', 'Hiragino Sans', sans-serif;
   background: #1c1e26;
   color: #eee;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
 }
+input, textarea { -webkit-user-select: text; user-select: text; }
 
 .afs { font-family: 'AFS', 'Murecho', sans-serif; }
 
-.page { min-height: 100vh; }
+.page { height: 100dvh; overflow-y: auto; }
 
 .toolbar {
   position: sticky;
@@ -28,7 +39,7 @@ body {
   gap: 8px;
 }
 
-.toolbar h1 { font-size: 18px; }
+.toolbar h1 { font-size: 18px; display: flex; align-items: center; width: 100%; }
 
 .filter-row {
   display: flex;
