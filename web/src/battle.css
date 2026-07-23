@@ -1243,17 +1243,6 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
 .narration.mini .narr-text { font-size: 11.5px; }
 .narration.mini .narr-icon { font-size: 13px; }
 
-/* ============ シェーダーVFX層（WebGL加算発光） ============ */
-.shader-fx {
-  position: fixed;
-  inset: 0;
-  width: 100vw;
-  height: 100dvh;
-  pointer-events: none;
-  z-index: 72;
-  mix-blend-mode: screen; /* 黒=透明の加算発光 */
-}
-
 /* ============ 手札のコストチップ ============ */
 .cost-chip {
   position: absolute;

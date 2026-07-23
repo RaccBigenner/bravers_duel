@@ -12,7 +12,6 @@ import type { BattleSetup } from '../App';
 import { CardFrame } from '../CardFrame';
 import { IMG } from '../cardAssets';
 import type { NarrEvent } from '../battle/narrator';
-import { ATTR_RGB, ShaderFxCanvas, spawnShaderFx } from '../battle/ShaderFx';
 import { useBattle, type DamagePop } from '../battle/useBattle';
 import { RulesModal } from './RulesModal';
 import '../battle.css';
@@ -171,18 +170,6 @@ export function Battle({ setup, onExit, onRematch }: {
     }, 1100 + imgs.length * 170);
   }
 
-  /** キャラスロットの画面中心座標（シェーダーVFX用） */
-  function charCenter(side: 0 | 1 | undefined, charIndex: number | undefined): { x: number; y: number } | null {
-    if (side === undefined || charIndex === undefined) return null;
-    return centerOf(document.querySelector<HTMLElement>(`[data-slot="${side}-${charIndex}"]`));
-  }
-
-  /** 直前のスキル属性から光の色を決める */
-  function attrColor(): [number, number, number] | undefined {
-    const a = lastAttrsRef.current[0];
-    return a ? ATTR_RGB[a] : undefined;
-  }
-
   // ナレーションイベントに合わせて「カードが飛ぶ」物理演出
   useEffect(() => {
     if (!current) return;
@@ -225,49 +212,23 @@ export function Battle({ setup, onExit, onRematch }: {
           spawnFlight(boardRef.current, trashRefs[s].current, 1, current.card?.id);
         }, Math.max(0, current.duration - 420));
         break;
-      case 'turn': {
+      case 'turn':
         lastAttrsRef.current = [];
-        // ターンの切り替わりを光の帯で（自分=金 / 相手=赤）
-        const mid = window.innerHeight * 0.45;
-        spawnShaderFx('sweep', 0, mid, current.side === PLAYER ? [1.0, 0.85, 0.35] : [1.0, 0.4, 0.35]);
         break;
-      }
-      case 'coin':
-        spawnShaderFx('finale', window.innerWidth / 2, window.innerHeight * 0.42, [1.0, 0.85, 0.4]);
-        break;
-      case 'damage': {
+      case 'damage':
         spawnVfx(current.side, current.charIndex, [...lastAttrsRef.current.map((a) => `vfx_${a}`), 'vfx_damage']);
-        const c = charCenter(current.side, current.charIndex);
-        if (c) spawnShaderFx('impact', c.x, c.y, attrColor());
         break;
-      }
-      case 'heal': {
+      case 'heal':
         spawnVfx(current.side, current.charIndex, [...lastAttrsRef.current.map((a) => `vfx_${a}`), 'vfx_heal']);
-        const c = charCenter(current.side, current.charIndex);
-        if (c) spawnShaderFx('heal', c.x, c.y);
         break;
-      }
-      case 'ko': {
-        const c = charCenter(current.side, current.charIndex);
-        if (c) spawnShaderFx('ko', c.x, c.y);
-        break;
-      }
       case 'attr':
         spawnVfx(current.side, current.charIndex, [current.attr ? `vfx_${current.attr}` : '', 'vfx_attr'].filter(Boolean));
         break;
-      case 'lock': {
+      case 'lock':
         spawnVfx(current.side, current.charIndex, [...lastAttrsRef.current.map((a) => `vfx_${a}`), 'vfx_lock']);
-        const c = charCenter(current.side, current.charIndex);
-        if (c) spawnShaderFx('lock', c.x, c.y);
         break;
-      }
       default:
         break;
-    }
-    // チャージ系はAP置き場に光が収束する
-    if (current.kind === 'charge' || current.kind === 'chargeDeck' || current.kind === 'chargeTrash' || current.kind === 'chargeAll') {
-      const c = centerOf(apRefs[s].current);
-      if (c) spawnShaderFx('charge', c.x, c.y);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current?.key]);
@@ -395,7 +356,6 @@ export function Battle({ setup, onExit, onRematch }: {
 
   return (
     <div className={`battle-root ${finished ? '' : isMyTurn ? 'my-turn' : 'enemy-turn'} ${targeting ? 'targeting-mode' : ''}`}>
-      <ShaderFxCanvas />
       {/* ターンバッジ（常時表示） */}
       {!finished && (
         <div className={`turn-badge ${isMyTurn ? 'mine' : 'theirs'}`}>
@@ -984,17 +944,6 @@ function ResultOverlay({ state, setup, onExit, onRematch }: {
 }) {
   const won = state.winner === PLAYER;
   const reason = state.endReason === 'wipeout' ? '全滅' : state.endReason === 'deckout' ? '山札切れ' : '時間切れ';
-
-  // 勝敗のフィナーレ演出（勝ち=金の波 / 負け=青い波）
-  useEffect(() => {
-    spawnShaderFx(
-      'finale',
-      window.innerWidth / 2,
-      window.innerHeight * 0.4,
-      won ? [1.0, 0.85, 0.4] : [0.35, 0.5, 0.9],
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
   const text = won
     ? `BRAVER'S DUEL β: 「${setup.playerDeckName}」で「${setup.enemy.name}」に勝利！（${reason}・${state.turn}ターン）`
     : `BRAVER'S DUEL β: 「${setup.enemy.name}」に敗北…リベンジ求む（${state.turn}ターン）`;
