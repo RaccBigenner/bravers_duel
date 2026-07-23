@@ -613,3 +613,56 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
   .zone-col { gap: 8px; }
   .char-status { bottom: -12px; }
 }
+
+/* ============ 使用可能カードの明確な発光枠（前面レイヤー） ============ */
+.hand-card.playable::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 3px solid #6fe0ff;
+  border-radius: 7px;
+  box-shadow:
+    0 0 10px 2px rgba(110, 220, 255, 0.9),
+    inset 0 0 6px 1px rgba(110, 220, 255, 0.55);
+  pointer-events: none;
+  z-index: 20;
+  animation: playable-pulse 1.1s ease-in-out infinite alternate;
+}
+@keyframes playable-pulse {
+  from { opacity: 0.65; }
+  to { opacity: 1; }
+}
+
+/* ============ 手札カードの拡大プレビュー ============ */
+.overlay.preview { background: rgba(0, 0, 0, 0.72); z-index: 85; }
+.preview-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  animation: preview-in 0.18s ease;
+}
+@keyframes preview-in {
+  from { transform: scale(0.8); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+.preview-inner .card-frame { box-shadow: 0 8px 30px rgba(0, 0, 0, 0.8); }
+
+/* ============ 中央のガイド帯（薄く） ============ */
+.center-strip { padding: 0 8px; gap: 8px; min-height: 0; }
+.guide-zone {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: #cdd7ef;
+  background: rgba(10, 12, 20, 0.55);
+  border: 1px dashed rgba(120, 140, 190, 0.5);
+  border-radius: 8px;
+  padding: 5px 9px;
+}
+.field-empty { width: 40px; height: 56px; font-size: 8px; }
+
+@media (max-height: 780px) {
+  .guide-zone { font-size: 10.5px; padding: 4px 7px; }
+}

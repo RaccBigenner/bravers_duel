@@ -25,7 +25,7 @@ export interface DamagePop {
   amount: number; // マイナスなら回復
 }
 
-const AI_THINK_MS = 500;
+const AI_THINK_MS = 650;
 const PLAYER = 0 as const;
 const ENEMY = 1 as const;
 

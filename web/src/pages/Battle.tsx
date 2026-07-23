@@ -59,12 +59,11 @@ export function Battle({ setup, onExit, onRematch }: {
   onRematch: () => void;
 }) {
   const { state, busy, current, pops, koShown, perform, myActions, isMyTurn } = useBattle(setup.playerDeck, setup.enemy.deck);
-  const [selectedHand, setSelectedHand] = useState<number | null>(null);
+  const [previewHand, setPreviewHand] = useState<number | null>(null);
   const [chargeSel, setChargeSel] = useState<Set<number>>(new Set());
   const [targeting, setTargeting] = useState<Targeting>(null);
   const [confirmExit, setConfirmExit] = useState(false);
   const [showRules, setShowRules] = useState(false);
-  const [guideOn, setGuideOn] = useState(true);
   const [flights, setFlights] = useState<Flight[]>([]);
 
   const vh = useViewportHeight();
@@ -141,7 +140,7 @@ export function Battle({ setup, onExit, onRematch }: {
   // フェーズが変わったら選択状態をリセット
   useEffect(() => {
     setChargeSel(new Set());
-    setSelectedHand(null);
+    setPreviewHand(null);
   }, [state.phase, isMyTurn]);
 
   const handPlayable = useMemo(() => {
@@ -157,7 +156,7 @@ export function Battle({ setup, onExit, onRematch }: {
   }, [myActions]);
 
   function act(action: BattleAction) {
-    setSelectedHand(null);
+    setPreviewHand(null);
     setTargeting(null);
     try {
       perform(action);
@@ -166,22 +165,23 @@ export function Battle({ setup, onExit, onRematch }: {
     }
   }
 
-  function playSelected() {
-    if (selectedHand === null) return;
-    const card = cardById(me.hand[selectedHand]);
+  /** プレビュー中のカードを使う（必要なら対象選択モードへ） */
+  function playFromPreview(handIndex: number) {
+    const card = cardById(me.hand[handIndex]);
+    setPreviewHand(null);
     if (card.type === 'skill') {
       const eff = skillEffectOf(card.id);
-      if (card.valueType === 'heal') return setTargeting({ kind: 'allyHeal', handIndex: selectedHand });
+      if (card.valueType === 'heal') return setTargeting({ kind: 'allyHeal', handIndex });
       if (card.valueType === 'attack' && eff?.targeting === 'choose') {
-        return setTargeting({ kind: 'enemy', handIndex: selectedHand });
+        return setTargeting({ kind: 'enemy', handIndex });
       }
-      act({ type: 'playSkill', handIndex: selectedHand });
+      act({ type: 'playSkill', handIndex });
     } else if (card.type === 'character') {
-      act({ type: 'playCharacter', handIndex: selectedHand });
+      act({ type: 'playCharacter', handIndex });
     } else if (card.type === 'equipment') {
-      setTargeting({ kind: 'allyEquip', handIndex: selectedHand });
+      setTargeting({ kind: 'allyEquip', handIndex });
     } else if (card.type === 'field') {
-      act({ type: 'playField', handIndex: selectedHand });
+      act({ type: 'playField', handIndex });
     }
   }
 
@@ -211,19 +211,20 @@ export function Battle({ setup, onExit, onRematch }: {
       return;
     }
     setTargeting(null);
-    setSelectedHand(selectedHand === i ? null : i);
+    setPreviewHand(i);
   }
 
-  /** 選んだカードをまとめてチャージ（番号がずれないよう大きい方から） */
-  function chargeSelected() {
+  /** 選んだカードをまとめてチャージして、そのままターンエンド */
+  function chargeSelectedAndEndTurn() {
     const indexes = [...chargeSel].sort((a, b) => b - a);
     setChargeSel(new Set());
-    for (const i of indexes) {
-      try {
+    try {
+      for (const i of indexes) {
         perform({ type: 'charge', handIndex: i });
-      } catch (e) {
-        console.warn(e);
       }
+      perform({ type: 'endTurn' });
+    } catch (e) {
+      console.warn(e);
     }
   }
 
@@ -235,6 +236,7 @@ export function Battle({ setup, onExit, onRematch }: {
       <div className="info-bar">
         <span className="deck-name">{setup.enemy.name}</span>
         <span className="turn-label">ターン{state.turn}・{isMyTurn ? 'あなた' : '相手'}</span>
+        <button className="chip small" onClick={() => setShowRules(true)}>？ルール</button>
         <button className="chip small" onClick={() => setConfirmExit(true)}>投了</button>
       </div>
 
@@ -257,13 +259,13 @@ export function Battle({ setup, onExit, onRematch }: {
             />
           </div>
 
-          {/* 中央: フィールド + ログ */}
+          {/* 中央: フィールド + ガイドテキスト（薄い帯） */}
           <div className="center-strip">
             <div className="field-slot">
-              {fieldCard ? <CardFrame card={fieldCard} width={50} /> : <div className="field-empty">FIELD</div>}
+              {fieldCard ? <CardFrame card={fieldCard} width={40} /> : <div className="field-empty">FIELD</div>}
             </div>
-            <div className="log-box">
-              {state.log.slice(-2).map((l, i) => <div key={i} className="log-line">{l}</div>)}
+            <div className="guide-zone">
+              {guideText(state.phase, isMyTurn, busy, targeting !== null, guardPhase)}
             </div>
           </div>
 
@@ -290,10 +292,10 @@ export function Battle({ setup, onExit, onRematch }: {
               key={`${id}-${i}`}
               className={[
                 'hand-card',
-                selectedHand === i || picked ? 'raised' : '',
+                picked ? 'raised' : '',
                 playable || chargeable ? 'playable' : '',
               ].join(' ')}
-              style={{ marginLeft: i === 0 ? 0 : -Math.round(cardW * 0.37), zIndex: selectedHand === i ? 50 : i }}
+              style={{ marginLeft: i === 0 ? 0 : -Math.round(cardW * 0.37), zIndex: i }}
               onClick={() => tapHand(i)}
             >
               <CardFrame card={card} width={cardW} upright />
@@ -302,21 +304,6 @@ export function Battle({ setup, onExit, onRematch }: {
           );
         })}
       </div>
-
-      {/* 初心者ガイド */}
-      {guideOn && !finished && (
-        <div className="guide-bar">
-          <span className="guide-text">{guideText(state.phase, isMyTurn, busy, targeting !== null, guardPhase)}</span>
-          <button className="chip small" onClick={() => setShowRules(true)}>？ルール</button>
-          <button className="chip small ghost" onClick={() => setGuideOn(false)}>OFF</button>
-        </div>
-      )}
-      {!guideOn && !finished && (
-        <div className="guide-bar mini">
-          <button className="chip small" onClick={() => setShowRules(true)}>？</button>
-          <button className="chip small ghost" onClick={() => setGuideOn(true)}>ガイド</button>
-        </div>
-      )}
 
       {/* アクションバー */}
       <div className="action-bar">
@@ -334,23 +321,19 @@ export function Battle({ setup, onExit, onRematch }: {
         ) : !isMyTurn || finished ? (
           <span className="hint">{finished ? 'バトル終了' : '相手のターン…'}</span>
         ) : state.phase === 'play' ? (
-          <>
-            {selectedHand !== null && handPlayable.has(selectedHand) && (
-              <button className="big-btn slim" onClick={playSelected}>このカードを使う</button>
-            )}
-            <button className="chip" onClick={() => act({ type: 'endPlay' })}>チャージへ →</button>
-          </>
+          <button className="chip" onClick={() => act({ type: 'endPlay' })}>チャージへ →</button>
         ) : (
           <>
             {chargeSel.size > 0 ? (
               <>
-                <button className="big-btn slim" onClick={chargeSelected}>{chargeSel.size}枚チャージ</button>
+                <button className="big-btn slim" onClick={chargeSelectedAndEndTurn}>
+                  {chargeSel.size}枚チャージしてターンエンド
+                </button>
                 <button className="chip" onClick={() => setChargeSel(new Set())}>選び直す</button>
               </>
             ) : (
-              <span className="hint">チャージするカードをタップ（複数OK）</span>
+              <button className="chip" onClick={() => act({ type: 'endTurn' })}>チャージせずターンエンド</button>
             )}
-            <button className="chip" onClick={() => act({ type: 'endTurn' })}>ターンエンド</button>
           </>
         )}
       </div>
@@ -385,6 +368,23 @@ export function Battle({ setup, onExit, onRematch }: {
 
       {/* 飛んでいくカード */}
       {flights.map((f) => <FlyGhost key={f.key} flight={f} />)}
+
+      {/* 手札カードの拡大プレビュー */}
+      {previewHand !== null && previewHand < me.hand.length && (
+        <div className="overlay preview" onClick={() => setPreviewHand(null)}>
+          <div className="preview-inner" onClick={(e) => e.stopPropagation()}>
+            <CardFrame card={cardById(me.hand[previewHand])} width={Math.min(300, Math.max(230, window.innerWidth * 0.72))} upright />
+            <div className="dialog-btns">
+              {handPlayable.has(previewHand) ? (
+                <button className="big-btn slim" onClick={() => playFromPreview(previewHand)}>このカードを使う</button>
+              ) : (
+                <span className="hint">{state.phase === 'play' ? '今は使えないカード（APや属性を確認）' : ''}</span>
+              )}
+              <button className="chip" onClick={() => setPreviewHand(null)}>とじる</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ルール説明 */}
       {showRules && <RulesModal onClose={() => setShowRules(false)} />}
@@ -426,11 +426,11 @@ function Formation({ side, state, pops, targeting, onTap, koShown, cardW }: {
 }) {
   const p = state.players[side];
   const n = p.characters.length;
-  const cardH = cardW * 1.39;
-  const frontW = Math.round(cardW * 1.1);
-  const backW = Math.round(cardW * 0.84);
-  const width = cardW * 2.62;
-  const height = cardH * 1.4;
+  const frontW = Math.round(cardW * 1.08);
+  const backW = Math.round(cardW * 0.82);
+  // 前面1枚と控え2枚が重ならない幅（控え2枚を両端、前面を中央に）
+  const width = backW * 2 + frontW + 10;
+  const height = frontW * 1.39 + cardW * 0.3;
   const selectable =
     (targeting?.kind === 'enemy' && side === ENEMY) ||
     ((targeting?.kind === 'allyHeal' || targeting?.kind === 'allyEquip') && side === PLAYER);
