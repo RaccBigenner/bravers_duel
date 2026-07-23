@@ -72,6 +72,10 @@ export interface PendingAttack {
   chosenIndex?: number; // choose の時だけ
   noGuard: boolean;
   attackerChar: number; // 使用キャラの番号
+  /** 使用キャラが宣言時点でアクターだったか（アクター以外の使用ではローテーションしない） */
+  attackerWasActor: boolean;
+  /** ガード割り込み。軽減が適用されるのはガード使用者（防御側アクター）への被弾のみ */
+  guard: { charIndex: number; value: number } | null;
 }
 
 export interface BattleState {
@@ -316,9 +320,19 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
       }
     },
     addGuardValue: (n) => {
-      if (state.pendingAttack && clampN(n) > 0) {
-        state.pendingAttack.value = Math.max(0, state.pendingAttack.value - clampN(n));
-        pushLog(state, `P${owner + 1}のガード強化+${clampN(n)}（残りダメージ${state.pendingAttack.value}）`);
+      const pending = state.pendingAttack;
+      if (pending && clampN(n) > 0) {
+        if (pending.guard) {
+          pending.guard.value += clampN(n);
+          pushLog(
+            state,
+            `P${owner + 1}のガード強化+${clampN(n)}（残りダメージ${Math.max(0, pending.value - pending.guard.value)}）`,
+          );
+        } else {
+          // ガード外から呼ばれた場合は攻撃自体を弱める
+          pending.value = Math.max(0, pending.value - clampN(n));
+          pushLog(state, `P${owner + 1}のガード強化+${clampN(n)}（残りダメージ${pending.value}）`);
+        }
       }
     },
 
@@ -552,8 +566,10 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
       if (card.valueType === 'attack') {
         beginAttack(state, card, ownerChar, undefined, true);
       } else {
+        const wasActor = ownerChar === me().actorIndex;
         resolveNonAttack(state, card, ownerChar);
-        rotateActorAfterSkill(state, owner);
+        if (wasActor) rotateActorAfterSkill(state, owner);
+        else if (state.skipRotationFor === owner) state.skipRotationFor = null;
       }
     },
     log: (message) => pushLog(state, message),
@@ -843,13 +859,14 @@ export function effectiveSkillCost(
   return Math.max(0, cost);
 }
 
-/** このスキルを使えるキャラの候補一覧 */
+/** このスキルを使えるキャラの候補一覧。guardはアクター専用（控えは使えない） */
 export function eligibleUsingChars(state: BattleState, player: PlayerIndex, card: SkillCard): number[] {
   const p = state.players[player];
   const eff = skillEffectOf(card.id);
-  const candidates = eff?.anyCharacterCanUse
-    ? p.characters.map((_, i) => i).filter((i) => isCharAlive(state, player, i))
-    : [p.actorIndex];
+  const candidates =
+    card.valueType !== 'guard' && eff?.anyCharacterCanUse
+      ? p.characters.map((_, i) => i).filter((i) => isCharAlive(state, player, i))
+      : [p.actorIndex];
   return candidates.filter((ci) => containsAll(effectiveAttributes(state, player, ci), card.conditionAttribute));
 }
 
@@ -922,6 +939,13 @@ export function legalActions(state: BattleState): BattleAction[] {
           for (const ci of eligibleUsingChars(state, state.active, card)) {
             actions.push({ type: 'playSkill', handIndex, usingIndex: ci });
           }
+        } else if (card.valueType === 'heal' && eff?.healTargeting === 'ko') {
+          // 復活スキル: 戦闘不能の味方だけが対象。誰も倒れていなければ使えない
+          p.characters.forEach((_, i) => {
+            if (!isCharAlive(state, state.active, i)) {
+              actions.push({ type: 'playSkill', handIndex, healTargetIndex: i });
+            }
+          });
         } else if (card.valueType === 'heal') {
           p.characters.forEach((c, i) => {
             if (isCharAlive(state, state.active, i)) {
@@ -1005,8 +1029,13 @@ export function applyAction(state: BattleState, action: BattleAction): void {
       if (card.valueType === 'attack') {
         beginAttack(state, card, usingChar, action.targetIndex);
       } else {
+        const wasActor = usingChar === p.actorIndex;
         resolveNonAttack(state, card, usingChar, action.healTargetIndex);
-        if (!battleOver(state)) rotateActorAfterSkill(state, state.active);
+        // アクター以外（控え）がスキルを使った場合はローテーションしない
+        if (!battleOver(state)) {
+          if (wasActor) rotateActorAfterSkill(state, state.active);
+          else if (state.skipRotationFor === state.active) state.skipRotationFor = null;
+        }
       }
       return;
     }
@@ -1033,15 +1062,19 @@ export function applyAction(state: BattleState, action: BattleAction): void {
         pushLog(state, `※${card.name}の効果は未実装: 「${card.effectText}」`);
       }
 
-      const before = pending.value;
-      pending.value = Math.max(0, pending.value - card.baseValue);
+      // ガードはアクター本人が使い、軽減されるのは本人への被弾のみ（全体攻撃の他対象には効かない）
+      pending.guard = { charIndex: p.actorIndex, value: card.baseValue };
+      // 演出順: カットイン（割り込み宣言）→ ガード効果 → 解決
+      pushLog(
+        state,
+        `${card.name}で割り込み（${pending.value} → 残りダメージ${Math.max(0, pending.value - card.baseValue)}）`,
+      );
       const eff = skillEffectOf(card.id);
       if (eff?.onGuardDeclare) {
         runEffectSafely(state, `${card.name}のguard効果`, () =>
           eff.onGuardDeclare!(makeApi(state, defender, p.actorIndex)),
         );
       }
-      pushLog(state, `${card.name}で割り込み（${before} → 残りダメージ${state.pendingAttack?.value ?? 0}）`);
 
       // ガードは1回の攻撃に1枚まで。使ったら即解決する
       if (state.phase === 'guard') {
@@ -1234,6 +1267,8 @@ function beginAttack(
     chosenIndex: eff?.targeting === 'choose' ? targetIndex : undefined,
     noGuard: forceNoGuard || (eff?.noGuard ?? false),
     attackerChar: usingChar,
+    attackerWasActor: usingChar === state.players[state.active].actorIndex,
+    guard: null,
   };
 
   // ダメージ修正（スキル効果 → 使用キャラの常時能力の順）
@@ -1290,8 +1325,10 @@ function resolvePendingAttack(state: BattleState): void {
   for (const ti of targets) {
     if (battleOver(state)) break;
     if (!isCharAlive(state, defenderIdx, ti)) continue;
+    // ガードの軽減はガード使用者（防御側アクター）本人への被弾にだけ効く
+    const guardCut = pending.guard && ti === pending.guard.charIndex ? pending.guard.value : 0;
     // 複数対象の処理中は陣形（ポジション）を維持し、交代は全処理後に行う
-    const dealt = applyDamage(state, defenderIdx, ti, Math.max(0, pending.value - reduction), judgedActor, true);
+    const dealt = applyDamage(state, defenderIdx, ti, Math.max(0, pending.value - reduction - guardCut), judgedActor, true);
     dealtTotal += dealt;
     if (dealt > 0) damagedCount++;
   }
@@ -1310,18 +1347,32 @@ function resolvePendingAttack(state: BattleState): void {
     }
   }
 
+  const wasActor = pending.attackerWasActor;
   state.pendingAttack = null;
   if (state.phase === 'finished') return;
   state.phase = 'play';
-  rotateActorAfterSkill(state, attackerIdx);
+  // アクター以外（控え）がスキルを使った場合はローテーションしない
+  if (wasActor) rotateActorAfterSkill(state, attackerIdx);
+  else if (state.skipRotationFor === attackerIdx) state.skipRotationFor = null;
 }
 
 function resolveNonAttack(state: BattleState, card: SkillCard, usingChar: number, healTargetIndex?: number): void {
   const me = state.players[state.active];
   if (card.valueType === 'heal') {
-    const target = healTargetIndex ?? me.actorIndex;
-    if (isCharAlive(state, state.active, target)) {
-      healCharacter(state, state.active, target, card.baseValue);
+    if (skillEffectOf(card.id)?.healTargeting === 'ko') {
+      // 復活: 選んだ戦闘不能キャラをHP=baseValue（最低1）で復活させる
+      const target = healTargetIndex ?? me.characters.findIndex((_, i) => !isCharAlive(state, state.active, i));
+      if (target >= 0 && !isCharAlive(state, state.active, target)) {
+        const c = me.characters[target];
+        const hp = Math.max(1, card.baseValue);
+        c.damage = Math.max(0, maxHpOf(state, state.active, target) - hp);
+        pushLog(state, `P${state.active + 1}の${c.name}が復活（HP${hp}）`);
+      }
+    } else {
+      const target = healTargetIndex ?? me.actorIndex;
+      if (isCharAlive(state, state.active, target)) {
+        healCharacter(state, state.active, target, card.baseValue);
+      }
     }
   }
   const eff = skillEffectOf(card.id);

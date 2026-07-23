@@ -154,14 +154,20 @@ describe('スキルの効果', () => {
     expect(state.players[0].deck).toHaveLength(deckBefore - 4);
   });
 
-  it('復活: ティアグレイスで戦闘不能の味方が戻る', () => {
+  it('復活: ティアグレイスは戦闘不能の味方だけを対象に選んで復活させる', () => {
     const skill = cardById('1-A040-USR') as SkillCard;
     const state = battleWith(['1-A019-R', ORUS], '1-A040-USR', [DADA, OWU], VANILLA_ATK);
     const fallen = state.players[0].characters[1]; // オルスを戦闘不能に
     fallen.damage = fallen.maxHp;
     giveAp(state, 0, skill.costAp);
 
-    applyAction(state, { type: 'playSkill', handIndex: 0, healTargetIndex: 0 });
+    // 合法手には戦闘不能キャラ（1番）だけが対象として並ぶ
+    const heals = legalActions(state).filter(
+      (a) => a.type === 'playSkill' && a.handIndex === 0 && a.healTargetIndex !== undefined,
+    );
+    expect(heals).toEqual([{ type: 'playSkill', handIndex: 0, healTargetIndex: 1 }]);
+
+    applyAction(state, { type: 'playSkill', handIndex: 0, healTargetIndex: 1 });
     expect(fallen.damage).toBeLessThan(fallen.maxHp); // 復活している
   });
 
@@ -532,5 +538,50 @@ describe('効果レジストリとサンプルデッキ', () => {
     for (const d of decks) {
       expect(d.deck.cardIds).toHaveLength(DECK_SIZE);
     }
+  });
+});
+
+describe('ガードとローテーションの仕様（2026-07-23 社長指摘）', () => {
+  it('ガードの軽減はガード使用者本人のみ（全体攻撃の他対象はフルダメージ）', () => {
+    const atkChar = charForSkill('1-A053-R'); // トルネード（敵全体4）
+    const guardChar = charForSkill('1-A122-C'); // ラージシールド（守6）
+    const state = battleWith([atkChar.id], '1-A053-R', [guardChar.id, DADA], '1-A122-C');
+    giveAp(state, 0, 6);
+    giveAp(state, 1, 2);
+
+    applyAction(state, { type: 'playSkill', handIndex: 0 });
+    expect(state.phase).toBe('guard');
+    applyAction(state, { type: 'playGuard', handIndex: 0 });
+
+    expect(state.players[1].characters[0].damage).toBe(0); // 本人は 4-6 → 0
+    expect(state.players[1].characters[1].damage).toBe(4); // 控えはフルの4
+  });
+
+  it('ガードはアクターしか使えない（控えだけが条件を満たしても選べない）', () => {
+    // P1のアクターDADA(雷氷土)は守を持たず、控えだけが守を持つ
+    const guardChar = charForSkill('1-A122-C');
+    const state = battleWith([ORUS], VANILLA_ATK, [DADA, guardChar.id], '1-A122-C');
+    giveAp(state, 0, 1);
+    giveAp(state, 1, 2);
+
+    applyAction(state, { type: 'playSkill', handIndex: 0 });
+    if (state.phase === 'guard') {
+      const guards = legalActions(state).filter((a) => a.type === 'playGuard');
+      expect(guards).toHaveLength(0); // 控えの守ではガードできない
+      applyAction(state, { type: 'pass' });
+    }
+    expect(state.players[1].characters[0].damage).toBe(4); // 素通しダメージ
+  });
+
+  it('控えがスキルを使ってもアクターはローテーションしない', () => {
+    const benchChar = charForSkill('1-A076-R'); // ショットインフォレスト（控えから使える攻撃）
+    const state = battleWith([ORUS, benchChar.id], '1-A076-R', [DADA, OWU], VANILLA_ATK);
+    giveAp(state, 0, 2);
+    expect(state.players[0].actorIndex).toBe(0);
+
+    applyAction(state, { type: 'playSkill', handIndex: 0, usingIndex: 1 });
+    if (state.phase === 'guard') applyAction(state, { type: 'pass' });
+
+    expect(state.players[0].actorIndex).toBe(0); // 控えの使用ではスイッチしない
   });
 });

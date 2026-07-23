@@ -6,6 +6,7 @@ import {
   skillEffectOf,
   type BattleAction,
   type BattleState,
+  type CharacterCard,
 } from '@bravers/engine';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { BattleSetup } from '../App';
@@ -99,7 +100,60 @@ function safeCard(id: string) {
   }
 }
 
-export function Battle({ setup, onExit, onRematch }: {
+/** バトルで使う画像を全て先読みする（カード表示のコンマ数秒の遅れを無くす） */
+function preloadBattleImages(setup: BattleSetup): Promise<void> {
+  const names = new Set<string>(['back', 'vfx_damage', 'vfx_heal', 'vfx_attr', 'vfx_lock', 'vfx_guard']);
+  const addCard = (id: string) => {
+    names.add(id);
+    const card = safeCard(id);
+    if (!card) return;
+    const attrs = card.type === 'character' ? card.attribute : card.type === 'skill' ? card.conditionAttribute : [];
+    for (const a of attrs) {
+      names.add(a); // 属性アイコン
+      names.add(`vfx_${a}`); // 属性VFX
+    }
+  };
+  for (const deck of [setup.playerDeck, setup.enemy.deck]) {
+    deck.characterIds.forEach(addCard);
+    deck.cardIds.forEach(addCard);
+  }
+  const loadOne = (name: string) =>
+    new Promise<void>((resolve) => {
+      const img = new Image();
+      img.onload = () => resolve();
+      img.onerror = () => resolve(); // 無い画像（css製VFX等）は気にしない
+      img.src = IMG(name);
+    });
+  const all = Promise.all([...names].map(loadOne)).then(() => undefined);
+  const timeout = new Promise<void>((resolve) => window.setTimeout(resolve, 10000)); // 保険
+  return Promise.race([all, timeout]);
+}
+
+export function Battle(props: { setup: BattleSetup; onExit: () => void; onRematch: () => void }) {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    setReady(false);
+    preloadBattleImages(props.setup).then(() => {
+      if (alive) setReady(true);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [props.setup]);
+
+  if (!ready) {
+    return (
+      <div className="battle-loading">
+        <span className="loading-emblem">⚔</span>
+        <p>デュエル準備中…</p>
+      </div>
+    );
+  }
+  return <BattleInner {...props} />;
+}
+
+function BattleInner({ setup, onExit, onRematch }: {
   setup: BattleSetup;
   onExit: () => void;
   onRematch: () => void;
@@ -222,12 +276,16 @@ export function Battle({ setup, onExit, onRematch }: {
           lastAttrsRef.current = [];
         }
         // 使用キャラに「詠唱」エフェクト（属性の光 + 立ち上る詠唱リング）
+        // ガードはガード専用の盾VFX
         if (current.charIndex !== undefined && current.side !== undefined) {
           lastCasterRef.current = { side: current.side, charIndex: current.charIndex };
-          spawnVfx(current.side, current.charIndex, [
-            'css:cast',
-            ...lastAttrsRef.current.slice(0, 2).map((a) => `vfx_${a}`),
-          ]);
+          spawnVfx(
+            current.side,
+            current.charIndex,
+            current.kind === 'guard'
+              ? ['vfx_guard', 'css:pguard']
+              : ['css:cast', ...lastAttrsRef.current.slice(0, 2).map((a) => `vfx_${a}`)],
+          );
         }
         // ガードは「いくつ → いくつ」を頭上に大きく出す
         if (current.kind === 'guard' && current.amountBefore !== undefined) {
@@ -508,6 +566,7 @@ export function Battle({ setup, onExit, onRematch }: {
       <div className="board-wrap">
         <div className="board" ref={boardRef}>
           {/* 相手の手札（裏向きの扇） */}
+          {/* 相手の手札: 自分と同じ扇状で、枚数がひと目でわかる間隔にする */}
           <div className="enemy-hand" ref={handRefE}>
             {foe.hand.map((_, i) => {
               const off = i - (foe.hand.length - 1) / 2;
@@ -517,8 +576,9 @@ export function Battle({ setup, onExit, onRematch }: {
                   src={IMG('back')}
                   className="hand-back"
                   style={{
-                    marginLeft: i === 0 ? 0 : -22,
-                    transform: `translateY(${Math.round(off * off * 1.4)}px) rotate(${180 - off * 5}deg)`,
+                    left: `calc(50% + ${Math.round(off * 24)}px)`,
+                    zIndex: i,
+                    transform: `translateX(-50%) translateY(${Math.round(off * off * 1.2)}px) rotate(${180 - off * 5}deg)`,
                   }}
                 />
               );
@@ -885,13 +945,14 @@ function Formation({ side, state, pops, targeting, onTap, koShown, cardW, vfxLis
                 </div>
                 <div className="status-row">
                   <span className="hp-num">{hp}/{maxHp}</span>
-                  {extras.length > 0 && (
-                    <span className="extra-attrs">
-                      {extras.slice(0, 4).map((a, k) => (
-                        <img key={k} src={IMG(a)} alt={a} title={`追加属性: ${a}`} />
-                      ))}
-                    </span>
-                  )}
+                  <span className="attr-icons">
+                    {(cardById(c.cardId) as CharacterCard).attribute.slice(0, 5).map((a, k) => (
+                      <img key={`b${k}`} src={IMG(a)} alt={a} title={`属性: ${a}`} />
+                    ))}
+                    {extras.slice(0, 3).map((a, k) => (
+                      <img key={`x${k}`} className="added" src={IMG(a)} alt={a} title={`追加属性: ${a}`} />
+                    ))}
+                  </span>
                 </div>
               </div>
             )}

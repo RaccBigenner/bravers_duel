@@ -112,6 +112,8 @@ export interface SkillEffect {
   noGuard?: boolean;
   /** 条件属性を（アクターでなく）生きている味方の誰かが満たせばよい。使用キャラはその味方になる */
   anyCharacterCanUse?: boolean;
+  /** healの対象: 'ko' = 戦闘不能の味方だけを選んで復活させる（ティアグレイスなど） */
+  healTargeting?: 'ko';
   /** コストの修正（神速剣など）。効果APIで現在の状況を見て差分を返す */
   costDelta?(api: EffectApi): number;
   /** 攻撃の宣言時（ダメージ修正はここで） */

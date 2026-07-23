@@ -126,7 +126,7 @@ export const VOL1_EFFECTS: Record<string, CardEffect> = {
   },
   '1-A040-USR': {
     kind: 'skill',
-    onPlay: (api) => api.reviveAlly(1),
+    healTargeting: 'ko', // 対象は戦闘不能の味方だけ。選んだキャラを復活させる
   },
   '1-A041-SR': {
     kind: 'skill',
