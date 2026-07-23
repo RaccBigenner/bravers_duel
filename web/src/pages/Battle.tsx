@@ -11,7 +11,9 @@ import { useMemo, useState } from 'react';
 import type { BattleSetup } from '../App';
 import { CardFrame } from '../CardFrame';
 import { IMG, IMG_PNG } from '../cardAssets';
-import { useBattle, type DamagePop, type Reveal } from '../battle/useBattle';
+import { useBattle, type DamagePop } from '../battle/useBattle';
+import type { NarrEvent } from '../battle/narrator';
+import { RulesModal } from './RulesModal';
 import '../battle.css';
 
 const PLAYER = 0 as const;
@@ -28,15 +30,17 @@ export function Battle({ setup, onExit, onRematch }: {
   onExit: () => void;
   onRematch: () => void;
 }) {
-  const { state, pops, reveal, perform, myActions, isMyTurn } = useBattle(setup.playerDeck, setup.enemy.deck);
+  const { state, busy, current, pops, koShown, perform, myActions, isMyTurn } = useBattle(setup.playerDeck, setup.enemy.deck);
   const [selectedHand, setSelectedHand] = useState<number | null>(null);
   const [targeting, setTargeting] = useState<Targeting>(null);
   const [confirmExit, setConfirmExit] = useState(false);
+  const [showRules, setShowRules] = useState(false);
+  const [guideOn, setGuideOn] = useState(true);
 
   const me = state.players[PLAYER];
   const foe = state.players[ENEMY];
   const finished = state.phase === 'finished';
-  const guardPhase = state.phase === 'guard' && isMyTurn; // 自分が割り込む側
+  const guardPhase = state.phase === 'guard' && isMyTurn && !busy; // 自分が割り込む側（演出が終わってから）
 
   // 手札ごとの「できること」
   const handPlayable = useMemo(() => {
@@ -100,7 +104,7 @@ export function Battle({ setup, onExit, onRematch }: {
   }
 
   function tapHand(i: number) {
-    if (finished || !isMyTurn) return;
+    if (finished || !isMyTurn || busy) return;
     if (state.phase === 'charge') {
       act({ type: 'charge', handIndex: i });
       return;
@@ -132,7 +136,7 @@ export function Battle({ setup, onExit, onRematch }: {
       <ZoneRow side={ENEMY} p={foe} />
 
       {/* 相手キャラクター */}
-      <CharRow side={ENEMY} state={state} pops={pops} targeting={targeting} onTap={tapChar} />
+      <CharRow side={ENEMY} state={state} pops={pops} targeting={targeting} onTap={tapChar} koShown={koShown} />
 
       {/* 中央: フィールド + ログ */}
       <div className="center-strip">
@@ -149,7 +153,7 @@ export function Battle({ setup, onExit, onRematch }: {
       </div>
 
       {/* 自分キャラクター */}
-      <CharRow side={PLAYER} state={state} pops={pops} targeting={targeting} onTap={tapChar} />
+      <CharRow side={PLAYER} state={state} pops={pops} targeting={targeting} onTap={tapChar} koShown={koShown} />
 
       {/* 自分の資源ゾーン */}
       <ZoneRow side={PLAYER} p={me} />
@@ -177,9 +181,26 @@ export function Battle({ setup, onExit, onRematch }: {
         })}
       </div>
 
+      {/* 初心者ガイド */}
+      {guideOn && !finished && (
+        <div className="guide-bar">
+          <span className="guide-text">{guideText(state.phase, isMyTurn, busy, targeting !== null, guardPhase)}</span>
+          <button className="chip small" onClick={() => setShowRules(true)}>？ルール</button>
+          <button className="chip small ghost" onClick={() => setGuideOn(false)}>ガイドOFF</button>
+        </div>
+      )}
+      {!guideOn && !finished && (
+        <div className="guide-bar mini">
+          <button className="chip small" onClick={() => setShowRules(true)}>？</button>
+          <button className="chip small ghost" onClick={() => setGuideOn(true)}>ガイドON</button>
+        </div>
+      )}
+
       {/* アクションバー */}
       <div className="action-bar">
-        {targeting ? (
+        {busy ? (
+          <span className="hint">…</span>
+        ) : targeting ? (
           <>
             <span className="hint">
               {targeting.kind === 'enemy' ? '攻撃する相手を選んでください' : '対象の味方を選んでください'}
@@ -225,8 +246,16 @@ export function Battle({ setup, onExit, onRematch }: {
         </div>
       )}
 
-      {/* カード公開演出 */}
-      {reveal && <RevealOverlay reveal={reveal} />}
+      {/* ナレーション（今起きていること） */}
+      {current && <NarrationBanner ev={current} />}
+      {current && current.card && ['play', 'guard', 'field', 'equip'].includes(current.kind) && (
+        <div className={`reveal ${current.side === ENEMY ? 'from-top' : 'from-bottom'}`}>
+          <CardFrame card={current.card} width={200} />
+        </div>
+      )}
+
+      {/* ルール説明 */}
+      {showRules && <RulesModal onClose={() => setShowRules(false)} />}
 
       {/* 投了確認 */}
       {confirmExit && (
@@ -241,8 +270,8 @@ export function Battle({ setup, onExit, onRematch }: {
         </div>
       )}
 
-      {/* リザルト */}
-      {finished && <ResultOverlay state={state} setup={setup} onExit={onExit} onRematch={onRematch} />}
+      {/* リザルト（演出が終わってから） */}
+      {finished && !busy && <ResultOverlay state={state} setup={setup} onExit={onExit} onRematch={onRematch} />}
     </div>
   );
 }
@@ -277,12 +306,13 @@ function ZoneRow({ side, p }: { side: 0 | 1; p: BattleState['players'][number] }
 }
 
 /** キャラクターの列 */
-function CharRow({ side, state, pops, targeting, onTap }: {
+function CharRow({ side, state, pops, targeting, onTap, koShown }: {
   side: 0 | 1;
   state: BattleState;
   pops: DamagePop[];
   targeting: Targeting;
   onTap: (side: 0 | 1, index: number) => void;
+  koShown: Set<string>;
 }) {
   const p = state.players[side];
   const selectable =
@@ -293,6 +323,7 @@ function CharRow({ side, state, pops, targeting, onTap }: {
     <div className={`char-row ${side === ENEMY ? 'enemy' : ''}`}>
       {p.characters.map((c, i) => {
         const alive = isCharAlive(state, side, i);
+        const koVisible = koShown.has(`${side}-${i}`); // 演出のタイミングで裏返す
         const isActor = p.actorIndex === i && alive;
         const hp = Math.max(0, maxHpOf(state, side, i) - c.damage);
         const myPops = pops.filter((d) => d.side === side && d.charIndex === i);
@@ -302,13 +333,13 @@ function CharRow({ side, state, pops, targeting, onTap }: {
             className={[
               'char-slot',
               isActor ? 'actor' : '',
-              !alive ? 'ko' : '',
+              koVisible ? 'ko' : '',
               selectable && alive ? 'selectable' : '',
             ].join(' ')}
             onClick={() => onTap(side, i)}
           >
             <CardFrame card={cardById(c.cardId)} width={92} />
-            {!alive && <img src={IMG('back')} className="ko-back" />}
+            {koVisible && <img src={IMG('back')} className="ko-back" />}
             {alive && (
               <span className="hp-chip">
                 <img src={IMG_PNG('heart_material')} />
@@ -329,14 +360,32 @@ function CharRow({ side, state, pops, targeting, onTap }: {
   );
 }
 
-/** プレイしたカードを中央で見せる演出 */
-function RevealOverlay({ reveal }: { reveal: Reveal }) {
+/** 今起きていることを1件ずつ見せるナレーションバナー */
+const KIND_ICON: Record<string, string> = {
+  turn: '🔄', draw: '🃏', charge: '⚡', chargeDeck: '⚡', mill: '🗑️', play: '✨',
+  guard: '🛡️', attack: '⚔️', damage: '💥', heal: '💚', ko: '💀', revive: '🌟',
+  actor: '👉', ability: '⚡', equip: '🛡️', field: '🌍', attr: '➕', search: '🔍',
+  lock: '🔒', end: '🏁', info: '💬',
+};
+
+function NarrationBanner({ ev }: { ev: NarrEvent }) {
   return (
-    <div className={`reveal ${reveal.side === ENEMY ? 'from-top' : 'from-bottom'}`}>
-      <CardFrame card={reveal.card} width={210} />
-      {reveal.label && <div className="reveal-label">{reveal.label}</div>}
+    <div key={ev.key} className={`narration kind-${ev.kind}`}>
+      <span className="narr-icon">{KIND_ICON[ev.kind] ?? '💬'}</span>
+      <span className="narr-text">{ev.text}</span>
     </div>
   );
+}
+
+/** フェーズごとの初心者ガイド文 */
+function guideText(phase: string, isMyTurn: boolean, busy: boolean, targeting: boolean, guardPhase: boolean): string {
+  if (busy) return '⏳ 何が起きているか、上のナレーションを見てね';
+  if (guardPhase) return '🛡️ 相手の攻撃！ガードカードで割り込むか、そのまま受けるか選ぼう';
+  if (targeting) return '🎯 対象のキャラクターをタップしよう';
+  if (!isMyTurn) return '⏳ 相手のターン。ようすを見よう';
+  if (phase === 'play') return '✨ 明るい手札＝今使えるカード。タップして「使う」！終わったら「チャージへ」';
+  if (phase === 'charge') return '⚡ 使わない手札をタップするとAP（スキルのエネルギー）になるよ。よければ「ターンエンド」';
+  return '';
 }
 
 function ResultOverlay({ state, setup, onExit, onRematch }: {

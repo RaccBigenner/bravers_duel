@@ -86,6 +86,8 @@ export interface BattleState {
   rngState: number;
   effectDepth: number;
   log: string[];
+  /** ログの通し番号（上限で古いログが消えても、UI側が差分を取れるように） */
+  logSeq: number;
 }
 
 export type BattleAction =
@@ -103,6 +105,7 @@ export type BattleAction =
 
 function pushLog(state: BattleState, message: string): void {
   state.log.push(message);
+  state.logSeq++;
   if (state.log.length > MAX_LOG_ENTRIES) {
     state.log.splice(0, state.log.length - MAX_LOG_ENTRIES);
   }
@@ -233,6 +236,7 @@ function runEffectSafely(state: BattleState, label: string, fn: () => void): voi
     rngState: state.rngState,
   });
   state.effectDepth++;
+  pushLog(state, `発動:${label}`);
   try {
     fn();
   } catch (e) {
@@ -638,6 +642,7 @@ export function createBattle(
     rngState: (seed * 2654435761) >>> 0,
     effectDepth: 0,
     log: [`バトル開始。先攻: プレイヤー${firstPlayer + 1}`],
+    logSeq: 1,
   };
 
   // バトル開始時の常時能力（先攻側から）
