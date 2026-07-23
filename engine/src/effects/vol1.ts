@@ -170,6 +170,7 @@ export const VOL1_EFFECTS: Record<string, CardEffect> = {
   },
   '1-A049-SR': {
     kind: 'skill',
+    healTargeting: 'none', // 全体回復なので対象選択なし
     onPlay: (api) => {
       api.healAllAllies(api.myAttrCount('聖') * 2);
       api.forceChangeEnemyActor();
@@ -367,6 +368,7 @@ export const VOL1_EFFECTS: Record<string, CardEffect> = {
   '1-A103-UC': { kind: 'skill', noGuard: true },
   '1-A106-UC': {
     kind: 'skill',
+    healTargeting: 'none', // 全体回復なので対象選択なし
     onPlay: (api) => api.healAllAllies(2),
   },
   '1-A107-UC': {

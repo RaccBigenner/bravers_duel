@@ -244,6 +244,19 @@ function BattleInner({ setup, onExit, onRematch }: {
     });
   }
 
+  // ---------- カメラワーク ----------
+  // 対象選択中は該当サイドへ寄って角度を浅くする。演出中は使用者→対象へ軽くフォーカス。
+  // ポーズは3種類だけ（デフォルト/味方寄り/敵寄り）にして、ぐりぐり動かしすぎない
+  const [camTemp, setCamTemp] = useState<'cam-ally' | 'cam-enemy' | null>(null);
+  const camTimer = useRef<number | null>(null);
+  function focusCam(side: 0 | 1 | undefined, life = 1200) {
+    if (side === undefined) return;
+    setCamTemp(side === PLAYER ? 'cam-ally' : 'cam-enemy');
+    if (camTimer.current) window.clearTimeout(camTimer.current);
+    camTimer.current = window.setTimeout(() => setCamTemp(null), life);
+  }
+  const camClass = targeting ? (targeting.side === PLAYER ? 'cam-ally' : 'cam-enemy') : (camTemp ?? '');
+
   // ナレーションイベントに合わせて「カードが飛ぶ」物理演出
   useEffect(() => {
     if (!current) return;
@@ -312,6 +325,7 @@ function BattleInner({ setup, onExit, onRematch }: {
       case 'attack':
         // 攻撃者が前（中央側）へ踏み込む
         spawnMotion(current.side, current.charIndex, 'lunge');
+        focusCam(current.side, 900);
         break;
       case 'play':
       case 'guard':
@@ -321,6 +335,8 @@ function BattleInner({ setup, onExit, onRematch }: {
         } else {
           lastAttrsRef.current = [];
         }
+        // スキル使用: 使用者側へカメラを寄せる
+        focusCam(current.side, 1100);
         // 使用キャラに「詠唱」エフェクト（属性の光 + 立ち上る詠唱リング）
         // ガードはガード専用の盾VFX
         if (current.charIndex !== undefined && current.side !== undefined) {
@@ -346,9 +362,11 @@ function BattleInner({ setup, onExit, onRematch }: {
         break;
       case 'damage':
         spawnVfx(current.side, current.charIndex, [...lastAttrsRef.current.map((a) => `vfx_${a}`), 'vfx_damage']);
+        focusCam(current.side, 1000); // 受けた側へ寄る（使用者→対象の順になる）
         break;
       case 'heal':
         spawnVfx(current.side, current.charIndex, [...lastAttrsRef.current.map((a) => `vfx_${a}`), 'vfx_heal']);
+        focusCam(current.side, 1000);
         break;
       case 'attr':
         spawnVfx(current.side, current.charIndex, [current.attr ? `vfx_${current.attr}` : '', 'vfx_attr'].filter(Boolean));
@@ -617,7 +635,7 @@ function BattleInner({ setup, onExit, onRematch }: {
 
       {/* 盤面（3Dに傾くテーブル） */}
       <div className="board-wrap">
-        <div className="board" ref={boardRef}>
+        <div className={`board ${camClass}`} ref={boardRef}>
           {/* 相手の手札（裏向きの扇） */}
           {/* 相手の手札: 自分と同じ扇状で、枚数がひと目でわかる間隔にする */}
           <div className="enemy-hand" ref={handRefE}>

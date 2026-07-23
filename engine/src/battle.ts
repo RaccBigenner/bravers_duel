@@ -1066,6 +1066,9 @@ export function legalActions(state: BattleState): BattleAction[] {
           for (const ci of eligibleUsingChars(state, state.active, card)) {
             actions.push({ type: 'playSkill', handIndex, usingIndex: ci });
           }
+        } else if (card.valueType === 'heal' && eff?.healTargeting === 'none') {
+          // 全体回復など: 対象を選んでも意味がないので選択させない
+          actions.push({ type: 'playSkill', handIndex });
         } else if (card.valueType === 'heal' && eff?.healTargeting === 'ko') {
           // 復活スキル: 戦闘不能の味方だけが対象。誰も倒れていなければ使えない
           p.characters.forEach((_, i) => {
@@ -1629,7 +1632,8 @@ function resolveNonAttack(state: BattleState, card: SkillCard, usingChar: number
         pushLog(state, `P${state.active + 1}の${c.name}が復活（HP${hp}）`);
         emit(state, { t: 'revive', player: state.active, charIndex: target, hp });
       }
-    } else {
+    } else if (skillEffectOf(card.id)?.healTargeting !== 'none') {
+      // 'none'（全体回復系）は効果側が回復を行うので基本回復はしない
       const target = healTargetIndex ?? me.actorIndex;
       if (isCharAlive(state, state.active, target)) {
         healCharacter(state, state.active, target, card.baseValue);

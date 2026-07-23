@@ -721,8 +721,10 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
   flex-direction: column;
   justify-content: space-between;
   gap: 2px;
-  transform: rotateX(15deg) scale(1.04);
+  transform: rotateX(15deg) scale(1.04) translateY(0);
   transform-origin: 50% 88%;
+  /* カメラワーク: ポーズ間はゆっくり滑らかに */
+  transition: transform 0.7s cubic-bezier(0.3, 0.08, 0.24, 1);
   /* 背景の卓とシームレスにつなげるため、盤面自体はパネルにしない */
   background: none;
   box-shadow: none;
@@ -1906,6 +1908,16 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
   padding: 6px 12px;
 }
 .review-thanks { margin: 6px 0; font-size: 13px; color: #8e8; }
+
+/* ============ カメラワーク ============
+   ポーズは3つだけ: デフォルト / 味方寄り / 敵寄り。
+   「寄る」= 角度を浅くして少し拡大。動かしすぎない */
+.board.cam-ally {
+  transform: rotateX(7deg) scale(1.12) translateY(-1.5%);
+}
+.board.cam-enemy {
+  transform: rotateX(7deg) scale(1.12) translateY(8%);
+}
 
 /* カードリスト詳細行の属性アイコン */
 .attr-inline {
