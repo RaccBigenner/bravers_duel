@@ -17,7 +17,7 @@ export function Home({ onBattle, onGallery }: { onBattle: () => void; onGallery:
           <h1 className="home-title-logo">
             <img src={IMG('logo')} alt="BRAVER'S DUEL" />
           </h1>
-          <p className="home-tagline">3人のブレイバーで挑む、回転式カードバトル</p>
+          <p className="home-tagline">回転式パーティキャラクターバトル</p>
         </div>
         <div className="home-menu">
           <button className="big-btn primary" onClick={onBattle}>
