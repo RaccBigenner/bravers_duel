@@ -7,14 +7,24 @@ export function Home({ onBattle, onGallery }: { onBattle: () => void; onGallery:
   return (
     <div className="home">
       <div className="home-inner">
-        <h1 className="home-title afs">BRAVER'S DUEL</h1>
-        <p className="home-sub">オープンβテスト</p>
-        <button className="big-btn" onClick={onBattle}>バトル（CPU対戦）</button>
-        <button className="big-btn secondary" onClick={() => setShowRules(true)}>あそびかた</button>
-        <button className="big-btn secondary" onClick={onGallery}>カード一覧</button>
-        <p className="home-note">
-          デッキを選んでCPUと対戦できます。はじめての人は「あそびかた」を読んでみてね。
-        </p>
+        <div className="home-logo">
+          <span className="home-emblem">⚔</span>
+          <h1 className="home-title afs">BRAVER'S DUEL</h1>
+          <p className="home-tagline">3人のブレイバーで挑む、回転式カードバトル</p>
+        </div>
+        <div className="home-menu">
+          <button className="big-btn primary" onClick={onBattle}>
+            <span className="btn-icon">⚔️</span>バトル
+            <span className="btn-note">CPUと対戦</span>
+          </button>
+          <button className="big-btn secondary" onClick={() => setShowRules(true)}>
+            <span className="btn-icon">📖</span>あそびかた
+          </button>
+          <button className="big-btn secondary" onClick={onGallery}>
+            <span className="btn-icon">🃏</span>カード一覧
+          </button>
+        </div>
+        <p className="home-note">オープンβテスト — データは保存されません。デッキはJSONで書き出せます。</p>
       </div>
       {showRules && <RulesModal onClose={() => setShowRules(false)} />}
     </div>

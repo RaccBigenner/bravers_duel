@@ -38,6 +38,8 @@ const PLAYER = 0 as const;
 const ENEMY = 1 as const;
 
 let uniq = 1;
+/** 再生速度はバトルをまたいで覚えておく（リロードでは戻る） */
+let savedSpeed = 1;
 
 /** 表示用ステートに演出イベント1件ぶんの変化を適用する */
 function applyEventToView(view: BattleState, ev: NarrEvent): void {
@@ -181,6 +183,13 @@ export function useBattle(playerDeck: DeckList, enemyDeck: DeckList) {
   const [pops, setPops] = useState<DamagePop[]>([]);
   const [koShown, setKoShown] = useState<Set<string>>(new Set());
   const aiRef = useRef<BattleAi>(simpleAi({ keepHand: 2 }));
+  const [speed, setSpeedState] = useState(savedSpeed);
+  const speedRef = useRef(savedSpeed);
+  const setSpeed = useCallback((s: number) => {
+    savedSpeed = s;
+    speedRef.current = s;
+    setSpeedState(s);
+  }, []);
 
   const busy = queue.length > 0 || current !== null;
   const bump = useCallback(() => setVersion((v) => v + 1), []);
@@ -232,7 +241,8 @@ export function useBattle(playerDeck: DeckList, enemyDeck: DeckList) {
       bump();
       return;
     }
-    const ev = queue[0];
+    // 再生速度を反映（演出の長さを縮める。以降この ev.duration を使う）
+    const ev: NarrEvent = { ...queue[0], duration: Math.max(140, Math.round(queue[0].duration / speedRef.current)) };
     setQueue((q) => q.slice(1));
     setCurrent(ev);
 
@@ -287,7 +297,7 @@ export function useBattle(playerDeck: DeckList, enemyDeck: DeckList) {
       const s2 = stateRef.current!;
       if (s2.phase === 'finished' || actingPlayer(s2) !== ENEMY) return;
       perform(aiRef.current.choose(s2, ENEMY));
-    }, AI_THINK_MS);
+    }, AI_THINK_MS / speedRef.current);
     return () => window.clearTimeout(timer);
   }, [version, busy, perform]);
 
@@ -303,5 +313,7 @@ export function useBattle(playerDeck: DeckList, enemyDeck: DeckList) {
     perform,
     myActions: !busy && actingPlayer(state) === PLAYER ? legalActions(state) : [],
     isMyTurn: actingPlayer(state) === PLAYER,
+    speed,
+    setSpeed,
   };
 }
