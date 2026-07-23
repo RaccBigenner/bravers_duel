@@ -558,6 +558,11 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
       state.skipRotationFor = owner; // 効果でアクターを動かしたので自動交代はしない
     },
     becomeActor: () => {
+      if (actorLocked(state, owner)) {
+        pushLog(state, 'アクターがロックされていて変更できない');
+        emit(state, { t: 'lockBlocked', player: owner });
+        return;
+      }
       if (isCharAlive(state, owner, ownerChar)) {
         me().actorIndex = ownerChar;
         pushLog(state, `プレイヤー${owner + 1}のアクターが${me().characters[ownerChar].name}（${ownerChar + 1}番手）に交代`);
@@ -874,6 +879,7 @@ function beginTurn(state: BattleState): void {
   // 任意のターン開始能力（アニマ等）は「ドローの前に1回だけ」選択する
   const hasManualChoice =
     state.manualFor === state.active &&
+    !isActorLocked(state, state.active) && // ロック中はアクター変更系の選択肢自体を出さない
     p.characters.some(
       (c, i) =>
         isCharAlive(state, state.active, i) &&
@@ -968,14 +974,16 @@ export function effectiveSkillCost(
   return Math.max(0, cost);
 }
 
-/** このスキルを使えるキャラの候補一覧。guardはアクター専用（控えは使えない） */
+/** このスキルを使えるキャラの候補一覧。guardはアクター専用（控えは使えない）。
+ * アクターがロック中は「控えから使える」スキルも控えからは使えない
+ * （飛び出る等でロックをすり抜けられないように）。 */
 export function eligibleUsingChars(state: BattleState, player: PlayerIndex, card: SkillCard): number[] {
   const p = state.players[player];
   const eff = skillEffectOf(card.id);
-  const candidates =
-    card.valueType !== 'guard' && eff?.anyCharacterCanUse
-      ? p.characters.map((_, i) => i).filter((i) => isCharAlive(state, player, i))
-      : [p.actorIndex];
+  const anyOk = card.valueType !== 'guard' && eff?.anyCharacterCanUse && !isActorLocked(state, player);
+  const candidates = anyOk
+    ? p.characters.map((_, i) => i).filter((i) => isCharAlive(state, player, i))
+    : [p.actorIndex];
   return candidates.filter((ci) => containsAll(effectiveAttributes(state, player, ci), card.conditionAttribute));
 }
 
@@ -1027,6 +1035,8 @@ export function legalActions(state: BattleState): BattleAction[] {
     const p = state.players[state.active];
     p.characters.forEach((c, i) => {
       if (!isCharAlive(state, state.active, i) || i === p.actorIndex) return;
+      // アクターがロック中は、アニマ等の「アクターになる」選択肢も出さない
+      if (isActorLocked(state, state.active)) return;
       if (characterEffectOf(c.cardId)?.turnStartAction) {
         actions.push({ type: 'turnStartAbility', charIndex: i });
       }
@@ -1141,9 +1151,10 @@ export function applyAction(state: BattleState, action: BattleAction): void {
       } else {
         const wasActor = usingChar === p.actorIndex;
         resolveNonAttack(state, card, usingChar, action.healTargetIndex);
-        // アクター以外（控え）がスキルを使った場合はローテーションしない
+        // 自動ローテーションは「使用キャラがまだアクターのまま」の時だけ
+        // （控えの使用や、効果中の強制交代があった場合は回さない）
         if (!battleOver(state)) {
-          if (wasActor) rotateActorAfterSkill(state, state.active);
+          if (wasActor && p.actorIndex === usingChar) rotateActorAfterSkill(state, state.active);
           else if (state.skipRotationFor === state.active) state.skipRotationFor = null;
         }
       }
@@ -1564,12 +1575,18 @@ function resolvePendingAttack(state: BattleState): void {
   }
 
   const wasActor = pending.attackerWasActor;
+  const attackerChar = pending.attackerChar;
   state.pendingAttack = null;
   if (state.phase === 'finished') return;
   state.phase = 'play';
-  // アクター以外（控え）がスキルを使った場合はローテーションしない
-  if (wasActor) rotateActorAfterSkill(state, attackerIdx);
-  else if (state.skipRotationFor === attackerIdx) state.skipRotationFor = null;
+  // 自動ローテーションは「使用キャラがまだアクターのまま」の時だけ。
+  // 反射などで使用キャラが倒れて強制交代済みなら、それが交代の代わりになる
+  // （さらに回すと1スキルで2回スイッチしてしまう）
+  if (wasActor && state.players[attackerIdx].actorIndex === attackerChar) {
+    rotateActorAfterSkill(state, attackerIdx);
+  } else if (state.skipRotationFor === attackerIdx) {
+    state.skipRotationFor = null;
+  }
 }
 
 function resolveNonAttack(state: BattleState, card: SkillCard, usingChar: number, healTargetIndex?: number): void {

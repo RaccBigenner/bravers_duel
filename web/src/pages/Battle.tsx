@@ -57,7 +57,7 @@ function useViewportHeight(): number {
  * 横は「陣形の全幅が画面に収まる」ことを上限にする。
  */
 function cardWidthFor(vh: number, vw: number): number {
-  const byHeight = vh >= 840 ? 118 : vh >= 760 ? 110 : vh >= 700 ? 100 : 88;
+  const byHeight = vh >= 840 ? 112 : vh >= 760 ? 104 : vh >= 700 ? 96 : 84;
   const byWidth = Math.floor((Math.min(vw, 440) - 70) / 3.2);
   return Math.min(byHeight, byWidth);
 }

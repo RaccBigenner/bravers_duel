@@ -105,7 +105,7 @@ export function Formation({ side, state, pops, targeting, onTap, koShown, cardW,
   });
 
   const width = Math.round(cardW * 3.2 + 8);
-  const height = Math.round(cardW * 2.4 + 16);
+  const height = Math.round(cardW * 2.3 + 16);
   const selectableSet = targeting && targeting.side === side ? targeting.actions : null;
 
   return (
@@ -123,7 +123,9 @@ export function Formation({ side, state, pops, targeting, onTap, koShown, cardW,
         const A = frontAngle - i * step + wheelRot + tilt;
         const rad = (A * Math.PI) / 180;
         const x = Math.round(Math.sin(rad) * rx * 10) / 10;
-        const y = Math.round(-Math.cos(rad) * ry * 10) / 10;
+        // 前方（中央側）へのせり出しは0.8倍に抑える（敵味方のアクターが被らないように）
+        const yRaw = -Math.cos(rad) * ry;
+        const y = Math.round((yRaw < 0 ? yRaw * 0.8 : yRaw) * 10) / 10;
         const scale = isActor ? 1 : backScale;
         return (
           <div
