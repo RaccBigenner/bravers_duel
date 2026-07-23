@@ -630,6 +630,7 @@ function BattleInner({ setup, onExit, onRematch }: {
               side={ENEMY} p={foe} deckRef={deckRefE} apRef={apRefE} trashRef={trashRefE}
               onOpenPile={(kind) => {
                 if (kind === 'trash') setPileList({ title: '相手のトラッシュ', cards: foe.trash });
+                if (kind === 'ap') setPileList({ title: '相手のAPエリア', cards: foe.ap });
               }}
             />
             <Formation

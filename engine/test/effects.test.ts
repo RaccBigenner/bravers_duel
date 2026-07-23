@@ -671,3 +671,22 @@ describe('ロックと二重スイッチの修正（2026-07-23 社長指摘）',
     expect(state.players[0].actorIndex).toBe(1);
   });
 });
+
+describe('飛び込み攻撃のローテーション（2026-07-23 社長決定）', () => {
+  it('フォールキック: 控えが飛び込んで攻撃した後、アクターは次へローテーションする', () => {
+    const skill = cardById('1-A126-C') as SkillCard;
+    const benchChar = charForSkill('1-A126-C');
+    const state = battleWith([ORUS, benchChar.id, DADA], '1-A126-C', [OWU, DADA], VANILLA_ATK);
+    giveAp(state, 0, skill.costAp);
+    const acts = legalActions(state).filter(
+      (a) => a.type === 'playSkill' && a.usingIndex === 1,
+    );
+    expect(acts.length).toBeGreaterThan(0);
+
+    applyAction(state, acts[0]);
+    if (state.phase === 'guard') applyAction(state, { type: 'pass' });
+
+    // 1(飛び込んだキャラ)がアクターになって攻撃 → 攻撃後は次の2へローテーション
+    expect(state.players[0].actorIndex).toBe(2);
+  });
+});

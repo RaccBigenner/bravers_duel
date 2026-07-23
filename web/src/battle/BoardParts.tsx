@@ -157,7 +157,12 @@ export function Formation({ side, state, pops, targeting, onTap, koShown, cardW,
             >
               <CardFrame card={cardById(c.cardId)} width={frontW} />
             </div>
-            {koVisible && <img src={IMG('back')} className="ko-back" />}
+            {koVisible && (
+              <img
+                src={IMG('back')}
+                className={`ko-back ${(cardById(c.cardId) as CharacterCard).size === 'legendaryLarge' ? 'landscape' : ''}`}
+              />
+            )}
             {isActor && state.turn <= p.actorLockUntilTurn && (
               <img className="lock-badge" src={IMG('icon_lock')} title="ロック中: アクターを交代できない" alt="ロック" />
             )}

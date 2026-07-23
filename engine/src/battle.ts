@@ -73,8 +73,8 @@ export interface PendingAttack {
   chosenIndex?: number; // choose の時だけ
   noGuard: boolean;
   attackerChar: number; // 使用キャラの番号
-  /** 使用キャラが宣言時点でアクターだったか（アクター以外の使用ではローテーションしない） */
-  attackerWasActor: boolean;
+  /** 効果内から放たれた攻撃（デッキから使用等）で、攻撃後の自動ローテーションを抑制する */
+  suppressRotate: boolean;
   /** ガード割り込み。軽減が適用されるのはガード使用者（防御側アクター）への被弾のみ */
   guard: { charIndex: number; value: number } | null;
 }
@@ -567,7 +567,11 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
         me().actorIndex = ownerChar;
         pushLog(state, `プレイヤー${owner + 1}のアクターが${me().characters[ownerChar].name}（${ownerChar + 1}番手）に交代`);
         emit(state, { t: 'actorChanged', player: owner, charIndex: ownerChar, forced: false });
-        state.skipRotationFor = owner; // 効果でアクターを決めたので自動交代はしない
+        // フォールキック等「使用キャラをアクターにして攻撃する」場合は、
+        // アクターとして攻撃した扱いなので、攻撃後の通常ローテーションを妨げない
+        const pending = state.pendingAttack;
+        const jumpInAttack = pending !== null && state.active === owner && pending.attackerChar === ownerChar;
+        if (!jumpInAttack) state.skipRotationFor = owner; // 効果でアクターを決めたので自動交代はしない
       }
     },
     reduceNextSkillCost: (n) => {
@@ -1422,7 +1426,7 @@ export function predictSkill(
       chosenIndex: undefined,
       noGuard: eff?.noGuard ?? false,
       attackerChar: usingChar,
-      attackerWasActor: usingChar === clone.players[player].actorIndex,
+      suppressRotate: true, // 予測なのでローテーションは関係ない
       guard: null,
     };
     try {
@@ -1473,7 +1477,7 @@ function beginAttack(
     chosenIndex: eff?.targeting === 'choose' ? targetIndex : undefined,
     noGuard: forceNoGuard || (eff?.noGuard ?? false),
     attackerChar: usingChar,
-    attackerWasActor: !noRotate && usingChar === state.players[state.active].actorIndex,
+    suppressRotate: noRotate,
     guard: null,
   };
 
@@ -1574,15 +1578,16 @@ function resolvePendingAttack(state: BattleState): void {
     }
   }
 
-  const wasActor = pending.attackerWasActor;
+  const suppress = pending.suppressRotate;
   const attackerChar = pending.attackerChar;
   state.pendingAttack = null;
   if (state.phase === 'finished') return;
   state.phase = 'play';
-  // 自動ローテーションは「使用キャラがまだアクターのまま」の時だけ。
-  // 反射などで使用キャラが倒れて強制交代済みなら、それが交代の代わりになる
-  // （さらに回すと1スキルで2回スイッチしてしまう）
-  if (wasActor && state.players[attackerIdx].actorIndex === attackerChar) {
+  // 自動ローテーションは「攻撃者が解決時点でアクター」の時だけ。
+  // - 控えからの攻撃（アクターが変わらない）→ 回さない
+  // - フォールキック等で使用キャラがアクターになって攻撃 → 通常どおり回す
+  // - 反射などで攻撃者が倒れて強制交代済み → それが交代の代わり（回さない）
+  if (!suppress && state.players[attackerIdx].actorIndex === attackerChar) {
     rotateActorAfterSkill(state, attackerIdx);
   } else if (state.skipRotationFor === attackerIdx) {
     state.skipRotationFor = null;

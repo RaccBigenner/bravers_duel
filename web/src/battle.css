@@ -1724,3 +1724,50 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
   75% { transform: translate(2px, -3px); }
   100% { transform: translate(0, 0); }
 }
+
+
+/* ================================================================
+   カードの縦横比は 300:417 で一元管理する（裏面・山札・飛翔カード含む）。
+   高さの直接指定は禁止し、幅 + aspect-ratio で統一する
+   ================================================================ */
+:root { --card-ratio: 300 / 417; }
+.hand-back,
+.pile-card,
+.fly-ghost img {
+  aspect-ratio: var(--card-ratio);
+  height: auto;
+  object-fit: cover;
+}
+.pile-card.empty,
+.pile-card.trash-top {
+  height: auto;
+  aspect-ratio: var(--card-ratio);
+}
+
+/* KOの裏面もカード比率に従う。LL（横長）は横倒しで表示 */
+.ko-back {
+  object-fit: cover;
+}
+.ko-back.landscape {
+  /* 横長スロットの中で裏面を90度倒して比率を保つ。
+   * 回転前の幅 = スロット高さ（= 幅×300/417）にすると、回転後に
+   * ちょうどスロット全面（幅×高さ）へ収まる */
+  width: calc(300 / 417 * 100%);
+  height: auto;
+  aspect-ratio: var(--card-ratio);
+  left: 50%;
+  top: 50%;
+  inset: auto;
+  transform: translate(-50%, -50%) rotate(90deg);
+  transform-origin: center;
+}
+
+/* ロックアイコン: 薄すぎたので暗い光背つきでハッキリ見せる */
+.lock-badge {
+  width: 32px;
+  height: 32px;
+  mix-blend-mode: normal;
+  background: radial-gradient(circle, rgba(10, 6, 18, 0.9) 30%, rgba(10, 6, 18, 0) 72%);
+  filter: drop-shadow(0 0 6px rgba(170, 68, 255, 0.95)) drop-shadow(0 1px 2px #000);
+  z-index: 34;
+}
