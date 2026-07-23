@@ -1642,11 +1642,14 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
   margin-bottom: 6px;
 }
 .home-card {
-  width: 78px;
+  line-height: 0;
+  filter: drop-shadow(0 8px 14px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 10px rgba(255, 215, 0, 0.18));
+}
+.home-card.c img {
+  width: 76px;
   aspect-ratio: var(--card-ratio);
   object-fit: cover;
   border-radius: 6px;
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.6), 0 0 16px rgba(255, 215, 0, 0.22);
 }
 /* 3枚の扇: 左=勇者 / 中央奥=裏面 / 右=魔王。それぞれ角度と揺れをずらす */
 .home-card.l {
@@ -1655,9 +1658,7 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
 }
 .home-card.c {
   margin: 0 -18px;
-  width: 72px;
   animation: home-card-c 4.4s ease-in-out infinite alternate;
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.6);
 }
 .home-card.r {
   animation: home-card-r 3.9s ease-in-out infinite alternate;

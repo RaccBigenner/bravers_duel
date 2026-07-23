@@ -1,4 +1,6 @@
+import { cardById } from '@bravers/engine';
 import { useState } from 'react';
+import { CardFrame } from '../CardFrame';
 import { IMG } from '../cardAssets';
 import { RulesModal } from './RulesModal';
 
@@ -10,14 +12,20 @@ export function Home({ onBattle, onGallery }: { onBattle: () => void; onGallery:
       <div className="home-inner">
         <div className="home-logo">
           <div className="home-cards">
-            <img className="home-card l" src={IMG('1-A003-USR')} alt="[閃光の勇者]クラウディア" />
-            <img className="home-card c" src={IMG('back')} alt="" />
-            <img className="home-card r" src={IMG('1-A004-USR')} alt="[朽ち往く魔王]トランザード" />
+            <div className="home-card l">
+              <CardFrame card={cardById('1-A003-USR')} width={82} upright />
+            </div>
+            <div className="home-card c">
+              <img src={IMG('back')} alt="" />
+            </div>
+            <div className="home-card r">
+              <CardFrame card={cardById('1-A004-USR')} width={82} upright />
+            </div>
           </div>
           <h1 className="home-title-logo">
             <img src={IMG('logo')} alt="BRAVER'S DUEL" />
           </h1>
-          <p className="home-tagline">回転式パーティキャラクターバトル</p>
+          <p className="home-tagline">回転式パーティキャラクターカードバトル</p>
         </div>
         <div className="home-menu">
           <button className="big-btn primary" onClick={onBattle}>
