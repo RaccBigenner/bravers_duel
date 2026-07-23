@@ -86,6 +86,12 @@
   ホーム/リザルト等のUI刷新。手札は扇レイアウト+固定キーでガタつき解消。
   （WebGLシェーダーVFXは一度入れたが「安っぽい」との社長判断で撤去済み。
   演出はLudo画像VFX+CSSのみで行く）
+- 2026-07-23: **公開βのログ収集＋レビュー機能 稼働開始**。匿名ID（localStorage UUID）で
+  battle_start / battle_end / custom_deck / review を Google Apps Script 経由で
+  スプレッドシート「BRAVERS DUEL ログ」（社長のGoogleドライブ）に自動追記。
+  受け皿の再デプロイ手順は `docs/TELEMETRY_SETUP.md`。送信先URLは `web/src/telemetry.ts` の ENDPOINT。
+  バトル後に星1〜5+フリーテキスト(1000字)のレビューUIを毎回表示。
+  Cookie同意バナーは不要と判断（匿名統計のみ・個人情報なし）。ホームに注記1文あり。
 - **残タスク**: スマホ実機での調整／ガード割り込みUIの実戦確認。
 - PvPはβ2として実現可能（Firebase等で数日規模）と社長に回答済み。
 

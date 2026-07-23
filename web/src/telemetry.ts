@@ -9,7 +9,8 @@
  */
 
 // ここに Google Apps Script のWebアプリURLを貼ると送信が有効になる
-const ENDPOINT = '';
+const ENDPOINT =
+  'https://script.google.com/macros/s/AKfycbymeqyPV4ligt_D0kdFkDidVHOe4TGN_gC0xmRuf9LFZwR5zbpNPwIu39TCj6gzrzXXtw/exec';
 
 const UID_KEY = 'bd-anon-id';
 
