@@ -1512,15 +1512,15 @@ function beginAttack(
   if (!pending.noGuard && guardOptions(state, defenderIdx).length > 0) {
     state.phase = 'guard';
     pushLog(state, `${card.name}で攻撃 → 相手は割り込みできる（ダメージ${pending.value}）`);
-    emit(state, { t: 'attackDeclared', player: state.active, cardId: card.id, value: pending.value, noGuard: false });
+    emit(state, { t: 'attackDeclared', player: state.active, charIndex: usingChar, cardId: card.id, value: pending.value, noGuard: false });
   } else {
     if (pending.noGuard) {
       pushLog(state, `${card.name}は防御で割り込めない攻撃`);
-      emit(state, { t: 'attackDeclared', player: state.active, cardId: card.id, value: pending.value, noGuard: true });
+      emit(state, { t: 'attackDeclared', player: state.active, charIndex: usingChar, cardId: card.id, value: pending.value, noGuard: true });
     } else {
       // 相手がガードできない場合も攻撃宣言の演出は必ず出す
       pushLog(state, `${card.name}で攻撃（ダメージ${pending.value}）`);
-      emit(state, { t: 'attackDeclared', player: state.active, cardId: card.id, value: pending.value, noGuard: false });
+      emit(state, { t: 'attackDeclared', player: state.active, charIndex: usingChar, cardId: card.id, value: pending.value, noGuard: false });
     }
     resolvePendingAttack(state);
   }

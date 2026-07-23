@@ -67,7 +67,7 @@ export function extraAttributes(state: BattleState, side: 0 | 1, i: number): str
   return extras;
 }
 
-export function Formation({ side, state, pops, targeting, onTap, koShown, cardW, vfxList, plates, onZoom }: {
+export function Formation({ side, state, pops, targeting, onTap, koShown, cardW, vfxList, plates, motions, onZoom }: {
   side: 0 | 1;
   state: BattleState;
   pops: DamagePop[];
@@ -77,6 +77,7 @@ export function Formation({ side, state, pops, targeting, onTap, koShown, cardW,
   cardW: number;
   vfxList: { key: number; side: 0 | 1; charIndex: number; img: string; delay: number }[];
   plates: { key: number; side: 0 | 1; charIndex: number; text: string; cls: string; offset: number; icon?: string }[];
+  motions: { key: number; side: 0 | 1; charIndex: number; cls: string }[];
   onZoom?: (cardId: string) => void;
 }) {
   const p = state.players[side];
@@ -118,6 +119,7 @@ export function Formation({ side, state, pops, targeting, onTap, koShown, cardW,
         const hp = Math.max(0, maxHp - c.damage);
         const hpRatio = maxHp > 0 ? hp / maxHp : 0;
         const myPops = pops.filter((d) => d.side === side && d.charIndex === i);
+        const myMotions = motions.filter((m) => m.side === side && m.charIndex === i);
         const myVfx = vfxList.filter((v) => v.side === side && v.charIndex === i);
         const extras = extraAttributes(state, side, i);
         const A = frontAngle - i * step + wheelRot + tilt;
@@ -147,7 +149,12 @@ export function Formation({ side, state, pops, targeting, onTap, koShown, cardW,
             onClick={() => onTap(side, i)}
             {...longPressHandlers(() => onZoom?.(c.cardId))}
           >
-            <div className={myPops.some((d) => d.amount > 0) ? 'card-hit' : ''}>
+            <div
+              className={[
+                myPops.some((d) => d.amount > 0) ? 'card-hit' : '',
+                ...myMotions.map((m) => m.cls),
+              ].join(' ')}
+            >
               <CardFrame card={cardById(c.cardId)} width={frontW} />
             </div>
             {koVisible && <img src={IMG('back')} className="ko-back" />}

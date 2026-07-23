@@ -33,7 +33,7 @@ export type BattleEvent =
   | { t: 'skillUsed'; player: PlayerIndex; charIndex: number; cardId: string }
   | { t: 'characterCardUsed'; player: PlayerIndex; cardId: string }
   | { t: 'castFromDeck'; player: PlayerIndex; charIndex: number; cardId: string }
-  | { t: 'attackDeclared'; player: PlayerIndex; cardId: string; value: number; noGuard: boolean }
+  | { t: 'attackDeclared'; player: PlayerIndex; charIndex: number; cardId: string; value: number; noGuard: boolean }
   | { t: 'guardPlayed'; player: PlayerIndex; charIndex: number; cardId: string; before: number; after: number }
   | { t: 'equip'; player: PlayerIndex; charIndex: number; cardId: string; removedCardId?: string }
   | { t: 'equipDestroyed'; player: PlayerIndex; charIndex: number; cardId: string }

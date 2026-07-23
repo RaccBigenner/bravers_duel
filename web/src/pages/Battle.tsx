@@ -202,6 +202,17 @@ function BattleInner({ setup, onExit, onRematch }: {
     }, 1100 + imgs.length * 170);
   }
 
+  // キャラカード自体の短いモーション（攻撃の踏み込みなど）
+  interface Motion { key: number; side: 0 | 1; charIndex: number; cls: string }
+  const [motions, setMotions] = useState<Motion[]>([]);
+
+  function spawnMotion(side: 0 | 1 | undefined, charIndex: number | undefined, cls: string, life = 520) {
+    if (side === undefined || charIndex === undefined) return;
+    const m: Motion = { key: flightKey++, side, charIndex, cls };
+    setMotions((prev) => [...prev, m]);
+    window.setTimeout(() => setMotions((prev) => prev.filter((x) => x.key !== m.key)), life);
+  }
+
   // キャラの頭上に出る小さなプレート（能力発動・威力アップ・ガード結果など）
   // 位置は出す瞬間に固定する（後から並び直すとガタガタ動いて見えるため）
   interface Plate { key: number; side: 0 | 1; charIndex: number; text: string; cls: string; offset: number; icon?: string }
@@ -281,6 +292,10 @@ function BattleInner({ setup, onExit, onRematch }: {
         break;
       case 'trashToDeck':
         spawnFlight(trashRefs[s].current, deckRefs[s].current, current.amount ?? 1);
+        break;
+      case 'attack':
+        // 攻撃者が前（中央側）へ踏み込む
+        spawnMotion(current.side, current.charIndex, 'lunge');
         break;
       case 'play':
       case 'guard':
@@ -620,7 +635,7 @@ function BattleInner({ setup, onExit, onRematch }: {
             <Formation
               side={ENEMY} state={view} pops={pops} targeting={targeting}
               onTap={tapChar} koShown={koShown} cardW={cardW} vfxList={vfxList}
-              plates={plates} onZoom={setZoomCard}
+              plates={plates} motions={motions} onZoom={setZoomCard}
             />
           </div>
 
@@ -636,7 +651,7 @@ function BattleInner({ setup, onExit, onRematch }: {
             <Formation
               side={PLAYER} state={view} pops={pops} targeting={targeting}
               onTap={tapChar} koShown={koShown} cardW={cardW} vfxList={vfxList}
-              plates={plates} onZoom={setZoomCard}
+              plates={plates} motions={motions} onZoom={setZoomCard}
             />
             <ZoneCol
               side={PLAYER} p={me} deckRef={deckRefP} apRef={apRefP} trashRef={trashRefP}

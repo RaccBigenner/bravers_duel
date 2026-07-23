@@ -119,7 +119,7 @@ export function narrate(state: BattleState, e: BattleEvent): NarrEvent | null {
       return ev({
         kind: 'attack',
         text: e.noGuard ? `「${name}」はガード不可の攻撃！` : `「${name}」の攻撃！（ダメージ${e.value}）`,
-        amount: e.value, duration: 900,
+        side: e.player, charIndex: e.charIndex, amount: e.value, duration: 900,
       });
     }
     case 'guardPlayed': {

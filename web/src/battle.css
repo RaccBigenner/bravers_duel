@@ -186,7 +186,7 @@
  * アニメーションで transform を上書きしてはいけない（位置が壊れる）。
  * 光らせるだけにして、タップしやすいよう重なり順も最前面へ。 */
 .char-slot.selectable { z-index: 40 !important; }
-.char-slot.selectable > div:first-child { animation: pulse-glow 0.9s infinite alternate; }
+.char-slot.selectable > div:first-child { animation: pulse-glow 1s ease-in-out infinite alternate; }
 @keyframes pulse-glow {
   from { filter: brightness(1); }
   to { filter: brightness(1.35) drop-shadow(0 0 6px rgba(80, 180, 255, 0.8)); }
@@ -1245,7 +1245,7 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
 .hp-fill.mid { background: linear-gradient(90deg, #d4a017, #ffe37f); }
 .hp-fill.low {
   background: linear-gradient(90deg, #d43a2a, #ff8f7f);
-  animation: hp-danger 0.9s ease-in-out infinite alternate;
+  animation: hp-danger 1s ease-in-out infinite alternate;
 }
 @keyframes hp-danger {
   from { filter: brightness(1); }
@@ -1496,7 +1496,7 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
   background: none;
   border: none;
   color: #ff7a6a;
-  animation: deck-low-text 1.1s ease-in-out infinite alternate;
+  animation: deck-low-text 1s ease-in-out infinite alternate;
 }
 @keyframes deck-low-text {
   from { text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000; }
@@ -1575,7 +1575,7 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
 }
 .attr-icons img { width: 12px; height: 12px; object-fit: contain; }
 .attr-icons img.added {
-  animation: attr-blink 0.9s ease-in-out infinite alternate;
+  animation: attr-blink 1s ease-in-out infinite alternate;
   filter: drop-shadow(0 0 3px rgba(255, 215, 0, 0.9));
 }
 @keyframes attr-blink {
@@ -1684,4 +1684,43 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
   gap: 8px;
   justify-content: flex-end;
   margin-top: -4px;
+}
+
+
+/* ================================================================
+   物理モーション: 攻撃の踏み込みと被弾ノックバック（方向はエリアで決まる）
+   注意: .char-slot 本体の transform はホイール配置に使うので、
+   これらは必ず内側のラッパーに適用する
+   ================================================================ */
+.my-area .lunge { animation: lunge-up 0.5s cubic-bezier(0.2, 0.9, 0.3, 1); }
+.enemy-area .lunge { animation: lunge-down 0.5s cubic-bezier(0.2, 0.9, 0.3, 1); }
+@keyframes lunge-up {
+  0% { transform: translateY(0); }
+  30% { transform: translateY(-12px) scale(1.03); }
+  60% { transform: translateY(-8px) scale(1.02); }
+  100% { transform: translateY(0); }
+}
+@keyframes lunge-down {
+  0% { transform: translateY(0); }
+  30% { transform: translateY(12px) scale(1.03); }
+  60% { transform: translateY(8px) scale(1.02); }
+  100% { transform: translateY(0); }
+}
+
+/* 被弾: 後ろ（自陣側）にのけぞりながら揺れる */
+.my-area .card-hit { animation: hit-knock-down 0.42s cubic-bezier(0.36, 0.07, 0.19, 0.97); }
+.enemy-area .card-hit { animation: hit-knock-up 0.42s cubic-bezier(0.36, 0.07, 0.19, 0.97); }
+@keyframes hit-knock-down {
+  0% { transform: translate(0, 0); }
+  25% { transform: translate(-4px, 9px); }
+  50% { transform: translate(4px, 6px); }
+  75% { transform: translate(-2px, 3px); }
+  100% { transform: translate(0, 0); }
+}
+@keyframes hit-knock-up {
+  0% { transform: translate(0, 0); }
+  25% { transform: translate(4px, -9px); }
+  50% { transform: translate(-4px, -6px); }
+  75% { transform: translate(2px, -3px); }
+  100% { transform: translate(0, 0); }
 }
