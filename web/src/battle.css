@@ -1623,11 +1623,45 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
   object-fit: contain;
   mix-blend-mode: screen;
 }
-.home-emblem {
-  width: 52px;
-  height: 52px;
-  object-fit: contain;
-  mix-blend-mode: screen;
+/* ホームの浮遊カード（勇者クラウディア × 魔王トランザード） */
+.home-cards {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 6px;
+}
+.home-card {
+  width: 78px;
+  aspect-ratio: var(--card-ratio);
+  object-fit: cover;
+  border-radius: 6px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.6), 0 0 16px rgba(255, 215, 0, 0.22);
+}
+/* 3枚の扇: 左=勇者 / 中央奥=裏面 / 右=魔王。それぞれ角度と揺れをずらす */
+.home-card.l {
+  animation: home-card-l 3.4s ease-in-out infinite alternate;
+  z-index: 2;
+}
+.home-card.c {
+  margin: 0 -18px;
+  width: 72px;
+  animation: home-card-c 4.4s ease-in-out infinite alternate;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.6);
+}
+.home-card.r {
+  animation: home-card-r 3.9s ease-in-out infinite alternate;
+  z-index: 2;
+}
+@keyframes home-card-l {
+  from { transform: rotate(-13deg) translateY(2px); }
+  to { transform: rotate(-9deg) translateY(-6px); }
+}
+@keyframes home-card-c {
+  from { transform: rotate(-2deg) translateY(-8px); }
+  to { transform: rotate(3deg) translateY(-14px); }
+}
+@keyframes home-card-r {
+  from { transform: rotate(13deg) translateY(4px); }
+  to { transform: rotate(9deg) translateY(-4px); }
 }
 .deck-name .vs {
   font-style: normal;
@@ -1857,6 +1891,16 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
   padding: 6px 12px;
 }
 .review-thanks { margin: 6px 0; font-size: 13px; color: #8e8; }
+
+/* あそびかたモーダル内の注釈 */
+.rules-note {
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: rgba(255, 215, 0, 0.07);
+  border-left: 3px solid #b8a24d;
+  border-radius: 4px;
+  font-size: 12px;
+}
 
 /* シェアされたバトルログのプレビューページ */
 .battle-log-page { padding-bottom: 32px; }

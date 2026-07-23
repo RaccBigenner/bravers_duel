@@ -9,7 +9,11 @@ export function Home({ onBattle, onGallery }: { onBattle: () => void; onGallery:
     <div className="home">
       <div className="home-inner">
         <div className="home-logo">
-          <img className="home-emblem" src={IMG('icon_sword')} alt="" />
+          <div className="home-cards">
+            <img className="home-card l" src={IMG('1-A003-USR')} alt="[閃光の勇者]クラウディア" />
+            <img className="home-card c" src={IMG('back')} alt="" />
+            <img className="home-card r" src={IMG('1-A004-USR')} alt="[朽ち往く魔王]トランザード" />
+          </div>
           <h1 className="home-title afs">BRAVER'S DUEL</h1>
           <p className="home-tagline">3人のブレイバーで挑む、回転式カードバトル</p>
         </div>
