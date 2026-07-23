@@ -11,7 +11,7 @@ import { IMG } from '../cardAssets';
 import type { CustomDeck } from './DeckBuilder';
 
 /** 敵に使うスタンダード4デッキ（要件: バランス中位の4種） */
-const ENEMY_DECK_NAMES = ['斬の勇者', '闇単アグロ', '氷結コントロール', '聖光の癒し'];
+const ENEMY_DECK_NAMES = ['剣聖の一閃', '魔王の柩', '氷獄の女王', '聖歌隊'];
 
 /** メインキャラベースのデッキタイル */
 function DeckTile({ name, concept, deck, selected, onClick, extra }: {

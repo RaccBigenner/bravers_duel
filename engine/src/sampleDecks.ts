@@ -1,17 +1,12 @@
 /**
- * アーキタイプ別のサンプルデッキ（バランス測定用）。
- * 「人間が組みそうな、属性シナジーを揃えたデッキ」を8パターン用意する。
+ * スタンダードデッキ8種（2026-07-23 ゼロから設計し直し）。
+ *
+ * 旧方式（属性スコアで自動充填）をやめ、人間がデッキを組むように
+ * 1枚ずつ名指しで構築する。各デッキは「勝ち筋を1行で言える」こと。
  * 構成は決定的（ランダム無し）なので、テスト・シミュレーションの再現ができる。
  */
-import { ALL_CARDS, cardById } from './cards';
-import { containsAll, deckProblems, DEFAULT_DECK_RULES, type DeckList, type DeckRules } from './decks';
-import {
-  DECK_SIZE,
-  MAX_COPIES_PER_CARD,
-  type Attribute,
-  type CharacterCard,
-  type SkillCard,
-} from './types';
+import { cardById } from './cards';
+import { deckProblems, DEFAULT_DECK_RULES, type DeckList, type DeckRules } from './decks';
 
 export interface NamedDeck {
   name: string;
@@ -19,214 +14,220 @@ export interface NamedDeck {
   deck: DeckList;
 }
 
-interface ArchetypeSpec {
+interface DeckSpec {
   name: string;
   concept: string;
-  characterIds: string[]; // 枠3つぶん（大型は2枠）
-  preferAttrs: Attribute[];
-  /** 種類ごとの目安枚数（キャラカード6枚を除いた34枚の内訳） */
-  quota?: { attack: number; guard: number; support: number; heal: number };
-  /** アーキタイプの「顔」になるコアカード（最優先でピン留め） */
-  core?: [string, number][];
+  characterIds: string[];
+  /** [カードID, 枚数] の明示リスト。合計は40枚 */
+  cards: [string, number][];
 }
 
-// キャラカード6枚 + 装備2枚 + フィールド1枚 + スキル41枚 = 50枚
-const DEFAULT_QUOTA = { attack: 23, guard: 8, support: 7, heal: 3 };
-const EQUIPMENT_COUNT = 2;
-const FIELD_COUNT = 1;
-
-const SPECS: ArchetypeSpec[] = [
+const SPECS: DeckSpec[] = [
   {
-    name: '闇単アグロ',
-    concept: 'トランザードの闇5属性で重い闇スキルを叩き込む',
-    characterIds: ['1-A004-USR', '1-A009-SR', '1-A006-USR'],
-    preferAttrs: ['闇'],
-    core: [['1-A038-USR', 3]], // カオスフレア: 闇5属性でAoE+5の切り札
+    name: '剣聖の一閃',
+    concept: 'クラウディアのAP温存補正で低コスト斬を連打し、大裂斬で斬り伏せる',
+    characterIds: ['1-A003-USR', '1-A007-SSR', '1-A005-USR'], // クラウディア/レオン/オルス
+    cards: [
+      ['1-A083-R', 4], // 神速剣: 序盤コスト0
+      ['1-A128-C', 4], // 裂斬: 斬×1追加
+      ['1-A059-R', 4], // 大裂斬: 斬×2追加の主砲
+      ['1-A068-R', 3], // 業火斬
+      ['1-A048-SR', 3], // セイントクロス: 対闇+2
+      ['1-A039-USR', 2], // ディメンションエッジ: 大物対策
+      ['1-A085-R', 2], // ソードエナジー: 斬を増やして主砲強化
+      ['1-A123-C', 4], // パリィ
+      ['1-A130-C', 2], // グレイス
+      ['1-A105-UC', 3], // セイントインパクト
+      ['1-A003-USR', 2], // キャラ札
+      ['1-A007-SSR', 2],
+      ['1-A005-USR', 2],
+      ['1-A030-C', 2], // 革の鎧
+      ['1-A035-R', 1], // 剣の墓場: 全員に斬→主砲がさらに伸びる
+    ],
   },
   {
-    name: '斬の勇者',
-    concept: 'クラウディアとレオンの斬・聖で素直に殴る',
-    characterIds: ['1-A003-USR', '1-A007-SSR', '1-A005-USR'],
-    preferAttrs: ['斬', '聖', '雷'],
-    core: [['1-A059-R', 4]], // 大裂斬: 斬×2の主砲
+    name: '魔王の柩',
+    concept: 'トランザードの闇5でエナジーショットが11点。アニマとヤクビが脇を固める',
+    characterIds: ['1-A004-USR', '1-A006-USR', '1-A009-SR'], // トランザード/アニマ/ヤクビ
+    cards: [
+      ['1-A117-C', 4], // エナジーショット: 闇×2追加（トランザードで+10）
+      ['1-A038-USR', 3], // カオスフレア: 闇スケールAoE
+      ['1-A077-R', 4], // 吸血: アニマで殴って回復
+      ['1-A075-R', 4], // ダークキューブ
+      ['1-A082-R', 2], // 邪神の呪い: 闇をさらに積む
+      ['1-A047-SR', 2], // 魔力喰らい
+      ['1-A095-UC', 2], // ビーストラッシュ
+      ['1-A072-R', 3], // シャドウショット: ヤクビで控えを狙う
+      ['1-A065-R', 2], // スナイプショット
+      ['1-A138-C', 2], // 速射
+      ['1-A142-C', 3], // クロウ
+      ['1-A004-USR', 2], // キャラ札
+      ['1-A006-USR', 2],
+      ['1-A009-SR', 2],
+      ['1-A027-R', 2], // 魔王の心臓: 闇2追加
+      ['1-A033-SR', 1], // 新たな地平線: トランザードのコスト増を緩和
+    ],
   },
   {
-    name: '氷結コントロール',
-    concept: 'セレーナの氷付与とロック・ガードで守り勝つ',
-    characterIds: ['1-A008-SSR', '1-A018-R', '1-A013-SR'],
-    preferAttrs: ['氷', '守'],
-    quota: { attack: 16, guard: 13, support: 9, heal: 3 },
-    core: [['1-A066-R', 4], ['1-A069-R', 3]], // 氷強化ガード + ロック攻撃
+    name: '氷獄の女王',
+    concept: 'セレーナの全体氷付与でアイスキャッスルが鉄壁。ロックとミルオン反射で凍らせ勝つ',
+    characterIds: ['1-A008-SSR', '1-A018-R', '1-A021-R'], // セレーナ/ミルオン/ダダ
+    cards: [
+      ['1-A066-R', 4], // アイスキャッスル: 氷×2軽減の要塞
+      ['1-A114-C', 4], // コールドブレス: ロック
+      ['1-A055-R', 2], // 永久凍土: AoE+ロック
+      ['1-A115-C', 4], // スタンショック
+      ['1-A134-C', 3], // エレキネット
+      ['1-A122-C', 3], // ラージシールド
+      ['1-A108-UC', 3], // スノウドロップ: ドロー妨害
+      ['1-A079-R', 2], // オールディフェンス: 反射亀
+      ['1-A104-UC', 3], // ウォール
+      ['1-A140-C', 3], // シールドガード
+      ['1-A008-SSR', 2], // キャラ札
+      ['1-A018-R', 2],
+      ['1-A021-R', 2],
+      ['1-A026-SR', 1], // 王家の盾
+      ['1-A029-C', 1], // 医療セット
+      ['1-A034-SR', 1], // 大乱戦
+    ],
   },
   {
-    name: '竜の猛攻',
-    concept: 'ジエンドの竜3属性で大技を最速で撃つ',
-    characterIds: ['1-A002-LSR', '1-A020-R'], // ジエンドは大型で2枠
-    preferAttrs: ['竜', '闇', '打'],
-    quota: { attack: 24, guard: 5, support: 10, heal: 2 },
-    core: [['1-A042-SR', 3], ['1-A102-UC', 4]], // ドラゴンズメテオ + 全力補給（加速）
+    name: '竜王の暴食',
+    concept: 'パークルの補給で加速し、ジエンドの自傷ミルを喰らって崩壊の竜波が育つ',
+    characterIds: ['1-A002-LSR', '1-A016-SR'], // ジエンド(LL)/パークル
+    cards: [
+      // ジエンドが毎ターン山札を2枚喰うので、山札を消費する補給カードは入れない。
+      // 手札チャージだけでAPを作り、その間に育った崩壊の竜波で薙ぎ払う
+      ['1-A037-USR', 4], // 崩壊の竜波: トラッシュ×1（自ミルで勝手に育つ）
+      ['1-A042-SR', 4], // ドラゴンズメテオ
+      ['1-A094-UC', 4], // ドラゴンズアギト
+      ['1-A056-R', 4], // エンシェントブレス: AoE
+      ['1-A118-C', 4], // ブレス: 軽量AoE
+      ['1-A081-R', 4], // 竜の血脈: 竜スケールを底上げ
+      ['1-A113-C', 4], // ファイアブラスト: 敵の山札も削る
+      ['1-A075-R', 4], // ダークキューブ: ジエンドの闇で守る
+      ['1-A002-LSR', 2], // キャラ札
+      ['1-A016-SR', 2],
+      ['1-A030-C', 2], // 革の鎧
+      ['1-A029-C', 1], // 医療セット
+      ['1-A033-SR', 1], // 新たな地平線: 大技を撃ちやすく
+    ],
   },
   {
-    name: '聖光の癒し',
-    concept: 'ハスミールの聖3属性で回復しながら粘り勝つ',
-    characterIds: ['1-A019-R', '1-A023-R', '1-A010-SR'],
-    preferAttrs: ['聖', '木'],
-    quota: { attack: 17, guard: 8, support: 8, heal: 8 },
-    core: [['1-A049-SR', 3], ['1-A040-USR', 2]], // 聖なる風（全体回復） + ティアグレイス（復活）
+    name: '聖歌隊',
+    concept: 'フォギアの山札回復で切れず、回復と復活で敵の息切れを待つ耐久戦',
+    characterIds: ['1-A019-R', '1-A023-R', '1-A010-SR'], // ハスミール/ソーベルト/フォギア
+    cards: [
+      ['1-A040-USR', 2], // ティアグレイス: 復活
+      ['1-A106-UC', 4], // オールグレイス: 全体回復
+      ['1-A086-UC', 4], // ハイグレイス
+      ['1-A130-C', 3], // グレイス
+      ['1-A105-UC', 4], // セイントインパクト: メイン打点
+      ['1-A064-R', 2], // 土葬槍操: 倒された分だけ強く
+      ['1-A084-R', 3], // 聖樹ウィップ
+      ['1-A121-C', 2], // ルーツドレイン: 殴って回復
+      ['1-A100-UC', 2], // 食樹召喚: トラッシュをデッキへ
+      ['1-A096-UC', 2], // アストラルショット: 敵の山札を削る
+      ['1-A112-C', 2], // 祈り
+      ['1-A019-R', 2], // キャラ札
+      ['1-A023-R', 2],
+      ['1-A010-SR', 2],
+      ['1-A031-C', 2], // シルバーロッド
+      ['1-A026-SR', 1], // 王家の盾
+      ['1-A029-C', 1], // 医療セット
+    ],
   },
   {
-    name: '獣と風',
-    concept: 'アイのドロー強化と獣・飛のすばやい攻めで手数を出す',
-    characterIds: ['1-A001-LSR', '1-A022-R'], // アイは大型で2枠
-    preferAttrs: ['獣', '風', '飛', '射'],
-    core: [['1-A136-C', 3]], // ジェット飛行: 飛び出して手札補充
+    name: '疾風の狩団',
+    concept: 'アイの多ドロー+激闘で手数を溢れさせ、獣の軽打で押し切る',
+    characterIds: ['1-A001-LSR', '1-A022-R'], // アイ(LL)/オウー
+    cards: [
+      ['1-A125-C', 4], // バードストライク
+      ['1-A142-C', 4], // クロウ: 獣を積むほど育つ
+      ['1-A095-UC', 4], // ビーストラッシュ
+      ['1-A047-SR', 3], // 魔力喰らい
+      ['1-A092-UC', 3], // 突風: 敵の陣形を乱す
+      ['1-A067-R', 3], // 雷雲召喚: AoE+AP破壊
+      ['1-A136-C', 2], // ジェット飛行: 飛び出して手札補充
+      ['1-A087-UC', 2], // 野性開放
+      ['1-A137-C', 2], // 飛翔: 回避
+      ['1-A144-C', 2], // 縦横無尽
+      ['1-A108-UC', 2], // スノウドロップ: 敵のドローを妨害
+      ['1-A110-UC', 2], // アイスクリーム
+      ['1-A001-LSR', 2], // キャラ札
+      ['1-A022-R', 2],
+      ['1-A030-C', 2], // 革の鎧
+      ['1-A029-C', 1], // 医療セット（激闘は自分の山札も減らすので不採用）
+    ],
   },
   {
-    name: '突撃槍衾',
-    concept: 'ストミーの突2属性で突スキルのスケーリングを活かす',
-    characterIds: ['1-A011-SR', '1-A005-USR', '1-A020-R'],
-    preferAttrs: ['突', '打'],
-    core: [['1-A044-SR', 3], ['1-A120-C', 4]], // サウザンドスパイク + コンボスタブ
+    name: '槍衾の陣',
+    concept: 'サウザンドスパイクで突を積み上げ、コンボスタブと無双乱撃で刺し貫く',
+    characterIds: ['1-A011-SR', '1-A005-USR', '1-A020-R'], // ストミー/オルス/セヴン
+    cards: [
+      ['1-A129-C', 4], // ファストスタブ
+      ['1-A120-C', 4], // コンボスタブ: 2発目が+4
+      ['1-A093-UC', 4], // スパイラルランス: 突×2
+      ['1-A044-SR', 3], // サウザンドスパイク: 突を恒久追加
+      ['1-A052-SR', 2], // 無双乱撃: AP全部を叩きつける
+      ['1-A126-C', 4], // フォールキック: 控えから飛び込む
+      ['1-A116-C', 3], // ハードスマッシュ
+      ['1-A073-R', 2], // ポイントブレイク: 装備破壊
+      ['1-A124-C', 4], // サークルパリィ
+      ['1-A144-C', 1], // 縦横無尽
+      ['1-A011-SR', 2], // キャラ札
+      ['1-A005-USR', 2],
+      ['1-A020-R', 2],
+      ['1-A030-C', 2], // 革の鎧
+      ['1-A034-SR', 1], // 大乱戦
+    ],
   },
   {
-    name: '雷土の重撃',
-    concept: 'ビコウの控え無敵とドッソの高HPで受けつつ重い一撃',
-    characterIds: ['1-A021-R', '1-A017-R', '1-A015-SR'],
-    preferAttrs: ['雷', '土', '打', '守'],
-    quota: { attack: 18, guard: 11, support: 9, heal: 3 },
-    core: [['1-A057-R', 4]], // 打スケール攻撃+チャージ回収
+    name: '不落の砦',
+    concept: 'ビコウの控え無敵とガード群で受けきり、ガードタックルで反撃する要塞',
+    characterIds: ['1-A012-SR', '1-A017-R', '1-A015-SR'], // ディレイア/ビコウ/ドッソ
+    cards: [
+      ['1-A122-C', 4], // ラージシールド
+      ['1-A140-C', 4], // シールドガード
+      ['1-A088-UC', 2], // ガードアクション
+      ['1-A079-R', 3], // オールディフェンス
+      ['1-A091-UC', 4], // ガードタックル: 守の反撃打
+      ['1-A101-UC', 3], // アースプレス
+      ['1-A104-UC', 2], // ウォール
+      ['1-A061-R', 2], // 掘削砂塵: AoE
+      ['1-A132-C', 3], // トランクブロウ
+      ['1-A075-R', 2], // ダークキューブ
+      ['1-A135-C', 2], // 射線封じ: 飛び出してロック
+      ['1-A012-SR', 2], // キャラ札
+      ['1-A017-R', 2],
+      ['1-A015-SR', 2],
+      ['1-A026-SR', 1], // 王家の盾
+      ['1-A028-R', 1], // 星樹の腕輪
+      ['1-A034-SR', 1], // 大乱戦
+    ],
   },
 ];
 
-function buildDeck(spec: ArchetypeSpec, rules: DeckRules): DeckList {
-  const chars = spec.characterIds.map((id) => cardById(id) as CharacterCard);
-  const skills = ALL_CARDS.filter((c): c is SkillCard => c.type === 'skill');
-  const quota = spec.quota ?? DEFAULT_QUOTA;
-
-  const usable = skills.filter((s) => chars.some((ch) => containsAll(ch.attribute, s.conditionAttribute)));
-
-  // 好み属性との一致度 → コスト効率 の順で採点
-  const score = (s: SkillCard): number => {
-    const attrFit = s.conditionAttribute.filter((a) => spec.preferAttrs.includes(a)).length;
-    const efficiency = s.valueType === 'attack' ? s.baseValue / (s.costAp + 1) : 1 / (s.costAp + 1);
-    const hasEffect = s.effectText !== '' ? 0.5 : 0;
-    return attrFit * 10 + efficiency + hasEffect;
-  };
-
-  // 「回るデッキ」のためのコストカーブ配分（attack枠の内訳）
-  // 低コスト(0-1)で序盤を動かし、中コスト(2-3)を主軸に、高コスト(4+)は切り札だけ
-  const curveShare = { low: 0.3, mid: 0.45, high: 0.25 };
-  const costBand = (s: SkillCard) => (s.costAp <= 1 ? 'low' : s.costAp <= 3 ? 'mid' : 'high');
-
+function buildDeck(spec: DeckSpec): DeckList {
   const cardIds: string[] = [];
-  const counts = new Map<string, number>();
-  const add = (id: string, copies: number): number => {
-    let added = 0;
-    for (let i = 0; i < copies; i++) {
-      const n = counts.get(id) ?? 0;
-      if (n >= rules.maxCopies || cardIds.length >= rules.deckSize) break;
-      counts.set(id, n + 1);
-      cardIds.push(id);
-      added++;
-    }
-    return added;
-  };
-
-  // 1. キャラクターカード2枚ずつ（回復札）
-  for (const ch of chars) add(ch.id, 2);
-
-  // 1.2 アーキタイプのコアカードを最優先でピン留め
-  for (const [id, copies] of spec.core ?? []) add(id, copies);
-
-  // 1.5 装備2枚（好み属性に合うもの）とフィールド1枚
-  const equips = ALL_CARDS.filter((c) => c.type === 'equipment')
-    .sort((a, b) => {
-      const fit = (e: typeof a) =>
-        e.type === 'equipment' ? e.addAttribute.filter((x) => spec.preferAttrs.includes(x)).length : 0;
-      return fit(b) - fit(a);
-    });
-  let equipTaken = 0;
-  for (const e of equips) {
-    if (equipTaken >= EQUIPMENT_COUNT) break;
-    equipTaken += add(e.id, 1);
+  for (const [id, count] of spec.cards) {
+    cardById(id); // 存在チェック（誤IDは即座に例外）
+    for (let i = 0; i < count; i++) cardIds.push(id);
   }
-  const fields = ALL_CARDS.filter((c) => c.type === 'field').sort((a, b) => {
-    const fit = (f: typeof a) => {
-      if (f.id === '1-A035-R' && spec.preferAttrs.includes('斬')) return 10; // 剣の墓場
-      if (f.id === '1-A036-R') return 5; // 激闘（汎用）
-      return 1;
-    };
-    return fit(b) - fit(a);
-  });
-  let fieldTaken = 0;
-  for (const f of fields) {
-    if (fieldTaken >= FIELD_COUNT) break;
-    fieldTaken += add(f.id, 1);
-  }
-
-  // 2. 種類ごとに、点数の高い順に取る。attackはコストカーブを守って序盤〜終盤が回るように
-  for (const [type, want] of Object.entries(quota) as [SkillCard['valueType'], number][]) {
-    const pool = usable.filter((s) => s.valueType === type).sort((a, b) => score(b) - score(a));
-    if (type === 'attack') {
-      const bandWant: Record<string, number> = {
-        low: Math.round(want * curveShare.low),
-        mid: Math.round(want * curveShare.mid),
-        high: 0,
-      };
-      bandWant.high = Math.max(0, want - bandWant.low - bandWant.mid);
-      const bandTaken: Record<string, number> = { low: 0, mid: 0, high: 0 };
-      let taken = 0;
-      // 1周目: バンドの枠内で取る
-      for (const s of pool) {
-        if (taken >= want) break;
-        const band = costBand(s);
-        if (bandTaken[band] >= bandWant[band]) continue;
-        const got = add(s.id, Math.min(rules.maxCopies, want - taken, bandWant[band] - bandTaken[band]));
-        bandTaken[band] += got;
-        taken += got;
-      }
-      // 2周目: 枠が余ったら低コスト優先で埋める（重さで詰まらないように）
-      if (taken < want) {
-        for (const s of [...pool].sort((a, b) => a.costAp - b.costAp)) {
-          if (taken >= want) break;
-          taken += add(s.id, Math.min(rules.maxCopies, want - taken));
-        }
-      }
-    } else {
-      // guard/support/heal は軽いカードを優先（重いguardは腐りやすい）
-      const sorted = [...pool].sort((a, b) => score(b) - score(a) + (a.costAp - b.costAp) * 1.5);
-      let taken = 0;
-      for (const s of sorted) {
-        if (taken >= want) break;
-        taken += add(s.id, Math.min(rules.maxCopies, want - taken));
-      }
-    }
-  }
-
-  // 3. 足りなければ使えるスキルから、それでも足りなければ全スキルから補充
-  const fillFrom = (pool: SkillCard[]) => {
-    for (const s of pool.sort((a, b) => score(b) - score(a))) {
-      if (cardIds.length >= rules.deckSize) break;
-      add(s.id, rules.maxCopies);
-    }
-  };
-  fillFrom([...usable]);
-  fillFrom([...skills]);
-
   return { characterIds: spec.characterIds.slice(), cardIds };
 }
 
 let cache: NamedDeck[] | null = null;
 
-/** アーキタイプ別サンプルデッキ（8種、すべてルール検証済み）。rules指定で実験用構築もできる */
+/** スタンダードデッキ8種（すべてルール検証済み） */
 export function sampleArchetypeDecks(rules: DeckRules = DEFAULT_DECK_RULES): NamedDeck[] {
   const isDefault = rules.deckSize === DEFAULT_DECK_RULES.deckSize && rules.maxCopies === DEFAULT_DECK_RULES.maxCopies;
   if (isDefault && cache) return cache;
   const decks = SPECS.map((spec) => {
-    const deck = buildDeck(spec, rules);
+    const deck = buildDeck(spec);
     const problems = deckProblems(deck, rules);
     if (problems.length > 0) {
-      throw new Error(`サンプルデッキ「${spec.name}」が不正: ${problems.join(' / ')}`);
+      throw new Error(`スタンダードデッキ「${spec.name}」が不正: ${problems.join(' / ')}`);
     }
     return { name: spec.name, concept: spec.concept, deck };
   });

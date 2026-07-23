@@ -706,3 +706,17 @@ describe('控えだけを狙う攻撃とガード（2026-07-23 社長決定）',
     expect(state.players[1].characters[1].damage).toBe(skill.baseValue);
   });
 });
+
+describe('スタンダードデッキの健全性（ゼロから再設計版）', () => {
+  it('全デッキのスキルは、チームの誰かが素の属性で使える', () => {
+    for (const d of sampleArchetypeDecks()) {
+      const teams = d.deck.characterIds.map((id) => (cardById(id) as CharacterCard).attribute);
+      for (const cid of new Set(d.deck.cardIds)) {
+        const card = cardById(cid);
+        if (card.type !== 'skill') continue;
+        const usable = teams.some((attrs) => containsAll(attrs, card.conditionAttribute));
+        expect(usable, `${d.name}: ${card.name}(${card.conditionAttribute.join('/')}) が誰にも使えない`).toBe(true);
+      }
+    }
+  });
+});
