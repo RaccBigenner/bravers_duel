@@ -406,11 +406,6 @@ function CardEditor({ card, onSave, onDelete }: { card: MasterCard; onSave: (c: 
   const theo = d.type === 'skill' ? theoreticalBaseValue(d as any) : null;
   const st = implState(d);
 
-  function toggleAttr(field: 'attribute' | 'conditionAttribute' | 'addAttribute', a: string) {
-    const cur = (d[field] as string[]) ?? [];
-    up({ [field]: cur.includes(a) ? cur.filter((x) => x !== a) : [...cur, a] } as Partial<MasterCard>);
-  }
-
   async function onPickImage(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -469,7 +464,7 @@ function CardEditor({ card, onSave, onDelete }: { card: MasterCard; onSave: (c: 
                 </select>
               </label>
             </div>
-            <AttrPicker label="属性" selected={d.attribute ?? []} onToggle={(a) => toggleAttr('attribute', a)} />
+            <AttrPicker label="属性" selected={d.attribute ?? []} onChange={(arr) => up({ attribute: arr })} />
           </>
         )}
 
@@ -490,12 +485,12 @@ function CardEditor({ card, onSave, onDelete }: { card: MasterCard; onSave: (c: 
                 {d.baseValue !== theo && <button className="apply-theo" onClick={() => up({ baseValue: theo })}>理論値を適用</button>}
               </p>
             )}
-            <AttrPicker label="条件属性" selected={d.conditionAttribute ?? []} onToggle={(a) => toggleAttr('conditionAttribute', a)} />
+            <AttrPicker label="条件属性" selected={d.conditionAttribute ?? []} onChange={(arr) => up({ conditionAttribute: arr })} />
           </>
         )}
 
         {d.type === 'equipment' && (
-          <AttrPicker label="付与属性" selected={d.addAttribute ?? []} onToggle={(a) => toggleAttr('addAttribute', a)} />
+          <AttrPicker label="付与属性" selected={d.addAttribute ?? []} onChange={(arr) => up({ addAttribute: arr })} />
         )}
 
         <label>効果テキスト<textarea rows={3} value={d.effectText} onChange={(e) => up({ effectText: e.target.value })} /></label>
@@ -522,13 +517,33 @@ function CardEditor({ card, onSave, onDelete }: { card: MasterCard; onSave: (c: 
   );
 }
 
-function AttrPicker({ label, selected, onToggle }: { label: string; selected: string[]; onToggle: (a: string) => void }) {
+function AttrPicker({ label, selected, onChange }: { label: string; selected: string[]; onChange: (next: string[]) => void }) {
+  // 同じ属性を複数つけられる（例: トランザードの闇×5、突×2 のスキル）。
+  // 下の属性ボタンで1つ追加、上の選択中チップの × で1つ削除。
   return (
     <div className="attr-picker">
-      <span className="attr-label">{label}</span>
-      <div className="attr-chips">
+      <span className="attr-label">{label}（同じ属性を何個でも付けられます）</span>
+      <div className="attr-current">
+        {selected.length === 0 ? (
+          <span className="attr-none">なし</span>
+        ) : (
+          selected.map((a, i) => (
+            <button
+              key={i}
+              className="attr-chip on"
+              title="クリックで1つ外す"
+              onClick={() => onChange(selected.filter((_, j) => j !== i))}
+            >
+              {a} ×
+            </button>
+          ))
+        )}
+      </div>
+      <div className="attr-add">
         {ATTRIBUTES.map((a) => (
-          <button key={a} className={`attr-chip ${selected.includes(a) ? 'on' : ''}`} onClick={() => onToggle(a)}>{a}</button>
+          <button key={a} className="attr-chip add" title="クリックで1つ足す" onClick={() => onChange([...selected, a])}>
+            ＋{a}
+          </button>
         ))}
       </div>
     </div>

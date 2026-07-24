@@ -10,6 +10,16 @@
       "status": "released",
       "releasedAt": "2026-07-01",
       "codename": ""
+    },
+    {
+      "vol": 2,
+      "themeNo": 2,
+      "themeName": "聖戦残火",
+      "themeSubtitle": "黎明の光",
+      "packType": "DX",
+      "status": "draft",
+      "releasedAt": "",
+      "codename": ""
     }
   ]
 }
