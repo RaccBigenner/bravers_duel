@@ -110,6 +110,13 @@
   - 漏れ防止の多層防御: engineゲート＋物理分離（data/wip・assets/wip_card_images は gitignore）＋
     CIの `scripts/check-no-wip-leak.mjs`（deploy.yml に組込・公開JSを走査）＋ `engine/test/sets.test.ts`。
   - テスト 81→90。将来の再録/エラッタは oracleId 二層モデルへ拡張可能な設計にしてある（今は未導入）。
+- 2026-07-24: **管理画面をスマホから使えるように**（Tailscale方式に決定。3方式を競わせ全審査員一致）。
+  `admin/vite.config.ts` に allowedHosts で `.ts.net` 許可＋画像アップロードAPI（/api/save-image、
+  制作中→wip_card_images・公開→card_images に振り分け）＋スマホからの公開ボタン（/api/git-status・
+  /api/git-push、PCの既存git認証のみ使用・data/wip は gitignore で push されない）。
+  カードエディタに画像アップロードUI（クライアントでwebp変換）と公開パネルを追加。
+  手順は `docs/CARD_MASTER_MOBILE.md`。Cloudflare は過剰（PATの90日更新等）として不採用、
+  非商用/PCオフ運用が必要になった時の移行先として文書化。**社長のTailscaleアプリ導入待ち**。
 - **残タスク**: スマホ実機での調整／ガード割り込みUIの実戦確認。
 - PvPはβ2として実現可能（Firebase等で数日規模）と社長に回答済み。
 

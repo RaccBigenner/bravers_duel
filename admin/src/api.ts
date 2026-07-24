@@ -78,3 +78,42 @@ export async function saveSet(set: MasterSet): Promise<void> {
   });
   if (!res.ok) throw new Error(`弾の保存失敗: ${res.status}`);
 }
+
+/** 画像ファイルを webp の data URL に変換（クライアント側。長辺を maxSide に収める） */
+export async function fileToWebp(file: File, maxSide = 800): Promise<string> {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('canvas 2d が使えません');
+  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL('image/webp', 0.9);
+}
+
+export async function saveImage(card: Pick<MasterCard, 'id' | 'vol' | 'status'>, dataUrl: string): Promise<{ savedTo: string }> {
+  const res = await fetch('/api/save-image', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: card.id, vol: card.vol, status: card.status, dataUrl }),
+  });
+  if (!res.ok) throw new Error(`画像保存失敗: ${(await res.json()).error ?? res.status}`);
+  return res.json();
+}
+
+export async function gitStatus(): Promise<{ changes: string[] }> {
+  const res = await fetch('/api/git-status');
+  if (!res.ok) throw new Error(`git status 失敗: ${res.status}`);
+  return res.json();
+}
+
+export async function gitPush(message: string): Promise<{ pushed: boolean; files?: string[]; note?: string }> {
+  const res = await fetch('/api/git-push', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message }),
+  });
+  if (!res.ok) throw new Error(`push 失敗: ${res.status}`);
+  return res.json();
+}

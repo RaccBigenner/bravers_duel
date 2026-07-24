@@ -137,6 +137,10 @@ textarea { resize: vertical; }
 .editor-actions { display: flex; gap: 8px; margin-top: 8px; }
 .editor-actions .a-primary { flex: 1; }
 
+.img-upload { text-align: center; margin: -4px 0 6px; }
+.a-refresh { background: var(--panel2); border: 1px solid var(--line); color: var(--text); border-radius: 6px; padding: 7px 12px; width: 100%; margin-top: 4px; }
+.a-refresh:disabled { opacity: 0.5; }
+
 @media (max-width: 1100px) {
   .admin-body { grid-template-columns: 1fr; }
 }

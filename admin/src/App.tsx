@@ -7,8 +7,20 @@ import {
   SKILL_VALUE_TYPES,
   hasEffectImplementation,
 } from '@bravers/engine';
-import { useEffect, useMemo, useState } from 'react';
-import { deleteCard, fetchMaster, saveCard, saveSet, type Master, type MasterCard, type MasterSet } from './api';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  deleteCard,
+  fetchMaster,
+  fileToWebp,
+  gitPush,
+  gitStatus,
+  saveCard,
+  saveImage,
+  saveSet,
+  type Master,
+  type MasterCard,
+  type MasterSet,
+} from './api';
 import { isBaseValueGoverned, theoreticalBaseValue } from './balance';
 
 const TYPES = ['character', 'skill', 'equipment', 'field'] as const;
@@ -156,6 +168,7 @@ export function App() {
           />
           <AuditPanel audit={audit} onPick={(id) => setSelectedId(id)} />
           <PreflightPanel vol={vol} set={currentSet} cards={volCards} />
+          <PublishPanel onFlash={flash} />
         </aside>
 
         <main className="admin-main">
@@ -327,9 +340,61 @@ function PreflightPanel({ vol, set, cards }: { vol: number; set?: MasterSet; car
   );
 }
 
+// ---------- 公開パネル（スマホからGitHubへ） ----------
+function PublishPanel({ onFlash }: { onFlash: (m: string) => void }) {
+  const [changes, setChanges] = useState<string[] | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function refresh() {
+    try {
+      setChanges((await gitStatus()).changes);
+    } catch (e) {
+      onFlash(String(e));
+    }
+  }
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  async function publish() {
+    if (!confirm('公開データ（released の弾）をGitHubへ送り、ゲームに反映します。よろしいですか？\n※制作中カード(data/wip)は送られません。')) return;
+    setBusy(true);
+    try {
+      const r = await gitPush('カードマスター更新（管理画面）');
+      onFlash(r.pushed ? `公開しました（${r.files?.length ?? 0}ファイル）。数分でゲームに反映されます` : '変更はありませんでした');
+      await refresh();
+    } catch (e) {
+      onFlash(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="panel">
+      <h3>GitHubへ公開</h3>
+      {changes === null ? (
+        <p className="audit-line">確認中…</p>
+      ) : changes.length === 0 ? (
+        <p className="audit-line good">未公開の変更はありません</p>
+      ) : (
+        <>
+          <p className="audit-line warn">{changes.length} 件の変更（公開データ）</p>
+          <button className="a-primary" disabled={busy} onClick={publish}>{busy ? '公開中…' : 'GitHubへ公開'}</button>
+        </>
+      )}
+      <button className="a-refresh" onClick={refresh}>再確認</button>
+      <p className="hint-small">制作中カード（data/wip）は公開されません。released の弾のカードだけがゲームに反映されます。</p>
+    </section>
+  );
+}
+
 // ---------- カードエディタ ----------
 function CardEditor({ card, onSave, onDelete }: { card: MasterCard; onSave: (c: MasterCard) => void; onDelete: () => void }) {
   const [d, setD] = useState<MasterCard>(card);
+  const [imgVersion, setImgVersion] = useState(0); // 画像差し替え後のキャッシュ破棄用
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
   const up = (patch: Partial<MasterCard>) => setD((prev) => ({ ...prev, ...patch }));
 
   // id は vol-code-rarity から自動生成
@@ -346,11 +411,33 @@ function CardEditor({ card, onSave, onDelete }: { card: MasterCard; onSave: (c: 
     up({ [field]: cur.includes(a) ? cur.filter((x) => x !== a) : [...cur, a] } as Partial<MasterCard>);
   }
 
+  async function onPickImage(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const webp = await fileToWebp(file);
+      await saveImage(d, webp);
+      setImgVersion((v) => v + 1); // 表示を更新
+    } catch (err) {
+      alert(`画像の保存に失敗しました: ${err}`);
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  }
+
   return (
     <div className="card-editor">
       <div className="editor-preview">
-        <img src={`/card_images/${d.id}.webp`} alt="" onError={(e) => ((e.target as HTMLImageElement).style.opacity = '0.15')} />
+        <img src={`/card_images/${d.id}.webp?v=${imgVersion}`} alt="" onError={(e) => ((e.target as HTMLImageElement).style.opacity = '0.15')} />
         <span className={`impl-badge ${st}`}>{IMPL_LABEL[st]}</span>
+      </div>
+      <div className="img-upload">
+        <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={onPickImage} />
+        <button className="a-refresh" disabled={uploading} onClick={() => fileRef.current?.click()}>
+          {uploading ? '変換・保存中…' : '画像を選ぶ / 撮影'}
+        </button>
       </div>
 
       <div className="editor-fields">

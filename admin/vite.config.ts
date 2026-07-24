@@ -1,4 +1,5 @@
 import react from '@vitejs/plugin-react';
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, extname, resolve } from 'node:path';
@@ -147,6 +148,39 @@ function masterApi(): Plugin {
             return sendJson(res, 200, { ok: true });
           }
 
+          if (req.method === 'POST' && url === '/api/save-image') {
+            // スマホから撮った/選んだ画像（クライアントでwebp化済み data URL）を保存。
+            // カードの公開状態に合わせて assets/card_images か assets/wip_card_images へ振り分ける
+            const { id, vol, status, dataUrl } = await readBody(req);
+            const m = /^data:image\/webp;base64,(.+)$/.exec(dataUrl ?? '');
+            if (!id || !m) return sendJson(res, 400, { error: 'id と webp の dataUrl が必要' });
+            const setsFile = readJson<{ sets: SetMetaLike[] }>(resolve(DATA, 'sets.json'), { sets: [] });
+            const isPublic = status !== 'draft' && isReleasedVol(vol, setsFile.sets ?? []);
+            const dir = isPublic ? IMAGES : WIP_IMAGES;
+            mkdirSync(dir, { recursive: true });
+            writeFileSync(resolve(dir, `${id}.webp`), Buffer.from(m[1], 'base64'));
+            return sendJson(res, 200, { ok: true, savedTo: resolve(dir, `${id}.webp`).replace(REPO + '/', '') });
+          }
+
+          if (req.method === 'GET' && url === '/api/git-status') {
+            // 公開リポジトリ側（data/cards.json 等）に未コミットの変更があるか。
+            // data/wip は gitignore なのでここには出ない＝未公開データは push されない
+            const out = execFileSync('git', ['status', '--porcelain'], { cwd: REPO }).toString();
+            return sendJson(res, 200, { changes: out.split('\n').filter(Boolean) });
+          }
+
+          if (req.method === 'POST' && url === '/api/git-push') {
+            // スマホからの「公開」ボタン。PC の既存 git 認証だけを使い、トークンはブラウザに出さない。
+            // gitignore により data/wip・wip画像は push 対象外なので、公開データだけが上がる
+            const { message } = await readBody(req);
+            execFileSync('git', ['add', '-A'], { cwd: REPO });
+            const staged = execFileSync('git', ['diff', '--cached', '--name-only'], { cwd: REPO }).toString().trim();
+            if (!staged) return sendJson(res, 200, { ok: true, pushed: false, note: '変更なし' });
+            execFileSync('git', ['commit', '-m', String(message || 'カードマスター更新（管理画面）')], { cwd: REPO });
+            execFileSync('git', ['push'], { cwd: REPO });
+            return sendJson(res, 200, { ok: true, pushed: true, files: staged.split('\n') });
+          }
+
           if (req.method === 'POST' && url === '/api/save-set') {
             // 弾（セット）の追加・更新
             const { set } = await readBody(req);
@@ -173,5 +207,14 @@ function masterApi(): Plugin {
 export default defineConfig({
   base: '/',
   plugins: [react(), masterApi()],
-  server: { fs: { allow: [REPO] } },
+  server: {
+    fs: { allow: [REPO] },
+    // Tailscale 経由（tailscale serve → https://＜PC名＞.＜tailnet＞.ts.net）でスマホから開くため、
+    // .ts.net ホストを許可する。tailnet の中の端末しか到達できないので安全。
+    // 特定ホストに絞りたい時は ADMIN_ALLOWED_HOST 環境変数で上書きできる。
+    // 注意: `tailscale funnel`（インターネット全体に公開）は絶対に使わないこと。
+    allowedHosts: process.env.ADMIN_ALLOWED_HOST
+      ? [process.env.ADMIN_ALLOWED_HOST]
+      : ['.ts.net', 'localhost', '127.0.0.1'],
+  },
 });
