@@ -1,4 +1,5 @@
 export * from './types';
+export * from './sets';
 export * from './cards';
 export * from './rng';
 export * from './decks';

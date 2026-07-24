@@ -28,6 +28,8 @@ jobs:
       - run: npm run build
         env:
           VITE_BASE: /bravers_duel/
+      # 未公開の弾の情報が公開ビルドに混入していないか最終チェック（漏れたらデプロイを止める）
+      - run: npm run check:leak
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

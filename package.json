@@ -4,13 +4,16 @@
   "version": "0.1.0",
   "workspaces": [
     "engine",
-    "web"
+    "web",
+    "admin"
   ],
   "scripts": {
     "test": "npm --workspace engine run test",
     "sim": "npm --workspace engine run sim --",
     "dev": "npm --workspace web run dev",
-    "build": "npm --workspace web run build"
+    "build": "npm --workspace web run build",
+    "admin": "npm --workspace admin run dev",
+    "check:leak": "node scripts/check-no-wip-leak.mjs"
   },
   "devDependencies": {
     "sharp": "^0.35.3"

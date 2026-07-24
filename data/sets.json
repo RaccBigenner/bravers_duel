@@ -1,0 +1,15 @@
+{
+  "_comment": "弾（セット）のマスタ。カードは vol でこの弾に属する。status が 'released' の弾のカードだけが公開ビルドに含まれる（engine/src/cards.ts が突き合わせる）。制作中の弾は status:'draft' にし、カード本体は data/wip/ に置く（gitignore・公開されない）。themeName/themeSubtitle は公開直前まで codename で伏せてよい。",
+  "sets": [
+    {
+      "vol": 1,
+      "themeNo": 1,
+      "themeName": "聖戦残火",
+      "themeSubtitle": "禍いの足音",
+      "packType": "DX",
+      "status": "released",
+      "releasedAt": "2026-07-01",
+      "codename": ""
+    }
+  ]
+}

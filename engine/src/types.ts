@@ -22,6 +22,31 @@ export type SkillValueType = (typeof SKILL_VALUE_TYPES)[number];
 export const CHARACTER_SIZES = ['normal', 'legendaryLarge'] as const;
 export type CharacterSize = (typeof CHARACTER_SIZES)[number];
 
+/** パックの種別（収録量の分類）。「制作中かどうか」とは別の軸（MTGの set_type 相当） */
+export const PACK_TYPES = ['Normal', 'DX'] as const;
+export type PackType = (typeof PACK_TYPES)[number];
+
+/** カード・弾のライフサイクル。released だけが公開ビルドに載る */
+export const CARD_STATUSES = ['draft', 'released'] as const;
+export type CardStatus = (typeof CARD_STATUSES)[number];
+
+/** 弾（セット）のメタ情報。data/sets.json の1件。 */
+export interface SetMeta {
+  /** 弾数（製品としての通し番号）。カードの vol と対応する */
+  vol: number;
+  /** テーマNo.（複数弾を束ねる物語ブロック。弾数とは別軸） */
+  themeNo: number;
+  themeName: string;
+  themeSubtitle: string;
+  packType: PackType;
+  /** draft の弾のカードは公開ビルドに含まれない */
+  status: CardStatus;
+  /** 公開日（YYYY-MM-DD）。未定なら空文字 */
+  releasedAt: string;
+  /** 制作中の開発コードネーム（公開前のテーマ名漏れ防止用・任意） */
+  codename?: string;
+}
+
 interface CardBase {
   id: string;
   vol: number;
@@ -30,6 +55,9 @@ interface CardBase {
   name: string;
   effectText: string;
   flavorText: string;
+  /** カード個別の公開状態。省略時は released（既存カードは無記入のまま）。
+   * released の弾の中でも、このカードだけ未完成にしたいとき 'draft' にする */
+  status?: CardStatus;
 }
 
 export interface CharacterCard extends CardBase {

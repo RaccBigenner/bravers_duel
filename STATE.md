@@ -99,6 +99,17 @@
   踏み込み・被弾のモーションは必ずこのラッパーに掛ける。カード絵だけに掛けると
   HPバー・装備アイコンが取り残されて「絵だけ浮く」（実際に起きた不具合）。
   接地影とスポットライトは地面の表現なので、あえて `.char-slot` 側に残して動かさない。
+- 2026-07-24: **カードマスター管理の仕組みを新設**（第2弾以降の制作用）。詳細は `docs/CARD_MASTER.md`。
+  - `data/sets.json`（弾マスタ。弾数/テーマNo./テーマ名/サブタイトル/パックタイプ/status）を新設。
+    第1弾＝聖戦残火／禍いの足音／DX／released。
+  - `engine/src/sets.ts` + `cards.ts` のゲート: **ALL_CARDS は released の弾のカードだけ**。
+    既存144枚は1枚も未編集（vol1=released なので全部公開）。カードに `status?` を任意追加。
+  - **管理画面 = `admin/` ワークスペース（`npm run admin`、ローカル専用・非デプロイ）**。
+    Vite の fs API で `data/` を直接読み書き。カード編集・実装状況可視化・公開前チェック・
+    基本値の理論値計算・弾メタ編集。保存は「制作中→data/wip（gitignore）／公開弾→data/cards.json」に自動振り分け。
+  - 漏れ防止の多層防御: engineゲート＋物理分離（data/wip・assets/wip_card_images は gitignore）＋
+    CIの `scripts/check-no-wip-leak.mjs`（deploy.yml に組込・公開JSを走査）＋ `engine/test/sets.test.ts`。
+  - テスト 81→90。将来の再録/エラッタは oracleId 二層モデルへ拡張可能な設計にしてある（今は未導入）。
 - **残タスク**: スマホ実機での調整／ガード割り込みUIの実戦確認。
 - PvPはβ2として実現可能（Firebase等で数日規模）と社長に回答済み。
 

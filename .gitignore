@@ -13,3 +13,10 @@ archive/**/.flutter-plugins-dependencies
 
 # Claude Code のローカル作業ファイル
 .claude/scheduled_tasks.lock
+
+# 制作中の弾のカード（公開ビルドに含めない・非公開）。README だけ残す
+data/wip/*
+!data/wip/README.md
+# 制作中カードの画像（公開ディレクトリと分ける）
+assets/wip_card_images/*
+!assets/wip_card_images/.gitkeep

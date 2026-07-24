@@ -12,5 +12,5 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": ["vite/client"]
   },
-  "include": ["src", "vite.config.ts", "../engine/src", "../data/cards.json"]
+  "include": ["src", "vite.config.ts", "../engine/src", "../data/cards.json", "../data/sets.json"]
 }

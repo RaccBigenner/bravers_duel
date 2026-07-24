@@ -1,10 +1,17 @@
 /**
  * カードマスターデータの読み込みと検証。
- * データ本体は data/cards.json（第1弾 144枚）。
+ * データ本体は data/cards.json（公開済みの弾のカード）。
+ *
+ * 重要: この data/cards.json は Vite ビルドで公開JSにそのまま埋め込まれる。
+ * つまり「ここに入れたカード＝世界中の誰でも読める」。制作中の弾は絶対にここへ入れず、
+ * data/wip/（gitignore）に置くこと。念のため下の ALL_CARDS でも
+ * 「released の弾に属するカードだけ」に絞る二重の安全策をかけている。
  */
 import rawCards from '../../data/cards.json';
+import { isVolReleased } from './sets';
 import {
   ATTRIBUTES,
+  CARD_STATUSES,
   CHARACTER_SIZES,
   RARITIES,
   SKILL_VALUE_TYPES,
@@ -33,6 +40,9 @@ function validateCard(raw: Record<string, unknown>): Card {
   if (typeof raw.name !== 'string' || raw.name === '') fail(id, 'name が空');
   if (typeof raw.effectText !== 'string') fail(id, 'effectText が文字列ではない');
   if (typeof raw.flavorText !== 'string') fail(id, 'flavorText が文字列ではない');
+  if (raw.status !== undefined && !CARD_STATUSES.includes(raw.status as never)) {
+    fail(id, `未知の status: ${raw.status}`);
+  }
 
   switch (raw.type) {
     case 'character': {
@@ -59,8 +69,20 @@ function validateCard(raw: Record<string, unknown>): Card {
   }
 }
 
-/** 検証済みの全カード */
-export const ALL_CARDS: Card[] = (rawCards as Record<string, unknown>[]).map(validateCard);
+/** data/cards.json に入っている検証済みカード（原則すべて公開弾のもの） */
+const VALIDATED_CARDS: Card[] = (rawCards as Record<string, unknown>[]).map(validateCard);
+
+/** そのカードが公開ビルドに載るか（released の弾に属し、カード個別も draft でない） */
+function isPublicCard(c: Card): boolean {
+  if (c.status === 'draft') return false;
+  return isVolReleased(c.vol);
+}
+
+/**
+ * 公開されている全カード。ゲーム本体・カード一覧・デッキ構築はこれだけを見る。
+ * 万一 data/cards.json に未公開弾のカードが紛れても、ここで弾い（除外し）て漏れを防ぐ。
+ */
+export const ALL_CARDS: Card[] = VALIDATED_CARDS.filter(isPublicCard);
 
 const byId = new Map(ALL_CARDS.map((c) => [c.id, c]));
 
