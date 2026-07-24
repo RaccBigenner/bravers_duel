@@ -10,3 +10,6 @@ archive/**/build/
 archive/**/.dart_tool/
 archive/**/.flutter-plugins
 archive/**/.flutter-plugins-dependencies
+
+# Claude Code のローカル作業ファイル
+.claude/scheduled_tasks.lock
