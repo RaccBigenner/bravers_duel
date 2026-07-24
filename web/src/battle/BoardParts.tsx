@@ -149,57 +149,63 @@ export function Formation({ side, state, pops, targeting, onTap, koShown, cardW,
             onClick={() => onTap(side, i)}
             {...longPressHandlers(() => onZoom?.(c.cardId))}
           >
+            {/* slot-body = 「キャラ1体ぶんの見た目」。踏み込み・被弾のモーションはここに掛ける。
+             * .char-slot 本体の transform はホイール配置に占有されていて使えないため。
+             * カード絵だけに掛けるとHPバーや装備アイコンが取り残されて剥がれて見える（実際に起きた事故）。
+             * 接地影とスポットライトは地面の表現なので、あえて .char-slot 側に残して動かさない。 */}
             <div
               className={[
-                'char-card',
+                'slot-body',
                 myPops.some((d) => d.amount > 0) ? 'card-hit' : '',
                 ...myMotions.map((m) => m.cls),
               ].join(' ')}
             >
-              <CardFrame card={cardById(c.cardId)} width={frontW} />
-            </div>
-            {koVisible && (
-              <img
-                src={IMG('back')}
-                className={`ko-back ${(cardById(c.cardId) as CharacterCard).size === 'legendaryLarge' ? 'landscape' : ''}`}
-              />
-            )}
-            {isActor && state.turn <= p.actorLockUntilTurn && (
-              <img className="lock-badge" src={IMG('icon_lock')} title="ロック中: アクターを交代できない" alt="ロック" />
-            )}
-            {c.equipmentCardId && (
-              <span
-                className="equip-thumb"
-                title="装備（タップで拡大）"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onZoom?.(c.equipmentCardId!);
-                }}
-              >
-                <img src={IMG(c.equipmentCardId)} alt="装備" />
-              </span>
-            )}
-            {alive && (
-              <div className="char-status">
-                <div className="hp-bar">
-                  <div
-                    className={`hp-fill ${hpRatio <= 0.25 ? 'low' : hpRatio <= 0.5 ? 'mid' : ''}`}
-                    style={{ width: `${Math.round(hpRatio * 100)}%` }}
-                  />
-                </div>
-                <div className="status-row">
-                  <span className="hp-num">{hp}/{maxHp}</span>
-                  <span className="attr-icons">
-                    {(cardById(c.cardId) as CharacterCard).attribute.slice(0, 5).map((a, k) => (
-                      <img key={`b${k}`} src={IMG(a)} alt={a} title={`属性: ${a}`} />
-                    ))}
-                    {extras.slice(0, 3).map((a, k) => (
-                      <img key={`x${k}`} className="added" src={IMG(a)} alt={a} title={`追加属性: ${a}`} />
-                    ))}
-                  </span>
-                </div>
+              <div className="char-card">
+                <CardFrame card={cardById(c.cardId)} width={frontW} />
               </div>
-            )}
+              {koVisible && (
+                <img
+                  src={IMG('back')}
+                  className={`ko-back ${(cardById(c.cardId) as CharacterCard).size === 'legendaryLarge' ? 'landscape' : ''}`}
+                />
+              )}
+              {isActor && state.turn <= p.actorLockUntilTurn && (
+                <img className="lock-badge" src={IMG('icon_lock')} title="ロック中: アクターを交代できない" alt="ロック" />
+              )}
+              {c.equipmentCardId && (
+                <span
+                  className="equip-thumb"
+                  title="装備（タップで拡大）"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onZoom?.(c.equipmentCardId!);
+                  }}
+                >
+                  <img src={IMG(c.equipmentCardId)} alt="装備" />
+                </span>
+              )}
+              {alive && (
+                <div className="char-status">
+                  <div className="hp-bar">
+                    <div
+                      className={`hp-fill ${hpRatio <= 0.25 ? 'low' : hpRatio <= 0.5 ? 'mid' : ''}`}
+                      style={{ width: `${Math.round(hpRatio * 100)}%` }}
+                    />
+                  </div>
+                  <div className="status-row">
+                    <span className="hp-num">{hp}/{maxHp}</span>
+                    <span className="attr-icons">
+                      {(cardById(c.cardId) as CharacterCard).attribute.slice(0, 5).map((a, k) => (
+                        <img key={`b${k}`} src={IMG(a)} alt={a} title={`属性: ${a}`} />
+                      ))}
+                      {extras.slice(0, 3).map((a, k) => (
+                        <img key={`x${k}`} className="added" src={IMG(a)} alt={a} title={`追加属性: ${a}`} />
+                      ))}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
             {myVfx.map((v) =>
               v.img.startsWith('css:') ? (
                 <span

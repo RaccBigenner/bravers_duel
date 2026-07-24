@@ -167,6 +167,11 @@
 /* KO中は表面を完全に隠す（裏面が「透ける」ように見える事故防止で、
    スロット全体へのフィルターは使わない） */
 .char-slot.ko .char-card { visibility: hidden; }
+/* キャラ1体ぶんの見た目をまとめて動かすラッパー。
+ * 踏み込み(lunge)・被弾(card-hit)はこの要素に掛ける。カードの絵だけに掛けると
+ * HPバー・装備アイコン・ロックバッジが取り残されて「絵だけ浮く」ので必ずここ。
+ * 位置・大きさは中のカードと同一（レイアウトには一切影響しない）。 */
+.slot-body { position: relative; }
 .ko-back {
   position: absolute;
   inset: 0;
@@ -188,7 +193,10 @@
  * アニメーションで transform を上書きしてはいけない（位置が壊れる）。
  * 光らせるだけにして、タップしやすいよう重なり順も最前面へ。 */
 .char-slot.selectable { z-index: 40 !important; }
-.char-slot.selectable > div:first-child { animation: pulse-glow 1s ease-in-out infinite alternate; }
+/* 光らせるのはカードの絵だけ。構造依存の `> div:first-child` は使わない
+ * （間にラッパーを1枚足したときに、モーション用の .slot-body を掴んで
+ *   踏み込み・被弾アニメを打ち消してしまう。実際に踏んだ罠） */
+.char-slot.selectable .char-card { animation: pulse-glow 1s ease-in-out infinite alternate; }
 @keyframes pulse-glow {
   from { filter: brightness(1); }
   to { filter: brightness(1.35) drop-shadow(0 0 6px rgba(80, 180, 255, 0.8)); }

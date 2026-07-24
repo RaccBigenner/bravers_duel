@@ -2,6 +2,7 @@ import type { DeckList, NamedDeck } from '@bravers/engine';
 import { useEffect, useState } from 'react';
 import { logEvent } from './telemetry';
 import { decodeSharedLog, type SharedLog } from './shareLog';
+import { excludeForPlayer, rollEnemy } from './randomEnemy';
 import { Battle } from './pages/Battle';
 import { BattleLogPage } from './pages/BattleLog';
 import { DeckBuilder, type CustomDeck } from './pages/DeckBuilder';
@@ -109,7 +110,21 @@ export function App() {
           key={view.nonce}
           setup={view.setup}
           onExit={() => setView({ name: 'home' })}
-          onRematch={() => setView({ name: 'battle', setup: view.setup, nonce: view.nonce + 1 })}
+          onRematch={() => {
+            // 「敵はランダム」で始めたなら、もう一回のたびに引き直す
+            // （setup を使い回すと同じ相手が永遠に出続けてランダムに見えない）
+            const s = view.setup;
+            const setup = s.enemyRandom
+              ? {
+                  ...s,
+                  enemy: rollEnemy([
+                    ...excludeForPlayer(s.playerDeckKind, s.playerDeckName),
+                    s.enemy.name, // 直前と同じ相手も避ける
+                  ]),
+                }
+              : s;
+            setView({ name: 'battle', setup, nonce: view.nonce + 1 });
+          }}
         />
       );
   }

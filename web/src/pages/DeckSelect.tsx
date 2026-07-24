@@ -9,6 +9,7 @@ import { useMemo, useState } from 'react';
 import type { BattleSetup } from '../App';
 import { CardFrame } from '../CardFrame';
 import { IMG } from '../cardAssets';
+import { excludeForPlayer, rollEnemy } from '../randomEnemy';
 import type { CustomDeck } from './DeckBuilder';
 
 // 敵デッキも自分と同じ8種の共通プリセットから選ぶ（2026-07-23 社長決定）
@@ -98,12 +99,15 @@ export function DeckSelect({ onStart, onBack, custom, onBuild }: {
   }
 
   function start() {
-    const enemyRandom = enemyIdx === 'random';
-    const enemy = enemyRandom ? enemies[Math.floor(Math.random() * enemies.length)] : enemies[enemyIdx as number];
     const useCustom = mineIdx === 'custom' && customEntry;
     const playerDeck = useCustom ? customEntry.deck : all[mineIdx === 'custom' ? 0 : mineIdx].deck;
     const playerDeckName = useCustom ? customEntry.name : all[mineIdx === 'custom' ? 0 : mineIdx].name;
     const playerDeckKind = useCustom ? (imported ? 'imported' : 'custom') : 'preset';
+    const enemyRandom = enemyIdx === 'random';
+    // ランダムのときは自分と同じデッキを候補から外す（ミラーだと「ランダムが効いていない」と見える）
+    const enemy = enemyRandom
+      ? rollEnemy(excludeForPlayer(playerDeckKind, playerDeckName))
+      : enemies[enemyIdx as number];
     onStart({ playerDeck, playerDeckName, playerDeckKind, enemy, enemyRandom });
   }
 
@@ -215,7 +219,7 @@ export function DeckSelect({ onStart, onBack, custom, onBuild }: {
             <div className="deck-tile-art random-art">？</div>
             <div className="deck-tile-info">
               <b>ランダム</b>
-              <span className="deck-tile-concept">スタンダード8デッキからおまかせ</span>
+              <span className="deck-tile-concept">自分以外のスタンダードデッキからおまかせ</span>
             </div>
           </button>
           {enemies.map((d) => {
