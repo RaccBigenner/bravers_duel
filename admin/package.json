@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port 5273 --open",
-    "serve": "vite --port 5273 --host 127.0.0.1",
+    "serve": "vite build && vite preview --port 5273 --host 127.0.0.1",
     "build": "echo 'admin はローカル専用のため公開ビルドしません' && exit 0"
   },
   "dependencies": {

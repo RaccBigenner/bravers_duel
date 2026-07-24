@@ -86,9 +86,8 @@ const MIME: Record<string, string> = {
 
 /** ローカル専用のマスターデータ API（fs 直読み書き）。公開環境には絶対にデプロイしない */
 function masterApi(): Plugin {
-  return {
-    name: 'bd-master-api',
-    configureServer(server) {
+  // dev サーバーと本番プレビューの両方に同じ API・画像配信ミドルウェアを挿す
+  const attach = (server: { middlewares: { use: (...args: any[]) => void } }) => {
       // カード画像を配信（公開画像 → 無ければ制作中画像の順で探す）
       server.middlewares.use((req, res, next) => {
         const url = req.url ?? '';
@@ -200,6 +199,14 @@ function masterApi(): Plugin {
           return sendJson(res, 500, { error: String(e) });
         }
       });
+  };
+  return {
+    name: 'bd-master-api',
+    configureServer(server) {
+      attach(server);
+    },
+    configurePreviewServer(server) {
+      attach(server);
     },
   };
 }
@@ -213,6 +220,12 @@ export default defineConfig({
     // racc.games のサブドメインを許可する。cards.racc.games には Cloudflare Access の
     // メール認証がかかっており、社長のメール以外は到達できない。
     // 特定ホストに絞りたい時は ADMIN_ALLOWED_HOST 環境変数で上書きできる。
+    allowedHosts: process.env.ADMIN_ALLOWED_HOST
+      ? [process.env.ADMIN_ALLOWED_HOST]
+      : ['.racc.games', 'localhost', '127.0.0.1'],
+  },
+  // 本番プレビュー（HMRなし＝画面を離れても勝手にリロードされない）。npm run serve がこちらを使う
+  preview: {
     allowedHosts: process.env.ADMIN_ALLOWED_HOST
       ? [process.env.ADMIN_ALLOWED_HOST]
       : ['.racc.games', 'localhost', '127.0.0.1'],

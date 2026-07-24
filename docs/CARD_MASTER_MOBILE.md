@@ -47,6 +47,20 @@ launchctl load ~/Library/LaunchAgents/com.bravers.tunnel.plist
 
 ログ: `/tmp/bravers-admin.err` / `/tmp/bravers-tunnel.err`
 
+## 自動リロードについて
+
+管理画面は**本番プレビュー版（HMRなし）**で動いています。開発モードだと、画面を離れて
+通信が一瞬切れるたびにページが勝手にリロードされてストレスなので、リロードしない安定版にしています。
+
+そのぶん、**管理画面のプログラムを変更したら再ビルドが必要**です:
+
+```
+launchctl unload ~/Library/LaunchAgents/com.bravers.admin.plist
+launchctl load ~/Library/LaunchAgents/com.bravers.admin.plist
+```
+
+（load したときに自動でビルドし直されます。数秒かかります）
+
 ## うまく開けないとき
 
 - **PCが起動しているか**（シャットダウン中は使えない仕組みです）
