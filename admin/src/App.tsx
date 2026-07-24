@@ -52,6 +52,8 @@ export function App() {
   const [query, setQuery] = useState('');
   const [onlyUnimpl, setOnlyUnimpl] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // 新規カードは保存するまで data に入れない「下書き」。ここにある間は編集フォームに出るが未保存
+  const [draftCard, setDraftCard] = useState<MasterCard | null>(null);
   const [toast, setToast] = useState('');
 
   async function reload() {
@@ -84,7 +86,8 @@ export function App() {
     });
   }, [volCards, typeFilter, rarityFilter, onlyUnimpl, query]);
 
-  const selected = volCards.find((c) => c.id === selectedId) ?? null;
+  // 下書きがあればそれを優先して編集フォームに出す（未保存の新規カード）
+  const selected = draftCard ?? volCards.find((c) => c.id === selectedId) ?? null;
 
   // 実装状況の集計
   const audit = useMemo(() => {
@@ -94,9 +97,15 @@ export function App() {
     return { total: volCards.length, withText: withText.length, missing, orphan };
   }, [volCards]);
 
-  async function onSaveCard(card: MasterCard) {
+  async function onSaveCard(card: MasterCard, originalId?: string) {
     try {
+      // 編集で id（弾/コード/レア）が変わったら、古いレコードを消してから保存
+      // （これをしないと元の id のカードが「空カード」として残る）
+      if (originalId && originalId !== card.id) {
+        await deleteCard(originalId, card.vol);
+      }
       const res = await saveCard(card);
+      setDraftCard(null); // 下書きを確定
       await reload();
       setSelectedId(card.id);
       flash(`保存しました → ${res.savedTo}`);
@@ -105,9 +114,9 @@ export function App() {
     }
   }
 
-  async function onAddCard() {
+  function onAddCard() {
     if (!currentSet) return flash('先に弾を作成してください');
-    // 弾内の次の連番 code（A001, A002, ...）
+    // 弾内の次の連番 code（A001, A002, ...）。下書き中や既存カードと被らないように
     const used = volCards
       .map((c) => /^A(\d+)$/.exec(c.code)?.[1])
       .filter(Boolean)
@@ -115,12 +124,13 @@ export function App() {
     const next = (used.length ? Math.max(...used) : 0) + 1;
     const code = `A${String(next).padStart(3, '0')}`;
     const rarity = 'C';
-    const draft: MasterCard = {
+    // 保存はしない。下書きとして編集フォームに出し、「保存」を押して初めて data に入る
+    setDraftCard({
       id: `${vol}-${code}-${rarity}`,
       vol,
       code,
       rarity,
-      name: '（新規カード）',
+      name: '',
       type: 'skill',
       effectText: '',
       flavorText: '',
@@ -129,8 +139,8 @@ export function App() {
       conditionAttribute: ['斬'],
       baseValue: 3,
       valueType: 'attack',
-    };
-    await onSaveCard(draft);
+    });
+    setSelectedId(null);
   }
 
   if (error) return <div className="admin-error">読み込みエラー: {error}<br />ローカルサーバー（npm run admin）で開いていますか？</div>;
@@ -193,7 +203,7 @@ export function App() {
             {filtered.map((c) => {
               const st = implState(c);
               return (
-                <button key={c.id} className={`card-cell ${c.id === selectedId ? 'sel' : ''}`} onClick={() => setSelectedId(c.id)}>
+                <button key={c.id} className={`card-cell ${c.id === selectedId && !draftCard ? 'sel' : ''}`} onClick={() => { setDraftCard(null); setSelectedId(c.id); }}>
                   <img src={`/card_images/${c.id}.webp`} alt={c.name} loading="lazy" onError={(e) => ((e.target as HTMLImageElement).style.visibility = 'hidden')} />
                   <span className="cc-name">{c.name}</span>
                   <span className="cc-meta">{c.rarity}・{c.type}</span>
@@ -209,13 +219,15 @@ export function App() {
         <aside className="admin-editor">
           {selected ? (
             <CardEditor
-              key={selected.id}
+              key={draftCard ? 'draft' : selected.id}
               card={selected}
+              isDraft={!!draftCard}
               onSave={onSaveCard}
+              onCancel={() => { setDraftCard(null); setSelectedId(null); }}
               onDelete={async () => { await deleteCard(selected.id, selected.vol); await reload(); setSelectedId(null); flash('削除しました'); }}
             />
           ) : (
-            <p className="editor-hint">カードを選ぶと、ここで編集できます。</p>
+            <p className="editor-hint">カードを選ぶと、ここで編集できます。左上の「＋ カード追加」で新規作成できます。</p>
           )}
         </aside>
       </div>
@@ -390,8 +402,16 @@ function PublishPanel({ onFlash }: { onFlash: (m: string) => void }) {
 }
 
 // ---------- カードエディタ ----------
-function CardEditor({ card, onSave, onDelete }: { card: MasterCard; onSave: (c: MasterCard) => void; onDelete: () => void }) {
+function CardEditor({ card, isDraft, onSave, onCancel, onDelete }: {
+  card: MasterCard;
+  isDraft: boolean;
+  onSave: (c: MasterCard, originalId?: string) => void;
+  onCancel: () => void;
+  onDelete: () => void;
+}) {
   const [d, setD] = useState<MasterCard>(card);
+  // 編集開始時の id。保存時にこれと変わっていたら古いレコードを消す（key で再マウントされるので固定）
+  const originalId = card.id;
   const [imgVersion, setImgVersion] = useState(0); // 画像差し替え後のキャッシュ破棄用
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -509,8 +529,19 @@ function CardEditor({ card, onSave, onDelete }: { card: MasterCard; onSave: (c: 
         )}
 
         <div className="editor-actions">
-          <button className="a-primary" onClick={() => onSave(d)}>保存</button>
-          <button className="a-danger" onClick={() => { if (confirm(`${d.name} を削除しますか？`)) onDelete(); }}>削除</button>
+          <button
+            className="a-primary"
+            disabled={d.name.trim() === ''}
+            title={d.name.trim() === '' ? '名前を入れてください' : ''}
+            onClick={() => onSave(d, originalId)}
+          >
+            {isDraft ? 'この内容で作成' : '保存'}
+          </button>
+          {isDraft ? (
+            <button className="a-danger" onClick={onCancel}>やめる</button>
+          ) : (
+            <button className="a-danger" onClick={() => { if (confirm(`${d.name} を削除しますか？`)) onDelete(); }}>削除</button>
+          )}
         </div>
       </div>
     </div>
