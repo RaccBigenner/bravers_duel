@@ -209,12 +209,12 @@ export default defineConfig({
   plugins: [react(), masterApi()],
   server: {
     fs: { allow: [REPO] },
-    // Tailscale 経由（tailscale serve → https://＜PC名＞.＜tailnet＞.ts.net）でスマホから開くため、
-    // .ts.net ホストを許可する。tailnet の中の端末しか到達できないので安全。
+    // Cloudflare Tunnel 経由（cloudflared → https://cards.racc.games）でスマホから開くため、
+    // racc.games のサブドメインを許可する。cards.racc.games には Cloudflare Access の
+    // メール認証がかかっており、社長のメール以外は到達できない。
     // 特定ホストに絞りたい時は ADMIN_ALLOWED_HOST 環境変数で上書きできる。
-    // 注意: `tailscale funnel`（インターネット全体に公開）は絶対に使わないこと。
     allowedHosts: process.env.ADMIN_ALLOWED_HOST
       ? [process.env.ADMIN_ALLOWED_HOST]
-      : ['.ts.net', 'localhost', '127.0.0.1'],
+      : ['.racc.games', 'localhost', '127.0.0.1'],
   },
 });

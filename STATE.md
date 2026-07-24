@@ -110,13 +110,19 @@
   - 漏れ防止の多層防御: engineゲート＋物理分離（data/wip・assets/wip_card_images は gitignore）＋
     CIの `scripts/check-no-wip-leak.mjs`（deploy.yml に組込・公開JSを走査）＋ `engine/test/sets.test.ts`。
   - テスト 81→90。将来の再録/エラッタは oracleId 二層モデルへ拡張可能な設計にしてある（今は未導入）。
-- 2026-07-24: **管理画面をスマホから使えるように**（Tailscale方式に決定。3方式を競わせ全審査員一致）。
-  `admin/vite.config.ts` に allowedHosts で `.ts.net` 許可＋画像アップロードAPI（/api/save-image、
-  制作中→wip_card_images・公開→card_images に振り分け）＋スマホからの公開ボタン（/api/git-status・
-  /api/git-push、PCの既存git認証のみ使用・data/wip は gitignore で push されない）。
-  カードエディタに画像アップロードUI（クライアントでwebp変換）と公開パネルを追加。
-  手順は `docs/CARD_MASTER_MOBILE.md`。Cloudflare は過剰（PATの90日更新等）として不採用、
-  非商用/PCオフ運用が必要になった時の移行先として文書化。**社長のTailscaleアプリ導入待ち**。
+- 2026-07-24: **管理画面をスマホから使えるように（完成・稼働中）**。当初 Tailscale を提案したが
+  社長が「アプリを入れたくない・外出先から使いたい」→ **Cloudflare Tunnel + Access** に変更。
+  社長は既に Cloudflare ヘビーユーザーで `racc.games` ドメイン保有。
+  - URL: **https://cards.racc.games**（スマホのブラウザ＋メールOTPだけ、アプリ不要）
+  - cloudflared トンネル `bravers-admin`（PC内）＋ Cloudflare Access（One-time PIN、
+    許可メール `racc.beginner@gmail.com` のみ）。未公開データはPCから出ない。
+  - **未認証は UI もデータAPI(/api/master) も 302 でブロック**を実測確認（漏れ経路ゼロ）。
+  - 自動起動: `~/Library/LaunchAgents/com.bravers.admin.plist` ＋ `com.bravers.tunnel.plist`
+    （PC起動で admin(:5273)＋トンネルが自動起動。sudo不要のLaunchAgent）。
+  - `admin/vite.config.ts`: allowedHosts `.racc.games`＋画像アップロードAPI(/api/save-image、
+    制作中→wip_card_images・公開→card_images)＋スマホからの公開(/api/git-status・/api/git-push、
+    PCの既存git認証のみ・data/wip は gitignore で push されない)。画像アップロードUI・公開パネルも追加。
+  - 手順は `docs/CARD_MASTER_MOBILE.md`。唯一の制約: 使うとき家のPCが起動している必要（データを外に出さない代償）。
 - **残タスク**: スマホ実機での調整／ガード割り込みUIの実戦確認。
 - PvPはβ2として実現可能（Firebase等で数日規模）と社長に回答済み。
 

@@ -1,78 +1,64 @@
-# カードマスター管理をスマホから使う（Tailscale）
+# カードマスター管理をスマホから使う（Cloudflare Access）
 
-管理画面（`npm run admin`）を、外出先のスマホからも安全に開くための設定。
+外出先のスマホから、ブラウザだけでカード管理できる（アプリ不要）。
+
+## URL
+
+**https://cards.racc.games**
 
 ## 仕組み（なぜ安全か）
 
-**Tailscale** は、社長のPCとスマホ「だけ」を繋ぐ、暗号化された専用線（VPN）です。
-他の人は一切入れません。管理画面はこれまでどおりPCの中だけで動き、スマホはその専用線を
-通してPCの画面を見るだけ。**未公開カードのデータ・画像はPCの外に一切出ず、
-インターネット上に公開URLも存在しません**。だから「認証を破られて漏れる」経路がそもそもありません。
+- 管理画面は今までどおり**社長のPCの中だけ**で動く（データはPCから一歩も出ない）
+- **Cloudflare Tunnel** が `cards.racc.games` ↔ PCの `localhost:5273` を暗号化して繋ぐ
+- **Cloudflare Access** が `cards.racc.games` にメール認証をかける（`racc.beginner@gmail.com` だけ許可）
+- スマホはブラウザで開いてメールに届くコードを入れるだけ。**アプリは不要**
+- 未認証・許可外メールは、管理画面にもデータAPIにも一切到達できない（認証画面へ強制リダイレクト）
 
-唯一の条件: **編集するときはPCを起動して `npm run admin` を動かしておく**必要があります。
+## 使い方
 
-## 初回セットアップ（15分・無料）
+1. **PCを起動しておく**（ログイン状態ならOK。スリープは可、シャットダウンは不可）
+2. スマホ/PCのブラウザで **https://cards.racc.games** を開く
+3. `racc.beginner@gmail.com` を入力 → **「Send me a code」**
+4. Gmailに届く**6桁コード**を入力
+5. 管理画面が開く。カード編集・画像アップロード・「GitHubへ公開」まで全部できる
+   （認証は24時間有効。1日1回くらいの入力で済む）
 
-### 1. PCとスマホに Tailscale を入れる
+ホーム画面に追加しておくとアプリのように使える。
 
-- PC（Mac）: https://tailscale.com/download で Tailscale をインストール
-- スマホ: App Store / Google Play で「Tailscale」を入れる
-- **両方で同じアカウント**（Google等）でログインする。これで2台が同じ専用線に入る
+## セットアップは完了済み（社長がやることは無い）
 
-### 2. MagicDNS と HTTPS を有効にする
+- cloudflared インストール・認証・トンネル `bravers-admin` 作成
+- DNS: `cards.racc.games` → トンネル
+- Cloudflare Access アプリ（`cards.racc.games`、One-time PIN、許可メール `racc.beginner@gmail.com` のみ）
+- **自動起動**: `~/Library/LaunchAgents/com.bravers.admin.plist` と `com.bravers.tunnel.plist`
+  → **PCを起動（ログイン）すると、管理画面とトンネルが自動で立ち上がる**
 
-- https://login.tailscale.com/admin/dns を開く
-- 「MagicDNS」を有効化（PCに `＜PC名＞.＜tailnet名＞.ts.net` という名前が付く）
-- 「HTTPS Certificates」を有効化
-
-### 3. PCで管理画面を起動して、Tailscale経由で公開する
-
-PCのターミナルで2つ実行します（プロジェクトのフォルダで）:
+## 手動で止める / 再開する
 
 ```
-# ① 管理画面を起動（そのまま起動しっぱなしにする）
-npm run admin
+# 止める
+launchctl unload ~/Library/LaunchAgents/com.bravers.admin.plist
+launchctl unload ~/Library/LaunchAgents/com.bravers.tunnel.plist
 
-# ② 別のターミナルで、Tailscale経由で見えるようにする
-tailscale serve --bg 5273
+# 再開する
+launchctl load ~/Library/LaunchAgents/com.bravers.admin.plist
+launchctl load ~/Library/LaunchAgents/com.bravers.tunnel.plist
 ```
 
-`tailscale serve --bg 5273` を実行すると、
-`https://＜PC名＞.＜tailnet名＞.ts.net/` というURLが表示されます。これがスマホで開くURLです。
+ログ: `/tmp/bravers-admin.err` / `/tmp/bravers-tunnel.err`
 
-### 4. スマホで開く
+## うまく開けないとき
 
-- スマホのTailscaleアプリを **オン** にする
-- ブラウザで `https://＜PC名＞.＜tailnet名＞.ts.net/` を開く
-- 管理画面が出ればOK。カードの編集・画像アップロード・GitHubへの公開までスマホでできます
+- **PCが起動しているか**（シャットダウン中は使えない仕組みです）
+- `https://cards.racc.games` が 502 等になる → PCで管理画面が動いているか確認
+  （ターミナルで `curl http://127.0.0.1:5273/api/master` が `ok`/200 を返すか）
+- 認証画面がループする → いったんブラウザのCookieを消して開き直す
 
-ホーム画面に追加しておくと、アプリのように使えます。
+## セキュリティ
 
-## 毎回の使い方
-
-1. PCで `npm run admin` を起動（`tailscale serve` は一度設定すれば継続します）
-2. スマホのTailscaleをオンにして、ブックマークしたURLを開く
-3. カードを編集 → 「GitHubへ公開」ボタンで released の弾をゲームに反映
-
-## スマホでできること
-
-- カードの数値・効果テキスト・属性の編集
-- **カードの絵をアップロード**（「画像を選ぶ / 撮影」ボタン。スマホで撮った写真や画像を選ぶと、
-  自動でwebpに変換して保存。制作中カードの絵は非公開の `wip_card_images` に入る）
-- 弾のメタ情報の編集、実装状況・公開前チェックの確認
-- **「GitHubへ公開」**（released の弾のカードだけがゲームに反映。制作中カードは送られない）
-
-## セキュリティの確認（大事）
-
-- **`tailscale funnel` は絶対に使わないでください。** これはインターネット全体に公開する
-  コマンドで、使うと未公開カードが誰でも見えてしまいます。使うのは必ず `tailscale serve` です。
-- 正しく設定できているかの確認: **スマホのTailscaleをオフにして**（またはPCと別ネットワークで）
-  同じURLを開いてみてください。**開けない（繋がらない）のが正常**です。開けてしまう場合は
-  設定が間違っているので教えてください。
-- スマホを紛失したら、Tailscaleの管理画面からその端末を無効化すればアクセスを即遮断できます。
-
-## 将来、事業化したら
-
-Tailscale の無料プランは「非商用」向けです。オープンβの個人開発なら問題ありませんが、
-本格的な事業にする場合は、同じ「PCから何も出さない」考え方のまま
-Cloudflare Tunnel + Access（メール認証）へ移行できます。そのときに手順を用意します。
+- `cards.racc.games` は Cloudflare Access で保護。`racc.beginner@gmail.com` 以外はメールコードを受け取れず入れない
+- 未公開カードのデータ・画像は**PCの中だけ**。Cloudflare は中身を保持しない（暗号化トンネルの通り道なだけ）
+- **自己チェック**: Cloudflareにログインしていない別の端末（例: スマホをモバイル回線にして別ブラウザ）で
+  `cards.racc.games` を開くと、必ずメール認証画面が出て中身は見えないのが正常
+- 許可メールを変える/増やすには: Cloudflare Zero Trust → Access → Applications →
+  「cards」→ ポリシー「Racc only」を編集
