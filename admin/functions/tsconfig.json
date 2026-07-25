@@ -1,0 +1,15 @@
+{
+  "//": "Pages Functions 専用の型設定。フロント(admin/tsconfig.json)は DOM lib を使うが、DOM の Response 等は Workers の型と競合し、親に @cloudflare/workers-types を混ぜるとフロント側(src/api.ts 等)が壊れる。そのため Functions だけ DOM を外し Workers 型で閉じる。",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "lib": ["ES2022"],
+    "types": ["@cloudflare/workers-types"]
+  },
+  "include": ["."]
+}
