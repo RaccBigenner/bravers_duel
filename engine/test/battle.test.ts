@@ -300,6 +300,27 @@ describe('AI同士の自動対戦', () => {
   });
 });
 
+describe('AIの無駄打ち防止', () => {
+  // 実戦で「HP満タンのキャラに同名キャラカードの回復を使う」が多発していた（168戦で142回）。
+  // 回復量は0なのに、カードがトラッシュへ行くと「トラッシュの枚数だけHPが増える」キャラの
+  // 最大HPが+1され、盤面の点数がわずかにプラスになるのが原因だった。
+  it('HP満タンの味方には同名キャラカードを使わない', () => {
+    const state = makeBattle({ chars: [CHAR_A, CHAR_B], deckCard: CHAR_A }, { chars: [CHAR_D], deckCard: ATK });
+    state.players[0].ap = [];
+    expect(state.players[0].characters[0].damage).toBe(0);
+    const action = searchAi({ keepHand: 2 }).choose(state, 0);
+    expect(action.type).not.toBe('playCharacter');
+  });
+
+  it('傷ついた味方にはちゃんと使う', () => {
+    const state = makeBattle({ chars: [CHAR_A, CHAR_B], deckCard: CHAR_A }, { chars: [CHAR_D], deckCard: ATK });
+    state.players[0].ap = [];
+    state.players[0].characters[0].damage = 5;
+    const action = searchAi({ keepHand: 2 }).choose(state, 0);
+    expect(action.type).toBe('playCharacter');
+  });
+});
+
 describe('アクターの順番（UIの「次は誰か」表示の元）', () => {
   it('今のアクターから順に並び、一周したら止まる', () => {
     const state = makeBattle({ chars: [CHAR_A, CHAR_B, CHAR_C], deckCard: ATK }, { chars: [CHAR_D, CHAR_E], deckCard: ATK });

@@ -338,6 +338,7 @@ function chooseBySearch(
   let best: { action: BattleAction; score: number } | null = null;
   for (const action of actions) {
     if (sameAction(action, fallback)) continue;
+    if (isPointless(state, me, action)) continue;
     const score = scoreAction(state, me, action);
     if (score === null) continue;
     // 僅差の行動でカードを使い減らさないよう、上回った時だけ採用する
@@ -348,6 +349,32 @@ function chooseBySearch(
 
 function sameAction(a: BattleAction, b: BattleAction): boolean {
   return a.type === b.type && JSON.stringify(a) === JSON.stringify(b);
+}
+
+/**
+ * 「やっても意味がない」と分かりきっている手を候補から外す。
+ *
+ * 先読みは盤面の点数だけを見るので、点差が僅かでもプラスなら打ってしまう。
+ * 実際に起きた例: 同名キャラカードの回復を **HPが満タンのキャラ** に使う。
+ * 回復量は0なのに、カードがトラッシュへ行くことで「トラッシュの枚数だけHPが増える」
+ * キャラ（ドッソ）の最大HPが+1され、-73.0 → -72.5 とわずかにプラスになっていた。
+ * 手札1枚を捨てて最大HP+1は明らかに損で、人が見ても不自然なので、
+ * 回復量0のキャラカードは最初から選ばせない。
+ */
+function isPointless(state: BattleState, me: PlayerIndex, action: BattleAction): boolean {
+  if (action.type !== 'playCharacter') return false;
+  const p = state.players[me];
+  const id = p.hand[action.handIndex];
+  if (!id) return false;
+  const card = cardById(id);
+  // エンジンと同じ「一番傷ついた同名キャラ」が回復先になる
+  let best = -1;
+  p.characters.forEach((c, i) => {
+    if (c.name === card.name && isCharAlive(state, me, i)) {
+      if (best === -1 || c.damage > p.characters[best].damage) best = i;
+    }
+  });
+  return best >= 0 && p.characters[best].damage === 0;
 }
 
 /**
