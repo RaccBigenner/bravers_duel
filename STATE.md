@@ -1,6 +1,6 @@
 # STATE — BRAVER'S DUEL
 
-- 最終更新: 2026-07-23
+- 最終更新: 2026-07-26
 - フェーズ: バトルエンジン v2 完成（コアルール＋装備・フィールド含む効果113枚実装済み）
 
 ## プロジェクトの今
@@ -123,6 +123,52 @@
     制作中→wip_card_images・公開→card_images)＋スマホからの公開(/api/git-status・/api/git-push、
     PCの既存git認証のみ・data/wip は gitignore で push されない)。画像アップロードUI・公開パネルも追加。
   - 手順は `docs/CARD_MASTER_MOBILE.md`。唯一の制約: 使うとき家のPCが起動している必要（データを外に出さない代償）。
+- 2026-07-25: **公開βのログを分析し、それを受けた調整を実施**。詳細は
+  `docs/balance/2026-07-25_beta_feedback.md`（ログの読み方・数字・判断の理由が全部ここ）。
+  - ログの場所: 社長のGoogleドライブのスプレッドシート「BRAVERS DUEL ログ」。
+    2日間でユニーク10人だが、実質は社長＋本気で遊んだ外部1人＋お試し数人。
+  - **壊れコンボを潰した**: アイ＋クラウディアのAP妨害デッキが9戦9勝（3〜8ターン決着）だった。
+    クラウディアの「APが4以下でダメージ+2」を削除、ライトニングセイバー/スタンショック/
+    テクノウェイブ/雷雲召喚のコストを引き上げ。
+  - **UX指摘5点をすべて改善**: 相手アクターのHPが隠れる／手札がアクターに重なる／
+    山札の中身が見たい／効果表示を単押しに／アクターの順番バッジ。
+    ついでに「手札の箱が山札・AP・トラッシュのタップを横取りしていた」不具合も修正。
+  - **AIを作り直した（searchAi = 1手先読み）**: 行動を実際に試して盤面を採点する方式。
+    旧AI相手に勝率62%。`npm run sim -- --mode ai` で強さを測れる。
+    **副作用: 平均15.2→28.1ターンと試合が長くなった**（`--ai simple` で旧AIと比較可）。
+    速さに振り直すなら `engine/src/ai.ts` の `WEIGHTS.hpFoe`。
+  - 未対応: 氷獄の女王が突出（83.6%）／竜王の暴食が5.0%／Xシェア経由の訪問0件／
+    新規プレイヤーが1戦目を完走していない。
+- 2026-07-25: **第2弾の情報が公開ビルドに漏れていたのを修正**（発見も同日）。
+  `data/sets.json` は JSON import で丸ごと公開バンドルに入るため、
+  そこに書いていた第2弾のサブタイトルが公開JSから読める状態だった。
+  → **弾メタもカードと同じ振り分けに変更**: 公開済み＝`data/sets.json`、
+  制作中＝`data/wip/sets.json`（gitignore）／非公開リポの `sets.wip.json`。
+  管理画面（ローカル・クラウド両方）は保存時に status で自動振り分け、公開ボタンで公開側へ移す。
+  検査は `engine/test/sets.test.ts`（公開側に draft があると落ちる）＋ `scripts/check-no-wip-leak.mjs`。
+  **注意: この漏れは 07-24 の a63a57b から公開リポの git 履歴に残っている**（履歴の書き換えは未実施）。
+- 2026-07-26: **管理画面のクラウド化が完了。Tunnel 版は撤去した（PCの起動が不要になった）**。
+  「使うとき家のPCが起動している必要がある」という唯一の制約をなくすため、管理画面ごと
+  Cloudflare Pages に移した。手順書は `docs/CARD_MASTER_MOBILE.md` を全面的に書き換えた。
+  - URL は **https://cards.racc.games** のまま。中身が Tunnel→**Cloudflare Pages `bravers-admin`** に変わった。
+  - データの置き場が「PCのローカルファイル」から **GitHub の2リポ**になった。
+    公開ずみ＝公開リポ `bravers_duel`／**制作中＝非公開リポ `RaccBigenner/bravers_duel_wip`**
+    （`cards/volN.json`・`sets.wip.json`・`images/`）。第2弾8枚は非公開リポに投入ずみ。
+  - サーバ実装＝`admin/functions/`（Pages Functions）。`_middleware.ts` が公式プラグインで
+    Access の JWT を JWKS 署名・aud・exp まで検証する（ヘッダの有無だけでは通さない）。
+  - Access アプリ「cards」はそのまま流用。ただし**ログイン方法は今は Cloudflare アカウント**
+    （メールOTPではない）。OTP に戻すなら Zero Trust の Authentication で One-time PIN を有効化する。
+  - 実測確認: 未認証の `/`・`/api/master`・`/api/save-card` はすべて 302 でブロック。
+    トンネルを止めた状態でカード一覧（第1弾144枚・第2弾8枚）が出ることも確認した。
+  - **注意: 環境変数 `GITHUB_TOKEN`（fine-grained PAT）は 2026-08-24 ごろ期限切れ**。
+    差し替えたら再デプロイが必要（`cd admin && npx vite build && npx wrangler pages deploy dist --project-name bravers-admin`）。
+  - 撤去したもの: `~/Library/LaunchAgents/com.bravers.{admin,tunnel}.plist`（unload して削除）。
+    トンネル `bravers-admin` 自体は残してあるので、DNS を戻せば Tunnel 版に復帰できる
+    （復帰手順と plist の中身は `docs/CARD_MASTER_MOBILE.md` の末尾に保存した）。
+  - やり残し2件（どちらも実害なし）: ①Pages のカスタムドメインが status=pending のまま
+    （証明書の発行待ち。ゾーンの Universal SSL で動いているので表示は正常）
+    ②古いデプロイ `8b253250.bravers-admin.pages.dev` は Access の外側にいるが、
+    環境変数が無いので 500 で閉じている（消しておくと安心）。
 - **残タスク**: スマホ実機での調整／ガード割り込みUIの実戦確認。
 - PvPはβ2として実現可能（Firebase等で数日規模）と社長に回答済み。
 

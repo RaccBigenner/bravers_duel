@@ -61,13 +61,15 @@ describe('キャラクターの常時能力', () => {
     expect(state.players[0].deck).toHaveLength(13); // 20 - 手札5 - チャージ2
   });
 
-  it('クラウディア: 攻撃時にAPが4以下ならダメージ+2', () => {
+  // 2026-07-25 社長判断で「攻撃時、APが4以下ならダメージ+2」を削除。
+  // アイ（ドロー+1）と組むとβで9戦9勝の壊れコンボになったため。復活防止のテスト。
+  it('クラウディア: 攻撃時のダメージ増加はもう無い', () => {
     const atk = cardById('1-A062-R') as SkillCard; // 神の捌き: 聖雷 cost4 base10（効果なし）
     const state = battleWith(['1-A003-USR'], '1-A062-R', [ORUS, OWU], VANILLA_ATK); // 敵はHP13のオルス（ダメージが上限で切れないように）
     state.players[0].ap = [];
-    giveAp(state, 0, atk.costAp); // 支払い後 AP0 → 4以下
+    giveAp(state, 0, atk.costAp); // 支払い後 AP0 → 以前はここでダメージ+2だった
     applyAction(state, { type: 'playSkill', handIndex: 0 });
-    expect(state.players[1].characters[0].damage).toBe(atk.baseValue + 2);
+    expect(state.players[1].characters[0].damage).toBe(atk.baseValue);
   });
 
   it('ジエンド: 自分のターンの終わりにデッキから2枚トラッシュ', () => {

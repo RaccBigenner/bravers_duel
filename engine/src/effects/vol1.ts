@@ -18,12 +18,10 @@ export const VOL1_EFFECTS: Record<string, CardEffect> = {
     kind: 'character',
     onOwnTurnEnd: (api) => api.millDeck('me', 2),
   },
+  // 2026-07-25 社長判断: 攻撃ダメージ+2を削除（アイとの組み合わせが強すぎたβの結果）
   '1-A003-USR': {
     kind: 'character',
     onBattleStart: (api) => api.chargeFromDeck('me', 2),
-    onAttackDeclare: (api) => {
-      if (api.myApCount() <= 4) api.addDamage(2);
-    },
   },
   '1-A004-USR': { kind: 'character', skillCostDelta: 2 },
   '1-A006-USR': {

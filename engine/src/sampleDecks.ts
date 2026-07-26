@@ -25,7 +25,7 @@ interface DeckSpec {
 const SPECS: DeckSpec[] = [
   {
     name: '剣聖の一閃',
-    concept: 'クラウディアのAP温存補正で低コスト斬を連打し、大裂斬で斬り伏せる',
+    concept: 'クラウディアの開始チャージから低コスト斬を連打し、大裂斬で斬り伏せる',
     characterIds: ['1-A003-USR', '1-A007-SSR', '1-A005-USR'], // クラウディア/レオン/オルス
     cards: [
       ['1-A083-R', 4], // 神速剣: 序盤コスト0

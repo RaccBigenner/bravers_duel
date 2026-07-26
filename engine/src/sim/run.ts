@@ -5,8 +5,10 @@
  *   npm run sim -- --per 100          # 組み合わせごとの対戦数を指定
  *   npm run sim -- --mode random      # ランダム生成デッキ + simpleAI
  *   npm run sim -- --mode chaos       # ランダム生成デッキ + randomAI（耐久テスト）
+ *   npm run sim -- --mode ai          # AIの強さ比べ（searchAi vs 旧simpleAi）
+ *   npm run sim -- --ai simple        # 総当たり戦を旧AIで回す（過去の数値と比べる時）
  */
-import { randomAi, simpleAi, type BattleAi } from '../ai';
+import { randomAi, searchAi, simpleAi, type BattleAi } from '../ai';
 import { DEFAULT_DECK_RULES, sampleDeck, type DeckRules } from '../decks';
 import { runBattle } from '../runner';
 import { sampleArchetypeDecks } from '../sampleDecks';
@@ -22,6 +24,9 @@ const deckRules: DeckRules = {
   deckSize: Number(argValue('deckSize') ?? DEFAULT_DECK_RULES.deckSize),
   maxCopies: Number(argValue('maxCopies') ?? DEFAULT_DECK_RULES.maxCopies),
 };
+
+/** 総当たり戦で使うAI。既定は今のCPUと同じ searchAi */
+const makeAi = (): BattleAi => (argValue('ai') === 'simple' ? simpleAi({ keepHand: 2 }) : searchAi({ keepHand: 2 }));
 
 const pct = (n: number, total: number) => (total === 0 ? '-' : `${((100 * n) / total).toFixed(1)}%`);
 
@@ -60,7 +65,7 @@ if (mode === 'archetype') {
         const seed = baseSeed + totalGames;
         const result = runBattle(
           [decks[i].deck, decks[j].deck],
-          [simpleAi({ keepHand: 2 }), simpleAi({ keepHand: 2 })],
+          [makeAi(), makeAi()],
           seed,
           { deckRules },
         );
@@ -104,6 +109,40 @@ if (mode === 'archetype') {
     const label = { wipeout: '全滅', deckout: '山札切れ', turnLimit: 'ターン上限' }[reason] ?? reason;
     console.log(`  - ${label}: ${n}回 (${pct(n, totalGames)})`);
   }
+} else if (mode === 'ai') {
+  // AI同士の直接対決。「AIを強くした」が本当かを勝率で確かめるためのモード。
+  // 同じデッキ・同じ組み合わせで先攻後攻を入れ替えて戦わせるので、デッキ差は打ち消される。
+  const per = Number(argValue('per') ?? 20);
+  const decks = sampleArchetypeDecks(deckRules);
+  const challenger = (): BattleAi => searchAi({ keepHand: 2 });
+  const champion = (): BattleAi => simpleAi({ keepHand: 2 });
+  console.log(`AI対決: ${challenger().name} vs ${champion().name}（${decks.length}デッキ総当たり × 各${per}戦 × 先後入替）`);
+
+  let win = 0;
+  let lose = 0;
+  let draw = 0;
+  let games = 0;
+  let turns = 0;
+  const start = Date.now();
+  for (let i = 0; i < decks.length; i++) {
+    for (let j = 0; j < decks.length; j++) {
+      if (i === j) continue; // ミラーは除く
+      for (let g = 0; g < per; g++) {
+        // 挑戦者は常にプレイヤー0。デッキの組み合わせを (i,j) と (j,i) の両方回すので有利不利は消える
+        const result = runBattle([decks[i].deck, decks[j].deck], [challenger(), champion()], baseSeed + games, {
+          deckRules,
+        });
+        games++;
+        turns += result.turns;
+        if (result.winner === 0) win++;
+        else if (result.winner === 1) lose++;
+        else draw++;
+      }
+    }
+  }
+  console.log('');
+  console.log(`  挑戦者(${challenger().name}) の勝率: ${pct(win, games)}  （${win}勝 ${lose}敗 ${draw}分 / 全${games}戦）`);
+  console.log(`  平均ターン数: ${(turns / games).toFixed(1)} / 実行時間: ${((Date.now() - start) / 1000).toFixed(1)}秒`);
 } else {
   const gamesN = Number(argValue('games') ?? 200);
   console.log(`ランダムデッキ対戦: ${gamesN}戦 (mode: ${mode})`);
@@ -120,7 +159,7 @@ if (mode === 'archetype') {
     const ais: [BattleAi, BattleAi] =
       mode === 'chaos'
         ? [randomAi(seed * 2 + 1), randomAi(seed * 2 + 2)]
-        : [simpleAi({ keepHand: 2 }), simpleAi({ keepHand: 2 })];
+        : [makeAi(), makeAi()];
     const result = runBattle([sampleDeck(seed * 2 + 1), sampleDeck(seed * 2 + 2)], ais, seed);
     totalTurns += result.turns;
     reasons.set(result.reason, (reasons.get(result.reason) ?? 0) + 1);

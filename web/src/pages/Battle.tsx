@@ -141,7 +141,7 @@ function BattleInner({ setup, onExit, onRematch }: {
   const [previewHand, setPreviewHand] = useState<number | null>(null);
   const [previewGuard, setPreviewGuard] = useState<number | null>(null); // ガードカードの使用前確認
   const [zoomCard, setZoomCard] = useState<string | null>(null); // 読み取り専用の拡大表示（カードID）
-  const [pileList, setPileList] = useState<{ title: string; cards: string[] } | null>(null);
+  const [pileList, setPileList] = useState<{ title: string; cards: string[]; grouped?: boolean; note?: string } | null>(null);
   const [chargeSel, setChargeSel] = useState<Set<number>>(new Set());
   const [targeting, setTargeting] = useState<Targeting>(null);
   const [confirmExit, setConfirmExit] = useState(false);
@@ -162,7 +162,9 @@ function BattleInner({ setup, onExit, onRematch }: {
 
   const vh = useViewportHeight();
   const cardW = cardWidthFor(vh, window.innerWidth);
-  const handW = Math.round(cardW * 0.78);
+  // 手札の幅。0.78 → 0.74（2026-07-25 βレビュー対応）。
+  // 手札の箱が高いと、その上にある自分のアクターのHP・属性表示に手札がかぶる。
+  const handW = Math.round(cardW * 0.74);
   const me = view.players[PLAYER]; // 盤面は表示用ステートを映す
   const foe = view.players[ENEMY];
   const finished = state.phase === 'finished';
@@ -547,11 +549,20 @@ function BattleInner({ setup, onExit, onRematch }: {
     setTargeting({ side, hint, actions: map });
   }
 
+  /**
+   * 盤面のキャラのタップ。
+   * - 対象選択中で「選べる対象」なら、選択として扱う
+   * - それ以外は単押しでカードを拡大表示する（βレビュー: 効果を見るのに長押しは気づけない）
+   *   長押しでも拡大できるのは今までどおり
+   */
   function tapChar(side: 0 | 1, index: number) {
-    if (!targeting) return;
-    if (side !== targeting.side) return;
-    const action = targeting.actions.get(index);
-    if (action) act(action);
+    if (targeting && side === targeting.side) {
+      const action = targeting.actions.get(index);
+      if (action) act(action);
+      return; // 選択中に選べない対象を押しても拡大は出さない（誤爆で選択が隠れるため）
+    }
+    const c = view.players[side].characters[index];
+    if (c) setZoomCard(c.cardId);
   }
 
   function tapHand(i: number) {
@@ -691,6 +702,13 @@ function BattleInner({ setup, onExit, onRematch }: {
               onOpenPile={(kind) => {
                 if (kind === 'trash') setPileList({ title: '自分のトラッシュ', cards: me.trash });
                 if (kind === 'ap') setPileList({ title: '自分のAPエリア', cards: me.ap });
+                if (kind === 'deck')
+                  setPileList({
+                    title: '自分の山札に残っているカード',
+                    cards: me.deck,
+                    grouped: true,
+                    note: '種類とコスト順に並べています（山札の本当の並び順ではありません）',
+                  });
               }}
             />
           </div>
@@ -698,7 +716,9 @@ function BattleInner({ setup, onExit, onRematch }: {
       </div>
 
       {/* 自分の手札（扇状に持つ。カードの増減はキーを固定してなめらかに詰める） */}
-      <div className="my-hand" ref={handRefP} style={{ height: Math.round(handW * 1.72) }}>
+      {/* 箱の高さは「カードの高さ(幅×1.4) + 扇の反り + 持ち上げ分」ぶんだけ。
+       * 1.72 は余りすぎていて、そのぶん盤面が下へ押し出されていた（→アクターのHPが隠れる） */}
+      <div className="my-hand" ref={handRefP} style={{ height: Math.round(handW * 1.58) }}>
         {(() => {
           const seen = new Map<string, number>();
           const n = me.hand.length;
@@ -930,19 +950,22 @@ function BattleInner({ setup, onExit, onRematch }: {
         </div>
       )}
 
-      {/* トラッシュ・APのリスト表示 */}
+      {/* トラッシュ・AP・山札のリスト表示 */}
       {pileList && (
         <div className="overlay" onClick={() => setPileList(null)}>
           <div className="dialog pile-dialog" onClick={(e) => e.stopPropagation()}>
             <h3>{pileList.title}（{pileList.cards.length}枚）</h3>
+            {pileList.note && <p className="hint pile-note">{pileList.note}</p>}
             <div className="pile-grid">
               {pileList.cards.length === 0 && <p className="hint">まだカードがありません</p>}
-              {[...pileList.cards].reverse().map((id, i) =>
-                safeCard(id) ? (
-                  <div key={`${id}-${i}`} className="pile-grid-card" onClick={() => setZoomCard(id)}>
-                    <CardFrame card={safeCard(id)!} width={72} upright />
-                  </div>
-                ) : null,
+              {(pileList.grouped ? groupPile(pileList.cards) : [...pileList.cards].reverse().map((id) => ({ id, count: 1 }))).map(
+                ({ id, count }, i) =>
+                  safeCard(id) ? (
+                    <div key={`${id}-${i}`} className="pile-grid-card" onClick={() => setZoomCard(id)}>
+                      <CardFrame card={safeCard(id)!} width={72} upright />
+                      {count > 1 && <span className="pile-x">×{count}</span>}
+                    </div>
+                  ) : null,
               )}
             </div>
             <button className="chip" onClick={() => setPileList(null)}>とじる</button>
@@ -973,6 +996,28 @@ function BattleInner({ setup, onExit, onRematch }: {
 }
 
 
+
+/**
+ * 山札の中身表示用に「同じカードをまとめて、種類→コスト→ID順」に並べ直す。
+ * 山札の本当の並び（次に引く順）は絶対に出さない。並べ替えることで
+ * 「何が残っているか」だけが分かり、「次に何を引くか」は分からないようにしている。
+ */
+function groupPile(cards: string[]): { id: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const id of cards) counts.set(id, (counts.get(id) ?? 0) + 1);
+  const typeRank = (id: string) => {
+    const c = safeCard(id);
+    if (!c) return 9;
+    return c.type === 'character' ? 0 : c.type === 'equipment' ? 1 : c.type === 'field' ? 2 : 3;
+  };
+  const cost = (id: string) => {
+    const c = safeCard(id);
+    return c && c.type === 'skill' ? c.costAp : -1;
+  };
+  return [...counts.entries()]
+    .map(([id, count]) => ({ id, count }))
+    .sort((a, b) => typeRank(a.id) - typeRank(b.id) || cost(a.id) - cost(b.id) || a.id.localeCompare(b.id));
+}
 
 /** バトル内容の要約（ログ用）: 使われたカード・チャージ回数などをイベントから集計 */
 function summarizeBattle(state: BattleState) {

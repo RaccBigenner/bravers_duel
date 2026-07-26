@@ -5,7 +5,9 @@
 
 ## 基本の考え方
 
-- **カードは「弾（セット）」に属する**。弾のメタ情報は `data/sets.json`。
+- **カードは「弾（セット）」に属する**。弾のメタ情報は公開済みが `data/sets.json`、
+  制作中は `data/wip/sets.json`（gitignore）。**制作中の弾のメタ情報を `data/sets.json` に書かないこと**
+  （このファイルは丸ごとブラウザに配信されるので、書いた文字列は必ず外から読める）。
   社長の言う「弾数」と「テーマNo.」を別フィールドで持つ（MTG の set と block の二軸に対応）。
 - **公開されるのは `status: 'released'` の弾のカードだけ**。制作中の弾は `status: 'draft'`。
 - **制作中カードは公開ビルドにもGitにも入らない**。`data/wip/`（gitignore）に置く。
@@ -62,7 +64,17 @@ npm run admin
 
 ## データ形式
 
-### data/sets.json
+### data/sets.json（公開済みの弾だけ）
+
+> ⚠️ **制作中の弾はここに書かない。** `data/sets.json` は JSON import で丸ごと公開バンドルに
+> 埋め込まれるので、使っていなくても中身は開発者ツールから読める。
+> 実際に第2弾のサブタイトルが公開JSに入っていた（2026-07-25 に発覚・修正）。
+> 制作中の弾メタの置き場:
+> - ローカル管理画面 … `data/wip/sets.json`（gitignore）
+> - クラウド管理画面 … 非公開リポ `bravers_duel_wip` の `sets.wip.json`
+>
+> 保存時に status で自動的に振り分けられ、公開ボタンで公開側へ移る。
+> 破ると `engine/test/sets.test.ts` と `scripts/check-no-wip-leak.mjs` が落ちる。
 
 ```json
 {

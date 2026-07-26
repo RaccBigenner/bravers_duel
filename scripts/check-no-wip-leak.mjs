@@ -16,11 +16,30 @@ const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 /** 公開ビルドに出てはいけない文字列を集める */
 function collectSecrets() {
   const secrets = new Set();
-  const sets = JSON.parse(readFileSync(resolve(REPO, 'data/sets.json'), 'utf8')).sets ?? [];
-  for (const s of sets) {
+  // 公開済みの弾で使われている文字列は「秘密ではない」。
+  // 第1弾と第2弾でテーマ名が同じ（＝もう公開済み）ようなケースを誤検知しないため、
+  // 先に公開済みの文字列を集めて、あとで除外する。
+  const publicStrings = new Set();
+  const readSets = (path) => {
+    if (!existsSync(path)) return [];
+    try {
+      return JSON.parse(readFileSync(path, 'utf8')).sets ?? [];
+    } catch {
+      return [];
+    }
+  };
+  // data/sets.json = 公開済みの弾だけのはず / data/wip/sets.json = 制作中の弾（gitignore）
+  const allSets = [...readSets(resolve(REPO, 'data/sets.json')), ...readSets(resolve(REPO, 'data/wip/sets.json'))];
+  for (const s of allSets) {
+    if (s.status !== 'released') continue;
+    for (const key of ['themeName', 'themeSubtitle', 'codename']) {
+      if (s[key]) publicStrings.add(s[key]);
+    }
+  }
+  for (const s of allSets) {
     if (s.status === 'released') continue;
     for (const key of ['themeName', 'themeSubtitle', 'codename']) {
-      if (s[key]) secrets.add(s[key]);
+      if (s[key] && !publicStrings.has(s[key])) secrets.add(s[key]);
     }
   }
   // ローカルに制作中カード(data/wip)があれば、その名前も漏れ検査に含める
@@ -29,6 +48,7 @@ function collectSecrets() {
   if (existsSync(wipDir)) {
     for (const f of readdirSync(wipDir)) {
       if (!f.endsWith('.json')) continue;
+      if (f === 'sets.json') continue; // 弾メタは上で処理済み（カードではない）
       try {
         const parsed = JSON.parse(readFileSync(resolve(wipDir, f), 'utf8'));
         const cards = Array.isArray(parsed) ? parsed : (parsed.cards ?? []);

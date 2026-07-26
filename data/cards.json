@@ -42,7 +42,7 @@
     "rarity": "USR",
     "name": "[閃光の勇者]クラウディア",
     "type": "character",
-    "effectText": "バトル開始時、デッキからカードを2枚チャージ。攻撃時、APが4以下の時、ダメージを+2。",
+    "effectText": "バトル開始時、デッキからカードを2枚チャージ。",
     "flavorText": "——正義の剣を振るった先には、平和などないのだろうか。",
     "size": "normal",
     "hp": 9,
@@ -897,11 +897,11 @@
     "type": "skill",
     "effectText": "攻撃をした後、敵のAPを-2。",
     "flavorText": "",
-    "costAp": 4,
+    "costAp": 5,
     "conditionAttribute": [
       "雷"
     ],
-    "baseValue": 7,
+    "baseValue": 8,
     "valueType": "attack"
   },
   {
@@ -1046,7 +1046,7 @@
     "type": "skill",
     "effectText": "敵全体に攻撃。ダメージを与えたキャラクターの数だけ、敵のAPを減少。",
     "flavorText": "",
-    "costAp": 3,
+    "costAp": 4,
     "conditionAttribute": [
       "雷",
       "風"
@@ -1262,12 +1262,12 @@
     "type": "skill",
     "effectText": "敵のAPを-2。",
     "flavorText": "",
-    "costAp": 2,
+    "costAp": 4,
     "conditionAttribute": [
       "斬",
       "雷"
     ],
-    "baseValue": 4,
+    "baseValue": 5,
     "valueType": "attack"
   },
   {
@@ -1830,11 +1830,11 @@
     "type": "skill",
     "effectText": "敵のAPを-1。",
     "flavorText": "",
-    "costAp": 2,
+    "costAp": 3,
     "conditionAttribute": [
       "雷"
     ],
-    "baseValue": 4,
+    "baseValue": 5,
     "valueType": "attack"
   },
   {

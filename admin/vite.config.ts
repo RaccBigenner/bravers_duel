@@ -27,6 +27,10 @@ function wipCardsPath(vol: number): string {
   return resolve(WIP, `cards.vol${vol}.json`);
 }
 
+/** 制作中の弾のメタ情報の置き場（gitignore。公開リポにも公開ビルドにも入らない） */
+const WIP_SETS = resolve(WIP, 'sets.json');
+const PUBLIC_SETS = resolve(DATA, 'sets.json');
+
 interface SetMetaLike {
   vol: number;
   status?: string;
@@ -35,6 +39,26 @@ interface SetMetaLike {
 
 function isReleasedVol(vol: number, sets: SetMetaLike[]): boolean {
   return sets.find((s) => s.vol === vol)?.status === 'released';
+}
+
+/**
+ * 弾マスタは2つのファイルに分かれている。
+ * - data/sets.json      … 公開済みの弾だけ（公開リポ・公開ビルドに入る）
+ * - data/wip/sets.json  … 制作中の弾（gitignore・絶対に公開されない）
+ * 管理画面では両方見えないと編集できないので、ここで1つに束ねる。
+ * カードと同じ考え方（公開できるものだけ公開側のファイルに置く）。
+ */
+function loadSets(): SetMetaLike[] {
+  const pub = readJson<{ sets: SetMetaLike[] }>(PUBLIC_SETS, { sets: [] }).sets ?? [];
+  const wip = readJson<{ sets: SetMetaLike[] }>(WIP_SETS, { sets: [] }).sets ?? [];
+  const byVol = new Map<number, SetMetaLike>();
+  for (const s of [...pub, ...wip]) byVol.set(s.vol, s); // 同 vol は制作中側を優先
+  return [...byVol.values()].sort((a, b) => a.vol - b.vol);
+}
+
+/** 弾の保存先。released だけ公開ファイル、それ以外は必ず wip 側 */
+function setSaveTarget(set: SetMetaLike): string {
+  return set.status === 'released' ? PUBLIC_SETS : WIP_SETS;
 }
 
 /**
@@ -49,14 +73,14 @@ function cardSaveTarget(card: { vol: number; status?: string }, sets: SetMetaLik
 }
 
 function loadMaster() {
-  const setsFile = readJson<{ sets: SetMetaLike[] }>(resolve(DATA, 'sets.json'), { sets: [] });
-  const sets = setsFile.sets ?? [];
+  const sets = loadSets();
   const released = readJson<Record<string, unknown>[]>(resolve(DATA, 'cards.json'), []);
   // 制作中の弾のカードを data/wip から全部集める
   const wip: Record<string, unknown>[] = [];
   if (existsSync(WIP)) {
     for (const f of readdirSync(WIP)) {
       if (!f.endsWith('.json')) continue;
+      if (f === 'sets.json') continue; // 弾メタであってカードではない
       const parsed = readJson<unknown>(resolve(WIP, f), []);
       const arr = Array.isArray(parsed) ? parsed : ((parsed as { cards?: unknown[] }).cards ?? []);
       wip.push(...(arr as Record<string, unknown>[]));
@@ -118,8 +142,7 @@ function masterApi(): Plugin {
             // { card } を弾の status に応じて cards.json か wip へ保存（id で差し替え/追加）
             const { card } = await readBody(req);
             if (!card?.id || typeof card.vol !== 'number') return sendJson(res, 400, { error: 'card.id と vol が必要' });
-            const setsFile = readJson<{ sets: SetMetaLike[] }>(resolve(DATA, 'sets.json'), { sets: [] });
-            const target = cardSaveTarget(card, setsFile.sets ?? []);
+            const target = cardSaveTarget(card, loadSets());
             // 反対側のファイルに同じ id が残っていたら消す（released⇄draft を移動したとき二重化を防ぐ）
             const other = target.endsWith('cards.json') ? wipCardsPath(card.vol) : resolve(DATA, 'cards.json');
             if (existsSync(other)) {
@@ -153,8 +176,7 @@ function masterApi(): Plugin {
             const { id, vol, status, dataUrl } = await readBody(req);
             const m = /^data:image\/webp;base64,(.+)$/.exec(dataUrl ?? '');
             if (!id || !m) return sendJson(res, 400, { error: 'id と webp の dataUrl が必要' });
-            const setsFile = readJson<{ sets: SetMetaLike[] }>(resolve(DATA, 'sets.json'), { sets: [] });
-            const isPublic = status !== 'draft' && isReleasedVol(vol, setsFile.sets ?? []);
+            const isPublic = status !== 'draft' && isReleasedVol(vol, loadSets());
             const dir = isPublic ? IMAGES : WIP_IMAGES;
             mkdirSync(dir, { recursive: true });
             writeFileSync(resolve(dir, `${id}.webp`), Buffer.from(m[1], 'base64'));
@@ -184,14 +206,18 @@ function masterApi(): Plugin {
             // 弾（セット）の追加・更新
             const { set } = await readBody(req);
             if (typeof set?.vol !== 'number') return sendJson(res, 400, { error: 'set.vol が必要' });
-            const setsFile = readJson<{ sets: SetMetaLike[]; _comment?: string }>(resolve(DATA, 'sets.json'), { sets: [] });
-            const sets = setsFile.sets ?? [];
-            const idx = sets.findIndex((s) => s.vol === set.vol);
-            if (idx >= 0) sets[idx] = set;
-            else sets.push(set);
-            sets.sort((a, b) => a.vol - b.vol);
-            writeJson(resolve(DATA, 'sets.json'), { ...setsFile, sets });
-            return sendJson(res, 200, { ok: true });
+            // 公開済みなら data/sets.json、制作中なら data/wip/sets.json（非公開）へ。
+            // 反対側に同じ vol が残っていたら消す（draft⇄released を行き来しても二重化しない）
+            const target = setSaveTarget(set);
+            const other = target === PUBLIC_SETS ? WIP_SETS : PUBLIC_SETS;
+            for (const [file, keep] of [[target, true], [other, false]] as [string, boolean][]) {
+              const file0 = readJson<{ sets: SetMetaLike[]; _comment?: string }>(file, { sets: [] });
+              const list = (file0.sets ?? []).filter((s) => s.vol !== set.vol);
+              if (keep) list.push(set);
+              list.sort((a, b) => a.vol - b.vol);
+              if (keep || list.length !== (file0.sets ?? []).length) writeJson(file, { ...file0, sets: list });
+            }
+            return sendJson(res, 200, { ok: true, savedTo: target.replace(REPO + '/', '') });
           }
 
           return sendJson(res, 404, { error: 'unknown api' });

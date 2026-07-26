@@ -233,6 +233,26 @@ export function isActorLocked(state: BattleState, player: PlayerIndex): boolean 
   return actorLocked(state, player);
 }
 
+/**
+ * アクターが回ってくる順番（先頭が今のアクター、次が次に前へ出るキャラ）。
+ * 戦闘不能のキャラは含まない。大乱戦（1枚飛ばし）もそのまま反映する。
+ * UIの「次は誰か」表示のための唯一の情報源。ここを使わずUI側で並び順を推測しないこと。
+ */
+export function actorOrder(state: BattleState, player: PlayerIndex): number[] {
+  const p = state.players[player];
+  const order: number[] = [];
+  let cur = p.actorIndex;
+  if (!isCharAlive(state, player, cur)) return order;
+  const skip = rotationSkip(state, player);
+  for (let n = 0; n < p.characters.length; n++) {
+    order.push(cur);
+    const next = nextAliveIndex(state, player, cur, skip);
+    if (order.includes(next)) break; // 一周した
+    cur = next;
+  }
+  return order;
+}
+
 /** バトルが終了したか（効果処理の途中で決着した場合の検出用。TSの型絞り込みを避けるため関数にしている） */
 function battleOver(state: BattleState): boolean {
   return state.phase === 'finished';

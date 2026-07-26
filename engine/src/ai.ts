@@ -1,7 +1,11 @@
 /**
  * バトルのプレイヤーAI。
  * - randomAi: できる行動からランダムに選ぶ（エンジンの耐久テスト用）
- * - simpleAi: 行動を採点して選ぶヒューリスティックAI（対人のCPU・バランス測定の基準）
+ * - simpleAi: 行動を採点して選ぶヒューリスティックAI（旧CPU。今は強さの比較基準）
+ * - **searchAi: 1手先読みAI。今のCPU・シミュレーターはこれを使う**
+ *
+ * 強さの比較は `npm run sim -- --mode ai` で測れる（searchAi vs simpleAi の勝率）。
+ * 2026-07-25 時点で searchAi の勝率は 62%。
  *
  * simpleAi の考え方:
  * - 攻撃は predictSkill（修正込みの予想ダメージ）で評価し、リーサルを最優先
@@ -10,6 +14,7 @@
  * - チャージは使えないカードから回す
  */
 import {
+  applyAction,
   effectiveAttributes,
   isCharAlive,
   legalActions,
@@ -213,6 +218,160 @@ export function simpleAi(options: SimpleAiOptions = {}): BattleAi {
         return { type: 'charge', handIndex: chargeIndex };
       }
       return { type: 'endTurn' };
+    },
+  };
+}
+
+// ==================================================================== 先読みAI
+//
+// simpleAi は「カードの種類ごとに点数を手書きする」方式だった。これだと効果文が
+// 増えるたびに採点表を書き足す必要があり、実際にドロー・サーチ・AP妨害といった
+// 効果はどれも「支援」ひとくくりで、ほぼ使われないまま放置されていた
+// （公開βのレビュー「敵があんまり攻撃してこない」の主因）。
+//
+// searchAi は代わりに「その行動を実際にやってみて、盤面が良くなったか」を見る。
+// カードの効果はエンジンが解決してくれるので、AI側に採点表がいらない。
+// 新しいカードを足しても、AIは自動的にその価値を理解する。
+
+/** 盤面の良さ（me から見た点数）。大きいほど自分が有利 */
+function evaluate(state: BattleState, me: PlayerIndex): number {
+  const you = (1 - me) as PlayerIndex;
+  if (state.phase === 'finished') {
+    if (state.winner === me) return 1_000_000;
+    if (state.winner === you) return -1_000_000;
+    return 0;
+  }
+  const W = WEIGHTS;
+  let score = 0;
+  for (const side of [me, you] as PlayerIndex[]) {
+    const sign = side === me ? 1 : -1;
+    const p = state.players[side];
+    for (let i = 0; i < p.characters.length; i++) {
+      if (!isCharAlive(state, side, i)) {
+        score -= sign * W.ko; // 1体落ちるのは重い（3体落ちたら負け）
+        continue;
+      }
+      score += sign * Math.max(0, maxHpOf(state, side, i) - p.characters[i].damage) * (side === me ? W.hp : W.hpFoe);
+    }
+    score += sign * p.hand.length * W.hand; // 手札は選択肢
+    score += sign * p.ap.length * W.ap; // APは撃てる回数
+    // 山札は「切れたら負け」なので、少ない時ほど1枚が重い（多い時は頭打ち）
+    score += sign * Math.min(p.deck.length, W.deckCap) * W.deck;
+  }
+  return score;
+}
+
+/**
+ * 評価の重み。`npm run sim -- --mode ai`（旧simpleAiとの直接対決）で1つずつ振って決めた値。
+ *
+ * - いちばん効いたのは **ap**。1.5 → 4 で勝率 60% → 67%（seed 1/500/9999 で再現）。
+ *   APを重く見る＝「効果の薄いスキルにAPを吐かない」なので、大技を撃ち切れるようになる。
+ * - **hp は 3 が最適**（2でも4でも勝率が落ちる）。ko と deck は勝率にほぼ効かなかったので、
+ *   意味づけが分かりやすい値のままにしてある。
+ * - **hpFoe（相手のHPの重さ）を自分より高くしてあるのは意図的**。
+ *   最強設定は hpFoe=3 の 67% だが、それだとAI同士の平均が31.3ターンまで伸びた。
+ *   hpFoe=4.5 にすると「守るより殴る」を選ぶようになり、62%・28.5ターンに収まる。
+ *   βレビューの「敵があんまり攻撃してこない」を踏まえて、勝率4ポイントぶんを
+ *   攻撃的さと試合の短さに使っている。純粋に最強にしたいなら hpFoe を 3 に戻す。
+ */
+const WEIGHTS = {
+  /** 自分のHP1点の重さ */
+  hp: 3,
+  /** 相手のHP1点の重さ。自分より高くしてあるのは「守りより攻めを選ぶ」ため */
+  hpFoe: 4.5,
+  /** 1体戦闘不能の重さ */
+  ko: 45,
+  /** 手札1枚の重さ（選択肢の多さ） */
+  hand: 2.5,
+  /** AP1つの重さ。効きが一番大きいツマミ */
+  ap: 4,
+  /** 山札1枚の重さ（切れたら負けなので価値がある） */
+  deck: 0.8,
+  /** 山札はこの枚数以上あっても価値は増えない */
+  deckCap: 14,
+};
+
+/**
+ * ログとイベントを外してから複製する。
+ * 素直に structuredClone すると300件のログ配列まで毎回コピーしてしまい、
+ * 1手ごとに何十回も複製する先読みでは無視できない重さになる。
+ */
+function cloneForSearch(state: BattleState): BattleState {
+  const log = state.log;
+  const events = state.events;
+  state.log = [];
+  state.events = [];
+  const copy = structuredClone(state);
+  state.log = log;
+  state.events = events;
+  return copy;
+}
+
+/** 行動を1つ試して、その結果の盤面を採点する。壊れる行動は選択肢から外す */
+function scoreAction(state: BattleState, me: PlayerIndex, action: BattleAction): number | null {
+  let clone: BattleState;
+  try {
+    clone = cloneForSearch(state);
+    applyAction(clone, action);
+  } catch {
+    return null; // 合法手のはずが失敗するなら選ばない
+  }
+  return evaluate(clone, me);
+}
+
+/**
+ * 候補の中から、やってみて一番良くなる行動を選ぶ。
+ * fallback（何もしない手）と同点なら fallback を選ぶ＝無駄打ちしない。
+ *
+ * 自分の連続行動を2手・3手先まで読む版も作って測ったが、勝率は逆に下がった
+ * （1手 61.3% → 2手 59.2% / 3手ぶん 58.3%、いずれも simpleAi 相手・336戦）。
+ * 相手の返しを読んでいないので、深く読むほど「手札とAPを使い切る線」を
+ * 過大評価してしまうため。深くするなら先に相手の応手を入れる必要がある。
+ */
+function chooseBySearch(
+  state: BattleState,
+  me: PlayerIndex,
+  actions: BattleAction[],
+  fallback: BattleAction,
+): BattleAction {
+  const base = scoreAction(state, me, fallback) ?? evaluate(state, me);
+  let best: { action: BattleAction; score: number } | null = null;
+  for (const action of actions) {
+    if (sameAction(action, fallback)) continue;
+    const score = scoreAction(state, me, action);
+    if (score === null) continue;
+    // 僅差の行動でカードを使い減らさないよう、上回った時だけ採用する
+    if (score > base + 0.01 && score > (best?.score ?? -Infinity)) best = { action, score };
+  }
+  return best?.action ?? fallback;
+}
+
+function sameAction(a: BattleAction, b: BattleAction): boolean {
+  return a.type === b.type && JSON.stringify(a) === JSON.stringify(b);
+}
+
+/**
+ * 1手先読みAI。プレイ・ガードの判断を「実際に試して盤面を採点」で行う。
+ * チャージフェーズだけは simpleAi の作戦（撃ち切れるAPを貯める）をそのまま使う。
+ * 先読みでチャージを評価すると「手札を減らすと点が下がる」ので何も貯めなくなるため。
+ */
+export function searchAi(options: SimpleAiOptions = {}): BattleAi {
+  const fallbackAi = simpleAi(options);
+  return {
+    name: `search(keep${options.keepHand ?? 0})`,
+    choose(state, me) {
+      const actions = legalActions(state);
+      if (actions.length <= 1) return actions[0] ?? { type: 'pass' };
+
+      if (state.phase === 'guard') {
+        return chooseBySearch(state, me, actions, { type: 'pass' });
+      }
+      if (state.phase === 'play') {
+        // 装備・フィールドはAPを使わないので、置いて良くなるなら置く（先読みが判断）
+        return chooseBySearch(state, me, actions, { type: 'endPlay' });
+      }
+      // choice（ターン開始の任意能力）とチャージは従来の判断に任せる
+      return fallbackAi.choose(state, me);
     },
   };
 }

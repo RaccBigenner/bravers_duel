@@ -1971,3 +1971,107 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
 .log-empty { margin: 4px 0; font-size: 12px; color: #667; }
 .log-cta { margin-top: 22px; text-align: center; }
 .log-cta .big-btn { min-width: 240px; }
+
+/* ============ 2026-07-25 βレビュー対応: 盤面の見えない問題を直す ============ */
+
+/* 【重なり①】相手アクターのHP・属性が、自分のアクターのカードに隠れていた。
+ * 相手側だけステータスをカードの「上」に出す（＝画面の外側・自分から遠い側）。
+ * これで自分のカードがどれだけ前に出ても、相手のHPは絶対に隠れない。
+ * 控えは今までどおりカードの下（互いに干渉しないため）。 */
+.enemy-area .char-slot.actor .char-status {
+  top: -22px;
+  bottom: auto;
+}
+
+/* 【重なり②】自分のアクターのHP・属性が手札に隠れていた。
+ * 手札の箱を必要な高さまで詰めて、盤面の下端に余白を作る。 */
+.my-hand { padding-top: 4px; }
+
+/* 出番の順番バッジ（次に誰が前へ出るかを常に見せる） */
+.order-badge {
+  position: absolute;
+  top: -9px;
+  left: -7px;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: 10px;
+  background: rgba(16, 18, 26, 0.94);
+  border: 1px solid #667;
+  color: #aab;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 17px;
+  text-align: center;
+  z-index: 9;
+  pointer-events: none;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+}
+.order-badge.now {
+  border-color: #ffd700;
+  color: #ffd700;
+  box-shadow: 0 0 6px rgba(255, 215, 0, 0.5);
+}
+.order-badge.next {
+  border-color: #6cf;
+  color: #9df;
+  box-shadow: 0 0 6px rgba(108, 204, 255, 0.55);
+}
+
+/* 山札は自分のものだけ中身を開ける */
+.pile.deck.clickable { cursor: pointer; }
+.pile.deck.clickable:active { filter: brightness(1.25); }
+.pile-note { margin: -4px 0 8px; font-size: 11px; color: #889; }
+.pile-grid-card { position: relative; }
+.pile-x {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  background: #1b1e28;
+  border: 1px solid #ffd700;
+  color: #ffd700;
+  border-radius: 8px;
+  padding: 0 5px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+/* ゾーン列（山札・AP・トラッシュ）を詰める。
+ * ここが陣形より背が高く、盤面全体の高さを決めていた。詰めたぶんキャラが上へ寄り、
+ * 手札にHP表示が隠れなくなる（2026-07-25 βレビュー対応・実測して決定）。 */
+.zone-col { gap: 8px; }
+.pile-card { width: 36px; }
+.zone-col .pile.deck .pile-card { width: 34px; }
+.pile-card.empty, .pile-card.trash-top { height: 50px; }
+@media (max-height: 780px) {
+  .zone-col { gap: 6px; }
+}
+
+/* 自分のアクターのHP・属性は、手札のすぐ上に来る。
+ * 万一かぶっても読めるように、背景を敷いて浮かせる。 */
+.my-area .char-slot.actor .char-status {
+  background: linear-gradient(rgba(8, 10, 16, 0), rgba(8, 10, 16, 0.85) 40%);
+  padding: 2px 3px 1px;
+  border-radius: 5px;
+}
+
+/* 自分の陣形はエリアの上端に寄せる（中央寄せだと、ゾーン列の高さぶん下へ落ちて
+ * アクターのHP表示が手札に潜り込む）。相手側は今までどおり中央寄せ。 */
+.my-area { align-items: flex-start; }
+
+/* 控えキャラのHPはカードの内側（下端）に重ねる。カードの下にぶら下げると
+ * 手札に潜り込んで見えなくなるため。控えのカードは小さく文字も読めないので、
+ * 絵に重ねる不利より「HPが必ず見える」ほうを取る。 */
+.my-area .char-slot:not(.actor) .char-status {
+  bottom: 2px;
+  background: linear-gradient(rgba(8, 10, 16, 0), rgba(8, 10, 16, 0.85) 40%);
+  padding: 2px 3px 1px;
+  border-radius: 5px;
+}
+
+/* 手札の箱は画面いっぱいに広がっているので、そのままだと山札・AP・トラッシュの
+ * タップを横取りしてしまう（実際に山札が押せなかった）。箱は素通しにして、
+ * カードそのものだけが反応するようにする。 */
+.my-hand { pointer-events: none; }
+.my-hand .hand-card { pointer-events: auto; }

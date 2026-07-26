@@ -29,6 +29,15 @@ describe('弾マスタ', () => {
     const vols = ALL_SETS.map((s) => s.vol);
     expect(new Set(vols).size).toBe(vols.length);
   });
+
+  // data/sets.json は JSON import なので、書いた内容は使っていなくても
+  // 丸ごと公開バンドルに入り、開発者ツールから読める。
+  // 実際に第2弾のサブタイトルが公開JSに入っていた（2026-07-25 に発覚）。
+  // 制作中の弾のメタ情報は data/wip/sets.json（gitignore）／非公開リポ側に置くこと。
+  it('data/sets.json に制作中の弾を書いてはいけない', () => {
+    const drafts = ALL_SETS.filter((s) => s.status !== 'released');
+    expect(drafts.map((s) => s.vol)).toEqual([]);
+  });
 });
 
 describe('公開ゲート（制作中カードが漏れないこと）', () => {

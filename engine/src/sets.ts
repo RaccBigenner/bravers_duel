@@ -4,6 +4,13 @@
  *
  * 公開の要は「status:'released' の弾のカードだけを ALL_CARDS に入れる」こと。
  * 判定は cards.ts が isVolReleased() を使って行う。
+ *
+ * ⚠️ data/sets.json には **公開済みの弾しか書かない**（2026-07-25 以降）。
+ * この import はJSONを丸ごとバンドルに埋め込むので、ファイルに書いた文字列は
+ * 使っていなくても公開ビルドに入り、開発者ツールから必ず読める。
+ * 実際に第2弾のサブタイトルが公開JSに入っていた。制作中の弾のメタ情報は
+ * data/wip/sets.json（gitignore）／非公開リポの sets.wip.json 側に置くこと。
+ * 破ると engine/test/sets.test.ts と scripts/check-no-wip-leak.mjs が落ちる。
  */
 import rawSets from '../../data/sets.json';
 import { CARD_STATUSES, PACK_TYPES, type SetMeta } from './types';
@@ -33,7 +40,7 @@ function validateSet(raw: Record<string, unknown>): SetMeta {
   };
 }
 
-/** 全ての弾（draft も含む。data/sets.json に書かれたぶん全部） */
+/** data/sets.json に書かれた弾。運用上ここに入るのは公開済みの弾だけ（上の注意書き参照） */
 export const ALL_SETS: SetMeta[] = ((rawSets as { sets?: unknown }).sets as Record<string, unknown>[] ?? []).map(
   validateSet,
 );

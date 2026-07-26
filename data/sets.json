@@ -1,5 +1,5 @@
 {
-  "_comment": "弾（セット）のマスタ。カードは vol でこの弾に属する。status が 'released' の弾のカードだけが公開ビルドに含まれる（engine/src/cards.ts が突き合わせる）。制作中の弾は status:'draft' にし、カード本体は data/wip/ に置く（gitignore・公開されない）。themeName/themeSubtitle は公開直前まで codename で伏せてよい。",
+  "_comment": "公開済み（status:'released'）の弾だけを置く。ここに書いた内容はブラウザに丸ごと配信されるので、外から必ず読める。制作中の弾のメタ情報は絶対にここへ書かないこと（置き場は data/wip/sets.json ＝ gitignore、クラウド管理画面は非公開リポの sets.wip.json）。カードは vol でこの弾に属し、released の弾のカードだけが公開ビルドに入る（engine/src/cards.ts が突き合わせる）。",
   "sets": [
     {
       "vol": 1,
@@ -9,16 +9,6 @@
       "packType": "DX",
       "status": "released",
       "releasedAt": "2026-07-01",
-      "codename": ""
-    },
-    {
-      "vol": 2,
-      "themeNo": 2,
-      "themeName": "聖戦残火",
-      "themeSubtitle": "黎明の光",
-      "packType": "DX",
-      "status": "draft",
-      "releasedAt": "",
       "codename": ""
     }
   ]

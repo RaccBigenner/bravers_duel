@@ -58,6 +58,13 @@ export const publicImagePath = (id: string): string => `assets/card_images/${id}
 export const privateImagePath = (id: string): string => `images/${id}.webp`;
 /** 非公開リポの制作中カード配列パス */
 export const wipCardsPath = (vol: number): string => `cards/vol${vol}.json`;
+/**
+ * 非公開リポの「制作中の弾メタ」パス。
+ * 公開リポの data/sets.json は丸ごとブラウザに配信されるので、未公開の弾の
+ * テーマ名・サブタイトルを書くと必ず外から読める（実際に第2弾のサブタイトルが漏れていた）。
+ * カードと同じく、制作中の弾メタは非公開リポだけに置く。
+ */
+export const WIP_SETS_PATH = 'sets.wip.json';
 
 // ---- エラー型 --------------------------------------------------------------
 

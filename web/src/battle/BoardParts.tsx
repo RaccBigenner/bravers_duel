@@ -2,7 +2,7 @@
  * バトル画面の盤面部品（表示専用コンポーネント）。
  * 状態を持つのは親（Battle）で、ここは描画とタップの通知だけを行う。
  */
-import { cardById, effectiveAttributes, isCharAlive, maxHpOf, type BattleAction, type BattleState, type CharacterCard } from '@bravers/engine';
+import { actorOrder, cardById, effectiveAttributes, isActorLocked, isCharAlive, maxHpOf, type BattleAction, type BattleState, type CharacterCard } from '@bravers/engine';
 import { useEffect, useRef, useState } from 'react';
 import { CardFrame } from '../CardFrame';
 import { IMG } from '../cardAssets';
@@ -80,6 +80,10 @@ export function Formation({ side, state, pops, targeting, onTap, koShown, cardW,
   motions: { key: number; side: 0 | 1; charIndex: number; cls: string }[];
   onZoom?: (cardId: string) => void;
 }) {
+  // 「次に誰が前へ出るか」はエンジンの actorOrder が唯一の正（UIで推測しない）。
+  // ロック中は交代が起きないので、次番手のバッジは出さない（嘘の予告になるため）。
+  const order = actorOrder(state, side);
+  const locked = isActorLocked(state, side);
   const p = state.players[side];
   const n = p.characters.length;
   const step = 360 / Math.max(n, 1);
@@ -106,7 +110,11 @@ export function Formation({ side, state, pops, targeting, onTap, koShown, cardW,
   });
 
   const width = Math.round(cardW * 3.2 + 8);
-  const height = Math.round(cardW * 2.3 + 16);
+  // 陣形の箱の高さ。カードは絶対配置なので、この値は「陣形の中心をどこに置くか」を決める。
+  // 2.3 → 1.84: 箱を詰めて盤面全体を上へ寄せ、自分のアクターのHP表示が手札に隠れないようにする
+  // （2026-07-25 βレビュー対応。ブラウザで実測しながら決めた値。
+  //   1目盛り小さくすると自分のアクターのHP表示が約 1.5×cardW×0.01 px 上がる）
+  const height = Math.round(cardW * 1.84 + 12);
   const selectableSet = targeting && targeting.side === side ? targeting.actions : null;
 
   return (
@@ -168,6 +176,25 @@ export function Formation({ side, state, pops, targeting, onTap, koShown, cardW,
                   src={IMG('back')}
                   className={`ko-back ${(cardById(c.cardId) as CharacterCard).size === 'legendaryLarge' ? 'landscape' : ''}`}
                 />
+              )}
+              {/* 出番の順番バッジ。1=今のアクター、次=次に前へ出る、3=その次 */}
+              {alive && !koVisible && order.indexOf(i) >= 0 && (
+                <span
+                  className={[
+                    'order-badge',
+                    order.indexOf(i) === 0 ? 'now' : '',
+                    order.indexOf(i) === 1 && !locked ? 'next' : '',
+                  ].join(' ')}
+                  title={
+                    order.indexOf(i) === 0
+                      ? '今のアクター'
+                      : order.indexOf(i) === 1 && !locked
+                        ? '次に前へ出るキャラ'
+                        : `${order.indexOf(i) + 1}番目に前へ出る`
+                  }
+                >
+                  {order.indexOf(i) === 1 && !locked ? '次' : order.indexOf(i) + 1}
+                </span>
               )}
               {isActor && state.turn <= p.actorLockUntilTurn && (
                 <img className="lock-badge" src={IMG('icon_lock')} title="ロック中: アクターを交代できない" alt="ロック" />
@@ -249,10 +276,19 @@ export function ZoneCol({ side, p, deckRef, apRef, trashRef, onOpenPile }: {
   deckRef: React.RefObject<HTMLDivElement>;
   apRef: React.RefObject<HTMLDivElement>;
   trashRef: React.RefObject<HTMLDivElement>;
-  onOpenPile: (kind: 'ap' | 'trash') => void;
+  /** deck は自分側だけ（相手の山札の中身は見せない） */
+  onOpenPile: (kind: 'ap' | 'trash' | 'deck') => void;
 }) {
+  // 自分の山札だけ「残りの中身」を開ける。並びは種類別に整列して見せるので、
+  // 次に何を引くか（本当の並び順）は分からない＝ゲーム性を壊さない。
+  const canPeekDeck = side === PLAYER;
   const deck = (
-    <div className="pile deck" ref={deckRef} key="deck">
+    <div
+      className={`pile deck ${canPeekDeck ? 'clickable' : ''}`}
+      ref={deckRef}
+      key="deck"
+      onClick={canPeekDeck ? () => onOpenPile('deck') : undefined}
+    >
       <img src={IMG('back')} className="pile-card" />
       <span className={`pile-count ${p.deck.length <= 10 ? 'low' : ''}`}>{p.deck.length}</span>
       <span className="pile-label">山札</span>

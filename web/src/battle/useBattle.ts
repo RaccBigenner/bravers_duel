@@ -16,7 +16,7 @@ import {
   isCharAlive,
   legalActions,
   maxHpOf,
-  simpleAi,
+  searchAi,
   type Attribute,
   type BattleAction,
   type BattleAi,
@@ -196,7 +196,7 @@ export function useBattle(playerDeck: DeckList, enemyDeck: DeckList) {
   const [current, setCurrent] = useState<NarrEvent | null>(null);
   const [pops, setPops] = useState<DamagePop[]>([]);
   const [koShown, setKoShown] = useState<Set<string>>(new Set());
-  const aiRef = useRef<BattleAi>(simpleAi({ keepHand: 2 }));
+  const aiRef = useRef<BattleAi>(searchAi({ keepHand: 2 }));
   const [speed, setSpeedState] = useState(savedSpeed);
   const speedRef = useRef(savedSpeed);
   const setSpeed = useCallback((s: number) => {

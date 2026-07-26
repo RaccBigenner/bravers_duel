@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { randomAi, simpleAi } from '../src/ai';
+import { randomAi, searchAi, simpleAi } from '../src/ai';
 import {
   actingPlayer,
+  actorOrder,
   applyAction,
   canPlaySkill,
   createBattle,
@@ -12,6 +13,7 @@ import {
 import { cardById } from '../src/cards';
 import { containsAll, deckProblems, sampleDeck, type DeckList } from '../src/decks';
 import { runBattle } from '../src/runner';
+import { sampleArchetypeDecks } from '../src/sampleDecks';
 import type { SkillCard } from '../src/types';
 
 // 基本ルールの検証には「効果を持たないバニラカード」を固定で使う（結果が読めるように）
@@ -264,5 +266,51 @@ describe('AI同士の自動対戦', () => {
       );
       expect(['wipeout', 'deckout', 'turnLimit']).toContain(result.reason);
     }
+  });
+
+  it('先読みAI（今のCPU）同士でも必ず決着する', () => {
+    for (let seed = 1; seed <= 6; seed++) {
+      const result = runBattle(
+        [sampleDeck(seed * 5 + 1), sampleDeck(seed * 5 + 2)],
+        [searchAi({ keepHand: 2 }), searchAi({ keepHand: 2 })],
+        seed,
+      );
+      expect(['wipeout', 'deckout', 'turnLimit']).toContain(result.reason);
+    }
+  });
+
+  it('先読みAIは旧simpleAIより強い（バランス調整でここが割れたら要確認）', () => {
+    const decks = sampleArchetypeDecks();
+    let win = 0;
+    let games = 0;
+    for (let i = 0; i < decks.length; i++) {
+      for (let j = 0; j < decks.length; j++) {
+        if (i === j) continue;
+        const result = runBattle(
+          [decks[i].deck, decks[j].deck],
+          [searchAi({ keepHand: 2 }), simpleAi({ keepHand: 2 })],
+          1000 + games,
+        );
+        games++;
+        if (result.winner === 0) win++;
+      }
+    }
+    // 実測 62%前後。半分を割ったら「強くした」が壊れているので気づけるようにする
+    expect(win / games).toBeGreaterThan(0.55);
+  });
+});
+
+describe('アクターの順番（UIの「次は誰か」表示の元）', () => {
+  it('今のアクターから順に並び、一周したら止まる', () => {
+    const state = makeBattle({ chars: [CHAR_A, CHAR_B, CHAR_C], deckCard: ATK }, { chars: [CHAR_D, CHAR_E], deckCard: ATK });
+    state.players[0].actorIndex = 1;
+    expect(actorOrder(state, 0)).toEqual([1, 2, 0]);
+  });
+
+  it('戦闘不能のキャラは飛ばす', () => {
+    const state = makeBattle({ chars: [CHAR_A, CHAR_B, CHAR_C], deckCard: ATK }, { chars: [CHAR_D, CHAR_E], deckCard: ATK });
+    const chars = state.players[0].characters;
+    chars[1].damage = chars[1].maxHp; // 2番手が戦闘不能
+    expect(actorOrder(state, 0)).toEqual([0, 2]);
   });
 });
