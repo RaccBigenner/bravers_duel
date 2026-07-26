@@ -41,7 +41,10 @@ export type BattleEvent =
   // 戦闘の変化
   | { t: 'powerUp'; player: PlayerIndex; charIndex: number; n: number; total: number }
   | { t: 'guardBoost'; player: PlayerIndex; n: number; remain: number }
-  | { t: 'damage'; player: PlayerIndex; charIndex: number; n: number; hpLeft: number }
+  /** sourceCardId: このダメージを生んだスキル。UIの属性エフェクトはこれだけを見る
+   *  （UI側で「直前に使われたカード」を覚える方式だと、ガード割り込みが挟まった時に
+   *   ガードカードの属性に化けていた）。効果ダメージ等、出どころが無い場合は undefined */
+  | { t: 'damage'; player: PlayerIndex; charIndex: number; n: number; hpLeft: number; sourceCardId?: string }
   | { t: 'standbyImmune'; player: PlayerIndex; charIndex: number }
   | { t: 'heal'; player: PlayerIndex; charIndex: number; n: number }
   | { t: 'ko'; player: PlayerIndex; charIndex: number }

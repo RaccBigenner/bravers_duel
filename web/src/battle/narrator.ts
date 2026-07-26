@@ -26,6 +26,9 @@ export interface NarrEvent {
   cardName?: string; // 表示状態の更新（リデューサ）用
   charName?: string;
   attr?: string;
+  /** ダメージ演出で使う属性。エンジンが伝えた「出どころのスキル」から取る
+   *  （直前に使われたカードを覚える方式は、ガード割り込みで属性が化けた） */
+  attrs?: string[];
   /** ガードなど「AからBへ変化」を伝えるときの変化前の値（amount = 変化後） */
   amountBefore?: number;
   /** 開幕分など、表示状態に適用しないイベント */
@@ -148,8 +151,11 @@ export function narrate(state: BattleState, e: BattleEvent): NarrEvent | null {
       return ev({ kind: 'power', text: `${sideName(e.player, charName(e.player, e.charIndex))}の攻撃威力+${e.n}！`, side: e.player, charIndex: e.charIndex, amount: e.n, amountBefore: e.total, duration: 950 });
     case 'guardBoost':
       return ev({ kind: 'powerGuard', text: `ガード強化+${e.n}！`, side: e.player, charIndex: state.players[e.player].actorIndex, amount: e.n, amountBefore: e.remain, duration: 950 });
-    case 'damage':
-      return ev({ kind: 'damage', text: `${sideName(e.player, charName(e.player, e.charIndex))}に${e.n}ダメージ！`, side: e.player, charIndex: e.charIndex, amount: e.n, duration: 1125 });
+    case 'damage': {
+      const src = e.sourceCardId ? safeCard(e.sourceCardId) : undefined;
+      const attrs = src?.type === 'skill' ? [...new Set(src.conditionAttribute)] : [];
+      return ev({ kind: 'damage', text: `${sideName(e.player, charName(e.player, e.charIndex))}に${e.n}ダメージ！`, side: e.player, charIndex: e.charIndex, amount: e.n, attrs, duration: 1125 });
+    }
     case 'standbyImmune':
       return ev({ kind: 'info', text: `${sideName(e.player, charName(e.player, e.charIndex))}は控えのため無傷！`, charName: '無傷', side: e.player, charIndex: e.charIndex, duration: 1200 });
     case 'heal':

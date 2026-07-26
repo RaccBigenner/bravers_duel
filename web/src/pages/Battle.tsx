@@ -361,13 +361,10 @@ function BattleInner({ setup, onExit, onRematch }: {
         focusCam(current.side, 900);
         break;
       case 'play':
-      case 'guard':
-        // このスキルの属性を記憶（後続のダメージ等のVFXに使う）
-        if (current.card?.type === 'skill') {
-          lastAttrsRef.current = [...new Set(current.card.conditionAttribute)];
-        } else {
-          lastAttrsRef.current = [];
-        }
+      case 'guard': {
+        // 詠唱エフェクトは「今まさに使われたカード」の属性（回復・補助もこれで正しい）
+        const castAttrs = current.card?.type === 'skill' ? [...new Set(current.card.conditionAttribute)] : [];
+        lastAttrsRef.current = castAttrs; // 回復の演出だけ、直前のカードを引き継ぐ
         // スキル使用: 使用者側へカメラを寄せる
         focusCam(current.side, 1100);
         // 使用キャラに「詠唱」エフェクト（属性の光 + 立ち上る詠唱リング）
@@ -378,7 +375,7 @@ function BattleInner({ setup, onExit, onRematch }: {
             current.charIndex,
             current.kind === 'guard'
               ? ['vfx_guard', 'css:pguard']
-              : ['css:cast', ...lastAttrsRef.current.slice(0, 2).map((a) => `vfx_${a}`)],
+              : ['css:cast', ...castAttrs.slice(0, 2).map((a) => `vfx_${a}`)],
           );
         }
         // ガードは「いくつ → いくつ」を頭上に大きく出す
@@ -390,11 +387,15 @@ function BattleInner({ setup, onExit, onRematch }: {
           spawnFlight(boardRef.current, trashRefs[s].current, 1, current.card?.id);
         }, Math.max(0, current.duration - 420));
         break;
+      }
       case 'turn':
         lastAttrsRef.current = [];
         break;
       case 'damage':
-        spawnVfx(current.side, current.charIndex, [...lastAttrsRef.current.map((a) => `vfx_${a}`), 'vfx_damage']);
+        // 属性はエンジンが伝えた「ダメージを生んだスキル」から取る。
+        // 直前に使われたカードを覚える方式だと、ガードで割り込まれた瞬間に
+        // ガードカードの属性に化けていた（例: 斬の攻撃が突のエフェクトで出る）。
+        spawnVfx(current.side, current.charIndex, [...(current.attrs ?? []).map((a) => `vfx_${a}`), 'vfx_damage']);
         focusCam(current.side, 1000); // 受けた側へ寄る（使用者→対象の順になる）
         break;
       case 'heal':

@@ -727,7 +727,11 @@ function applyDamage(
   const actual = Math.min(amount, maxHp - c.damage);
   c.damage += actual;
   pushLog(state, `P${player + 1}の${c.name}に${actual}ダメージ（残りHP: ${maxHp - c.damage}）`);
-  emit(state, { t: 'damage', player, charIndex, n: actual, hpLeft: maxHp - c.damage });
+  // 攻撃の解決中なら、そのスキルを「ダメージの出どころ」として伝える（UIの属性エフェクト用）
+  emit(state, {
+    t: 'damage', player, charIndex, n: actual, hpLeft: maxHp - c.damage,
+    ...(state.pendingAttack ? { sourceCardId: state.pendingAttack.skillId } : {}),
+  });
 
   // 被ダメージ時の常時能力（ミルオン・ボーダン）。アクター判定は攻撃列の開始時点で行う
   if (actual > 0 && eff?.onDamaged && isCharAlive(state, player, charIndex)) {
