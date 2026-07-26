@@ -2080,3 +2080,36 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
   top: auto;
   bottom: -10px;
 }
+
+/* ============ 狭い画面（iPhone SE 第1世代など 320px 幅）============
+ * 上のバーは折り返さない作りなので、詰めないと右端の「投了」が画面の外へ出て
+ * 押せなくなる（320px 実測で 383px 必要だった）。文字と余白を詰めて収める。 */
+@media (max-width: 370px) {
+  .info-bar { gap: 4px; padding: 4px 6px; }
+  .info-bar .deck-name { min-width: 3em; font-size: 11px; }
+  .phase-pill { gap: 2px; padding: 2px 3px 2px 2px; }
+  .phase-pill .turn-num { font-size: 10px; padding: 1px 5px; }
+  .phase-pill em { font-size: 9.5px; padding: 1px 4px; }
+  .chip.small { padding: 2px 6px; font-size: 10px; }
+}
+
+/* ============ 横向き（横持ち）============
+ * 盤面は縦持ち前提の作りで、横向きだと控えのHPや山札が画面の外に出てしまう。
+ * 無理に遊ばせず「縦にしてね」と伝える。 */
+.rotate-hint {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  text-align: center;
+  padding: 20px;
+  background: rgba(8, 10, 16, 0.96);
+  color: #e8e4d8;
+}
+.rotate-hint img { width: 54px; height: 54px; object-fit: contain; opacity: 0.9; }
+.rotate-hint p { margin: 0; font-size: 15px; font-weight: 700; line-height: 1.7; }
+.rotate-hint small { color: #99a; font-size: 12px; }

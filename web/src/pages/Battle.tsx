@@ -57,12 +57,42 @@ function useViewportHeight(): number {
 }
 
 /**
+ * 横持ちで、盤面が入りきらない高さかどうか。
+ * 盤面は縦持ち前提の作り。横向きの狭い高さ（例 844x390）だと控えのHPや山札が
+ * 画面の外に出て見えなくなるので、遊ばせずに「縦にして」と出す。
+ * タブレットの横向き（1024x768 等）は入るので対象外。
+ */
+function useNeedsPortrait(): boolean {
+  const check = () => window.innerWidth > window.innerHeight && window.innerHeight < 520;
+  const [needs, setNeeds] = useState(check);
+  useEffect(() => {
+    let timer = 0;
+    const onResize = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => setNeeds(check()), 180);
+    };
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('orientationchange', onResize);
+    };
+  }, []);
+  return needs;
+}
+
+/**
  * キャラカードの基準サイズ。
  * 陣形を横長の楕円にしたぶん縦に余裕ができたので、高さ上限を引き上げ、
  * 横は「陣形の全幅が画面に収まる」ことを上限にする。
  */
 function cardWidthFor(vh: number, vw: number): number {
-  const byHeight = vh >= 840 ? 112 : vh >= 760 ? 104 : vh >= 700 ? 96 : 84;
+  // 560px より低い画面（古い小型端末・分割画面など）は、段階を切らずに高さへ比例させる。
+  // 84px 固定のままだと盤面が縦に収まらず、手札が自分のキャラのHPを覆ってしまう
+  // （320x480 で実測して確認）。
+  const byHeight =
+    vh >= 840 ? 112 : vh >= 760 ? 104 : vh >= 700 ? 96 : vh >= 560 ? 84 : Math.max(48, Math.floor((vh - 175) / 5.3));
   const byWidth = Math.floor((Math.min(vw, 440) - 70) / 3.2);
   return Math.min(byHeight, byWidth);
 }
@@ -161,6 +191,7 @@ function BattleInner({ setup, onExit, onRematch }: {
   }, []);
 
   const vh = useViewportHeight();
+  const needsPortrait = useNeedsPortrait();
   const cardW = cardWidthFor(vh, window.innerWidth);
   // 手札の幅。0.78 → 0.74（2026-07-25 βレビュー対応）。
   // 手札の箱が高いと、その上にある自分のアクターのHP・属性表示に手札がかぶる。
@@ -975,6 +1006,15 @@ function BattleInner({ setup, onExit, onRematch }: {
 
       {/* ルール説明 */}
       {showRules && <RulesModal onClose={() => setShowRules(false)} />}
+
+      {/* 横持ちだと盤面が入りきらない（控えのHPや山札が画面の外に出る）ので、縦持ちをお願いする */}
+      {needsPortrait && (
+        <div className="rotate-hint">
+          <img src={IMG('icon_sword')} alt="" />
+          <p>スマホを縦にしてください</p>
+          <small>バトル画面は縦持ち用に作られています。<br />横向きだと山札や控えのHPが画面の外に出てしまいます。</small>
+        </div>
+      )}
 
       {/* 投了確認 */}
       {confirmExit && (
