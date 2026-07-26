@@ -177,24 +177,11 @@ export function Formation({ side, state, pops, targeting, onTap, koShown, cardW,
                   className={`ko-back ${(cardById(c.cardId) as CharacterCard).size === 'legendaryLarge' ? 'landscape' : ''}`}
                 />
               )}
-              {/* 出番の順番バッジ。1=今のアクター、次=次に前へ出る、3=その次 */}
-              {alive && !koVisible && order.indexOf(i) >= 0 && (
-                <span
-                  className={[
-                    'order-badge',
-                    order.indexOf(i) === 0 ? 'now' : '',
-                    order.indexOf(i) === 1 && !locked ? 'next' : '',
-                  ].join(' ')}
-                  title={
-                    order.indexOf(i) === 0
-                      ? '今のアクター'
-                      : order.indexOf(i) === 1 && !locked
-                        ? '次に前へ出るキャラ'
-                        : `${order.indexOf(i) + 1}番目に前へ出る`
-                  }
-                >
-                  {order.indexOf(i) === 1 && !locked ? '次' : order.indexOf(i) + 1}
-                </span>
+              {/* 出番の目印は「次に前へ出る1人」だけに付ける。
+               * 今のアクターは大きさとスポットライトで分かるし、3番手は消去法で分かるので、
+               * 全員に番号を振るとバッジだらけになって装備アイコン等とも取り合いになる。 */}
+              {alive && !koVisible && !locked && order.indexOf(i) === 1 && (
+                <span className="order-badge" title="次に前へ出るキャラ">NEXT</span>
               )}
               {isActor && state.turn <= p.actorLockUntilTurn && (
                 <img className="lock-badge" src={IMG('icon_lock')} title="ロック中: アクターを交代できない" alt="ロック" />

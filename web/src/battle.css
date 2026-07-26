@@ -1987,36 +1987,29 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
  * 手札の箱を必要な高さまで詰めて、盤面の下端に余白を作る。 */
 .my-hand { padding-top: 4px; }
 
-/* 出番の順番バッジ（次に誰が前へ出るかを常に見せる） */
+/* 「次に前へ出るキャラ」の目印。付くのは常に1人だけ。
+ * 左上は装備アイコン、右上はカードのHP表示があるので、上辺の中央に置く
+ * （中央はロック表示と同じ位置だが、ロックが出るのはアクター＝NEXTが付かない側なので重ならない）。 */
 .order-badge {
   position: absolute;
-  top: -9px;
-  left: -7px;
-  min-width: 19px;
-  height: 19px;
-  padding: 0 4px;
+  top: -10px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0 7px;
+  height: 18px;
   box-sizing: border-box;
-  border-radius: 10px;
-  background: rgba(16, 18, 26, 0.94);
-  border: 1px solid #667;
-  color: #aab;
-  font-size: 11px;
+  border-radius: 9px;
+  background: rgba(12, 26, 38, 0.95);
+  border: 1px solid #6cf;
+  color: #9df;
+  font-size: 10px;
   font-weight: 800;
-  line-height: 17px;
-  text-align: center;
+  letter-spacing: 0.06em;
+  line-height: 16px;
+  white-space: nowrap;
   z-index: 9;
   pointer-events: none;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
-}
-.order-badge.now {
-  border-color: #ffd700;
-  color: #ffd700;
-  box-shadow: 0 0 6px rgba(255, 215, 0, 0.5);
-}
-.order-badge.next {
-  border-color: #6cf;
-  color: #9df;
-  box-shadow: 0 0 6px rgba(108, 204, 255, 0.55);
+  box-shadow: 0 0 6px rgba(108, 204, 255, 0.55), 0 1px 3px rgba(0, 0, 0, 0.7);
 }
 
 /* 山札は自分のものだけ中身を開ける */
@@ -2075,3 +2068,15 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
  * カードそのものだけが反応するようにする。 */
 .my-hand { pointer-events: none; }
 .my-hand .hand-card { pointer-events: auto; }
+
+/* 相手アクターだけHP・属性をカードの「上」に出しているので、
+ * 同じく上辺に置かれる装備アイコンとロック表示は下へ逃がす。
+ * （実機で装備アイコンがHPの数字に被って読めなかった） */
+.enemy-area .char-slot.actor .equip-thumb {
+  top: auto;
+  bottom: -8px;
+}
+.enemy-area .char-slot.actor .lock-badge {
+  top: auto;
+  bottom: -10px;
+}
