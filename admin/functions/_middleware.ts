@@ -14,10 +14,21 @@
 import cloudflareAccessPlugin from '@cloudflare/pages-plugin-cloudflare-access';
 import type { Env } from './_github';
 
-export const onRequest: PagesFunction<Env> = (ctx) =>
-  cloudflareAccessPlugin({
-    // 実値は環境変数(文字列)なので、plugin が要求する
-    // `https://<team>.cloudflareaccess.com` 形式のテンプレートリテラル型へキャスト
-    domain: ctx.env.CF_ACCESS_TEAM_DOMAIN as `https://${string}.cloudflareaccess.com`,
-    aud: ctx.env.CF_ACCESS_AUD,
-  })(ctx);
+export const onRequest: PagesFunction<Env> = async (ctx) => {
+  try {
+    return await cloudflareAccessPlugin({
+      // 実値は環境変数(文字列)なので、plugin が要求する
+      // `https://<team>.cloudflareaccess.com` 形式のテンプレートリテラル型へキャスト
+      domain: ctx.env.CF_ACCESS_TEAM_DOMAIN as `https://${string}.cloudflareaccess.com`,
+      aud: ctx.env.CF_ACCESS_AUD,
+    })(ctx);
+  } catch (e) {
+    // 鍵の取得に失敗する等で plugin が例外を投げると、Cloudflare の 502 ページが返り
+    // 画面には「なぜ失敗したか」が一切出ない（実際に画像アップロードで起きた）。
+    // ここで受け止めて理由の分かる応答にする。**通すのではなく必ず拒否する**（fail-closed）。
+    return new Response(
+      JSON.stringify({ error: '認証の確認に失敗しました。少し待ってからやり直してください' }),
+      { status: 503, headers: { 'Content-Type': 'application/json; charset=utf-8' } },
+    );
+  }
+};

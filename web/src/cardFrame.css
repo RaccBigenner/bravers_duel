@@ -1,0 +1,49 @@
+/**
+ * カードデザイン（`CardFrame`）専用のCSS。
+ *
+ * **ゲーム（web/）と管理画面（admin/）の両方がこの1枚を読む。**
+ * カードの中の見た目は、置かれた画面の設定を一切継承しないようここで固定する。
+ *
+ * 経緯: 書体を固定していなかったため、効果テキストが
+ * ゲームでは Murecho、管理画面では system-ui になり「微妙に違う」状態になっていた。
+ * 影の有無・行の高さ・box-sizing もずれていた。
+ * **カードの見た目に関わる指定は、各画面のCSSではなく必ずここに書くこと。**
+ */
+
+/* カード名に使う見出しフォント */
+@font-face {
+  font-family: 'AFS';
+  src: url('./fonts/AFSMinNovaE.ttf') format('truetype');
+  font-display: swap;
+}
+
+.afs {
+  font-family: 'AFS', 'Murecho', sans-serif;
+}
+
+.card-frame {
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+  flex-shrink: 0;
+
+  /* ここから下は「周りの画面から継承させない」ための固定値。
+     CardFrame が要素に直接書いた指定（インラインstyle）のほうが強いので邪魔しない。 */
+  font-family: 'Murecho', 'Hiragino Sans', sans-serif;
+  color: #eee;
+  font-weight: 400;
+  font-style: normal;
+  font-size: 16px;
+  line-height: normal;
+  letter-spacing: normal;
+  text-align: left;
+  text-transform: none;
+  box-sizing: content-box;
+  /* iPhone が勝手に文字を拡大しないように（ゲーム側はページ設定で止めている） */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+.card-frame * {
+  margin: 0;
+  box-sizing: content-box;
+  line-height: normal;
+}

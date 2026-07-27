@@ -1,6 +1,5 @@
 import react from '@vitejs/plugin-react';
-import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -72,6 +71,24 @@ function cardSaveTarget(card: { vol: number; status?: string }, sets: SetMetaLik
   return isPublic ? resolve(DATA, 'cards.json') : wipCardsPath(card.vol);
 }
 
+/**
+ * 画像の一覧を `{ カードid: 版番号 }` で返す（クラウド版 /api/master と同じ形）。
+ * 版番号はローカルでは更新時刻。画像URLの `?v=` に使い、差し替えた時だけ
+ * ブラウザが取り直すようにする（一覧で毎回全枚数を読み直さないため）。
+ */
+function loadImages(): Record<string, string> {
+  const out: Record<string, string> = {};
+  // 配信と同じ探索順（公開 → 制作中）に合わせ、公開側を優先させる
+  for (const dir of [WIP_IMAGES, IMAGES]) {
+    if (!existsSync(dir)) continue;
+    for (const f of readdirSync(dir)) {
+      const file = resolve(dir, f);
+      out[f.replace(/\.[^.]+$/, '')] = String(statSync(file).mtimeMs | 0);
+    }
+  }
+  return out;
+}
+
 function loadMaster() {
   const sets = loadSets();
   const released = readJson<Record<string, unknown>[]>(resolve(DATA, 'cards.json'), []);
@@ -86,7 +103,21 @@ function loadMaster() {
       wip.push(...(arr as Record<string, unknown>[]));
     }
   }
-  return { sets, cards: [...released, ...wip] };
+
+  // 弾メタが無いのにカードだけある vol（＝迷子）。弾メタが消えるとカードが丸ごと
+  // 見えなくなる事故が実際に起きたので、タブだけは必ず出して直せるようにする。
+  const known = new Set(sets.map((s) => s.vol));
+  const orphanVols = [...new Set(wip.map((c) => Number(c.vol)))].filter((v) => !known.has(v)).sort((a, b) => a - b);
+  for (const vol of orphanVols) {
+    sets.push({ vol, themeNo: vol, themeName: '', themeSubtitle: '', packType: 'DX', status: 'draft', releasedAt: '', codename: '' });
+  }
+  sets.sort((a, b) => a.vol - b.vol);
+
+  // 同 id は公開側を正とする（公開済みの弾に制作中カードが残っていても二重に出さない）
+  const byId = new Map<string, Record<string, unknown>>();
+  for (const c of [...released, ...wip]) if (!byId.has(String(c.id))) byId.set(String(c.id), c);
+
+  return { sets, cards: [...byId.values()], images: loadImages(), orphanVols };
 }
 
 async function readBody(req: IncomingMessage): Promise<any> {
@@ -113,7 +144,7 @@ function masterApi(): Plugin {
   // dev サーバーと本番プレビューの両方に同じ API・画像配信ミドルウェアを挿す
   const attach = (server: { middlewares: { use: (...args: any[]) => void } }) => {
       // カード画像を配信（公開画像 → 無ければ制作中画像の順で探す）
-      server.middlewares.use((req, res, next) => {
+      server.middlewares.use((req: IncomingMessage, res: ServerResponse, next: () => void) => {
         const url = req.url ?? '';
         if (!url.startsWith('/card_images/')) return next();
         const name = decodeURIComponent(url.slice('/card_images/'.length).split('?')[0]);
@@ -121,6 +152,11 @@ function masterApi(): Plugin {
           const file = resolve(dir, name);
           if (file.startsWith(dir) && existsSync(file)) {
             res.setHeader('Content-Type', MIME[extname(file)] ?? 'application/octet-stream');
+            // `?v=`（/api/master が返す版番号）付きは中身が変われば別URLになるので焼き付けてよい
+            res.setHeader(
+              'Cache-Control',
+              url.includes('?v=') ? 'public, max-age=31536000, immutable' : 'public, max-age=300',
+            );
             res.end(readFileSync(file));
             return;
           }
@@ -130,7 +166,7 @@ function masterApi(): Plugin {
       });
 
       // マスターデータ API
-      server.middlewares.use(async (req, res, next) => {
+      server.middlewares.use(async (req: IncomingMessage, res: ServerResponse, next: () => void) => {
         const url = req.url ?? '';
         if (!url.startsWith('/api/')) return next();
         try {
@@ -183,23 +219,62 @@ function masterApi(): Plugin {
             return sendJson(res, 200, { ok: true, savedTo: resolve(dir, `${id}.webp`).replace(REPO + '/', '') });
           }
 
-          if (req.method === 'GET' && url === '/api/git-status') {
-            // 公開リポジトリ側（data/cards.json 等）に未コミットの変更があるか。
-            // data/wip は gitignore なのでここには出ない＝未公開データは push されない
-            const out = execFileSync('git', ['status', '--porcelain'], { cwd: REPO }).toString();
-            return sendJson(res, 200, { changes: out.split('\n').filter(Boolean) });
-          }
+          if (req.method === 'POST' && url === '/api/publish-set') {
+            // 弾を公開する。クラウド版 functions/api/publish-set.ts と同じ手順・同じ順序
+            // （公開側を全部書いてから最後に status を released にする）をローカルの
+            // ファイル操作でやる。途中で失敗しても弾が中途半端に公開されない。
+            const { vol } = await readBody(req);
+            if (typeof vol !== 'number') return sendJson(res, 400, { error: 'vol が必要' });
 
-          if (req.method === 'POST' && url === '/api/git-push') {
-            // スマホからの「公開」ボタン。PC の既存 git 認証だけを使い、トークンはブラウザに出さない。
-            // gitignore により data/wip・wip画像は push 対象外なので、公開データだけが上がる
-            const { message } = await readBody(req);
-            execFileSync('git', ['add', '-A'], { cwd: REPO });
-            const staged = execFileSync('git', ['diff', '--cached', '--name-only'], { cwd: REPO }).toString().trim();
-            if (!staged) return sendJson(res, 200, { ok: true, pushed: false, note: '変更なし' });
-            execFileSync('git', ['commit', '-m', String(message || 'カードマスター更新（管理画面）')], { cwd: REPO });
-            execFileSync('git', ['push'], { cwd: REPO });
-            return sendJson(res, 200, { ok: true, pushed: true, files: staged.split('\n') });
+            // 1. 制作中カードの status:'draft' を外す（＝弾に従わせる）
+            const wipFile = wipCardsPath(vol);
+            const wipCards = readJson<Record<string, unknown>[]>(wipFile, []);
+            const promoted = wipCards.map((c) => {
+              if (c.status !== 'draft') return c;
+              const { status: _drop, ...rest } = c;
+              return rest;
+            });
+
+            // 2. 公開 data/cards.json に反映（同 id は差し替え）
+            const pubFile = resolve(DATA, 'cards.json');
+            const list = readJson<Record<string, unknown>[]>(pubFile, []);
+            for (const c of promoted) {
+              const i = list.findIndex((x) => x.id === c.id);
+              if (i >= 0) list[i] = c;
+              else list.push(c);
+            }
+            writeJson(pubFile, list);
+
+            // 3. 画像を制作中フォルダから公開フォルダへ移す
+            mkdirSync(IMAGES, { recursive: true });
+            for (const c of promoted) {
+              const from = resolve(WIP_IMAGES, `${c.id}.webp`);
+              if (existsSync(from)) copyFileSync(from, resolve(IMAGES, `${c.id}.webp`));
+            }
+
+            // 4. 弾メタを wip → 公開へ released で移す（＝ここで公開が確定する）
+            const wipSetsFile = readJson<{ sets: SetMetaLike[] }>(WIP_SETS, { sets: [] });
+            const pubSetsFile = readJson<{ sets: SetMetaLike[] }>(PUBLIC_SETS, { sets: [] });
+            const source =
+              (wipSetsFile.sets ?? []).find((s) => s.vol === vol) ??
+              (pubSetsFile.sets ?? []).find((s) => s.vol === vol);
+            if (!source) return sendJson(res, 404, { error: `vol${vol} の弾が見つかりません` });
+            const pubSets = (pubSetsFile.sets ?? []).filter((s) => s.vol !== vol);
+            pubSets.push({ ...source, status: 'released' });
+            pubSets.sort((a, b) => a.vol - b.vol);
+            writeJson(PUBLIC_SETS, { ...pubSetsFile, sets: pubSets });
+
+            // 5. 最後に制作中側を空にする
+            if (wipCards.length > 0) writeJson(wipFile, []);
+            for (const c of promoted) {
+              const from = resolve(WIP_IMAGES, `${c.id}.webp`);
+              if (existsSync(from)) unlinkSync(from);
+            }
+            if ((wipSetsFile.sets ?? []).some((s) => s.vol === vol)) {
+              writeJson(WIP_SETS, { ...wipSetsFile, sets: (wipSetsFile.sets ?? []).filter((s) => s.vol !== vol) });
+            }
+
+            return sendJson(res, 200, { ok: true, moved: promoted.length });
           }
 
           if (req.method === 'POST' && url === '/api/save-set') {

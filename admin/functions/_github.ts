@@ -52,12 +52,18 @@ export const PRIVATE_REPO = 'bravers_duel_wip';
 export const SETS_PATH = 'data/sets.json';
 export const CARDS_PATH = 'data/cards.json';
 
+/** 公開リポのカード画像ディレクトリ */
+export const PUBLIC_IMAGE_DIR = 'assets/card_images';
+/** 非公開リポのカード画像ディレクトリ */
+export const PRIVATE_IMAGE_DIR = 'images';
 /** 公開リポのカード画像パス */
-export const publicImagePath = (id: string): string => `assets/card_images/${id}.webp`;
+export const publicImagePath = (id: string): string => `${PUBLIC_IMAGE_DIR}/${id}.webp`;
 /** 非公開リポのカード画像パス */
-export const privateImagePath = (id: string): string => `images/${id}.webp`;
+export const privateImagePath = (id: string): string => `${PRIVATE_IMAGE_DIR}/${id}.webp`;
+/** 非公開リポの制作中カードのディレクトリ */
+export const WIP_CARDS_DIR = 'cards';
 /** 非公開リポの制作中カード配列パス */
-export const wipCardsPath = (vol: number): string => `cards/vol${vol}.json`;
+export const wipCardsPath = (vol: number): string => `${WIP_CARDS_DIR}/vol${vol}.json`;
 /**
  * 非公開リポの「制作中の弾メタ」パス。
  * 公開リポの data/sets.json は丸ごとブラウザに配信されるので、未公開の弾の
@@ -183,6 +189,26 @@ export async function ghGetRaw(env: Env, repo: string, path: string): Promise<Ui
   if (res.status === 404) return null;
   if (!res.ok) throw new GhError(res.status, `GET raw ${repo}/${path}`);
   return new Uint8Array(await res.arrayBuffer());
+}
+
+/**
+ * ディレクトリ直下のファイル一覧を `{ 名前: blob sha }` で返す（無ければ空）。
+ *
+ * 画像の有無を「1枚ずつ叩いて確かめる」と枚数ぶんのリクエストになるので、
+ * ここで 1 リクエストにまとめる。sha はそのまま画像URLの版番号に使い、
+ * 中身が変わった時だけURLが変わる＝ブラウザに長期キャッシュさせられる。
+ */
+export async function ghListDir(env: Env, repo: string, dir: string): Promise<Record<string, string>> {
+  const res = await fetch(ghUrl(repo, dir), { headers: ghHeaders(env) });
+  if (res.status === 404) return {};
+  if (!res.ok) throw new GhError(res.status, `GET dir ${repo}/${dir}`);
+  const body = (await res.json()) as unknown;
+  if (!Array.isArray(body)) return {};
+  const out: Record<string, string> = {};
+  for (const e of body as { name?: string; sha?: string; type?: string }[]) {
+    if (e.type === 'file' && e.name && e.sha) out[e.name] = e.sha;
+  }
+  return out;
 }
 
 /** ファイルの sha だけ取得（更新時に必要）。無ければ null */
