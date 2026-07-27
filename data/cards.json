@@ -2305,5 +2305,22 @@
     ],
     "baseValue": 0,
     "valueType": "support"
+  },
+  {
+    "id": "1-A025-USR",
+    "vol": 1,
+    "code": "A025",
+    "rarity": "USR",
+    "name": "ロングバレルビルド",
+    "type": "skill",
+    "effectText": "控えから使用可能。続けてこのキャラクターが使用可能なスキルを使用しても良い。",
+    "flavorText": "",
+    "costAp": 2,
+    "conditionAttribute": [
+      "射",
+      "風"
+    ],
+    "baseValue": 0,
+    "valueType": "support"
   }
 ]
