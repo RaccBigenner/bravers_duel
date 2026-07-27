@@ -202,6 +202,8 @@ function KiraLayer({ src, style }: { src?: string | null; style?: CSSProperties 
   return (
     <div
       aria-hidden
+      // 画像に書き出す時、この層だけ別扱いで合成するための目印（admin/src/exportCard.tsx）
+      data-kira="1"
       style={{
         position: 'absolute',
         inset: 0,

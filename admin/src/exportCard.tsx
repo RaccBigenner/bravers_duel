@@ -6,7 +6,7 @@
  * 角の外側は透過。カードの影（`box-shadow`）は書き出しでは邪魔なので消す。
  */
 import { createRoot } from 'react-dom/client';
-import { toSvg } from 'html-to-image';
+import html2canvas from 'html2canvas';
 import { CardFrame } from '../../web/src/CardFrame';
 import type { MasterCard } from './api';
 import { toRenderCard } from './cardView';
@@ -15,91 +15,6 @@ import { logLine } from './log';
 
 /** 書き出す横幅（px）。カードの基準は340pxなので約3倍の解像度になる */
 const EXPORT_WIDTH = 1000;
-
-// ---- 書体の埋め込み --------------------------------------------------------
-//
-// PNG にする時、カードは「独立した絵」として描き直されるので、画面で読み込み済みの
-// 書体は使えない。書体のデータそのものを埋め込む必要がある。
-// ただし Google Fonts の日本語は数百個に分割されていて、全部取りに行くと固まる。
-// そこで **そのカードで実際に使っている文字を含む分割だけ**を選んで埋め込む。
-
-/** 文字コードが unicode-range に含まれるか */
-function rangeCovers(range: string, codes: Set<number>): boolean {
-  for (const part of range.split(',')) {
-    const t = part.trim().replace(/^U\+/i, '');
-    const [fromRaw, toRaw] = t.split('-');
-    // `4E00-9FFF` のほか `30??` のようなワイルドカード表記もある
-    const from = parseInt(fromRaw.replace(/\?/g, '0'), 16);
-    const to = parseInt((toRaw ?? fromRaw).replace(/\?/g, 'F'), 16);
-    if (Number.isNaN(from)) continue;
-    for (const c of codes) if (c >= from && c <= to) return true;
-  }
-  return false;
-}
-
-async function fetchAsDataUri(url: string): Promise<string | null> {
-  try {
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    const blob = await res.blob();
-    return await new Promise<string>((resolve, reject) => {
-      const fr = new FileReader();
-      fr.onload = () => resolve(String(fr.result));
-      fr.onerror = () => reject(new Error('読み出し失敗'));
-      fr.readAsDataURL(blob);
-    });
-  } catch {
-    return null;
-  }
-}
-
-/** 一度作ったら使い回す（毎回作ると重い） */
-const fontCssCache = new Map<string, string>();
-
-async function buildFontEmbedCss(node: HTMLElement): Promise<string> {
-  const codes = new Set<number>();
-  for (const ch of node.textContent ?? '') codes.add(ch.codePointAt(0) ?? 0);
-  // 数字・英字は必ず要る（コスト・HP・カード番号）
-  for (const ch of '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz -.') codes.add(ch.codePointAt(0)!);
-
-  const key = [...codes].sort((a, b) => a - b).join(',');
-  const cached = fontCssCache.get(key);
-  if (cached !== undefined) return cached;
-
-  const hrefs = [...document.querySelectorAll<HTMLLinkElement>('link[rel=stylesheet]')]
-    .map((l) => l.href)
-    .filter((h) => h.includes('fonts.googleapis.com'));
-
-  let out = '';
-  let used = 0;
-  let skipped = 0;
-  for (const href of hrefs) {
-    let css: string;
-    try {
-      css = await (await fetch(href)).text();
-    } catch {
-      logLine('Google Fonts の定義を取得できませんでした');
-      continue;
-    }
-    for (const chunk of css.split('@font-face').slice(1)) {
-      const end = chunk.indexOf('}');
-      if (end < 0) continue;
-      const rule = `@font-face${chunk.slice(0, end + 1)}`;
-      const range = /unicode-range:\s*([^;]+);/.exec(rule)?.[1];
-      if (range && !rangeCovers(range, codes)) { skipped++; continue; }
-      const url = /url\((https:\/\/[^)]+)\)/.exec(rule)?.[1];
-      if (!url) continue;
-      const dataUri = await fetchAsDataUri(url);
-      if (!dataUri) continue;
-      out += `${rule.replace(url, dataUri)}\n`;
-      used++;
-    }
-  }
-  logLine(`書体の埋め込み: ${used}個（対象外 ${skipped}個）`);
-
-  fontCssCache.set(key, out);
-  return out;
-}
 
 /** 指定ミリ秒で必ず終わる待ち。1つでも終わらないものがあると書き出し全体が固まるため */
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T | null> {
@@ -140,24 +55,82 @@ async function waitForAssets(node: HTMLElement): Promise<void> {
   await new Promise((r) => setTimeout(r, 80));
 }
 
-/** SVG のデータURLを、指定サイズの透過PNG（Blob）にする */
-async function svgToPngBlob(svgDataUrl: string, width: number, height: number): Promise<Blob> {
-  const img = new Image();
-  await new Promise<void>((resolve, reject) => {
-    img.onload = () => resolve();
-    img.onerror = () => reject(new Error('書き出した絵を読み込めませんでした'));
-    img.src = svgDataUrl;
-  });
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
+/**
+ * キラの層は html2canvas が「重ね方（mix-blend-mode）」を再現できないので、
+ * いったん外しておき、あとで自分で合成する。
+ */
+interface KiraPatch {
+  src: string;
+  /** カード左上を原点にした位置と大きさ */
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  radius: string;
+  opacity: number;
+}
+
+function detachKira(root: HTMLElement): { patches: KiraPatch[]; restore: () => void } {
+  const rootRect = root.getBoundingClientRect();
+  const nodes = [...root.querySelectorAll<HTMLElement>('[data-kira]')];
+  const patches: KiraPatch[] = [];
+  const hidden: HTMLElement[] = [];
+
+  for (const el of nodes) {
+    const img = el.querySelector('img'); // 背景を <img> に変換済み
+    const rect = el.getBoundingClientRect();
+    if (img?.src) {
+      patches.push({
+        src: img.src,
+        x: rect.left - rootRect.left,
+        y: rect.top - rootRect.top,
+        w: rect.width,
+        h: rect.height,
+        radius: getComputedStyle(el).borderRadius,
+        opacity: Number(getComputedStyle(el).opacity) || 1,
+      });
+    }
+    el.style.display = 'none';
+    hidden.push(el);
+  }
+  logLine(`キラの層: ${patches.length}件を別合成にする`);
+  return { patches, restore: () => hidden.forEach((el) => (el.style.display = '')) };
+}
+
+/** キラを「ハードライト」で重ねる。canvas はこの合成方法に対応している */
+async function compositeKira(canvas: HTMLCanvasElement, patches: KiraPatch[], scale: number): Promise<void> {
+  if (!patches.length) return;
   const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('canvas 2d が使えません');
-  // 背景は塗らない＝角の外は透明のまま
-  ctx.drawImage(img, 0, 0, width, height);
-  const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/png'));
-  if (!blob) throw new Error('PNG に変換できませんでした');
-  return blob;
+  if (!ctx) return;
+  for (const p of patches) {
+    const img = new Image();
+    await new Promise<void>((resolve) => {
+      img.onload = () => resolve();
+      img.onerror = () => resolve();
+      img.src = p.src;
+    });
+    if (!img.naturalWidth) continue;
+    ctx.save();
+    ctx.globalCompositeOperation = 'hard-light';
+    ctx.globalAlpha = p.opacity;
+    const x = p.x * scale;
+    const y = p.y * scale;
+    const w = p.w * scale;
+    const h = p.h * scale;
+    if (p.radius && p.radius !== '0px') {
+      ctx.beginPath();
+      const r = p.radius.includes('%') ? Math.min(w, h) / 2 : Math.min(parseFloat(p.radius) * scale, Math.min(w, h) / 2);
+      ctx.roundRect(x, y, w, h, r);
+      ctx.clip();
+    }
+    // 背景の cover と同じ入れ方にする
+    const ratio = Math.max(w / img.naturalWidth, h / img.naturalHeight);
+    const dw = img.naturalWidth * ratio;
+    const dh = img.naturalHeight * ratio;
+    ctx.drawImage(img, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
+    ctx.restore();
+  }
+  logLine('キラを合成した');
 }
 
 /**
@@ -199,26 +172,38 @@ export async function buildCardPngFile(card: MasterCard): Promise<File> {
     const rect = node.getBoundingClientRect();
     logLine(`書き出しサイズ: ${Math.round(rect.width)}x${Math.round(rect.height)}`);
 
-    const fontStarted = Date.now();
-    const fontCss = (await withTimeout(buildFontEmbedCss(node), 20000, '書体の準備')) ?? '';
-    logLine(`書体の準備 ${Date.now() - fontStarted}ms（${Math.round(fontCss.length / 1024)}KB）`);
     const started = Date.now();
     const width = Math.ceil(rect.width);
     const height = Math.ceil(rect.height);
-    // toPng ではなく toSvg を使う。toPng は内部で requestAnimationFrame を待つので
-    // 画面を見ていない時に永久に止まる（実測で確認）。PNG化は自前でやる。
-    const svgDataUrl = await toSvg(node, {
-      backgroundColor: undefined,
-      cacheBust: false,
-      width,
-      height,
-      // 書体は必要な分だけ埋める（自動収集は Google Fonts の数百個の分割定義まで
-      // 取りに行って重いので使わない）
-      fontEmbedCSS: fontCss,
-    });
-    logLine(`下絵の作成 ${Date.now() - started}ms（${Math.round(svgDataUrl.length / 1024)}KB）`);
 
-    const blob = await svgToPngBlob(svgDataUrl, width, height);
+    // **SVG経由（html-to-image）は iPhone で使えない。**
+    // 実機のログで、素材の埋め込みが全部成功していても出来上がりが
+    // 125KB（PCでは2700KB）＝ほぼ空っぽになることを確認した。
+    // iOS Safari が foreignObject を絵に変換できないため。
+    // canvas に直接描く html2canvas なら、その工程を通らないので端末を選ばない。
+    const kira = detachKira(node);
+    let canvas: HTMLCanvasElement;
+    try {
+      canvas = await html2canvas(node, {
+        backgroundColor: null, // 角の外は透明のまま
+        scale: 1, // すでに大きく描いてあるので拡大しない
+        width,
+        height,
+        logging: false,
+        useCORS: true,
+        // すべてデータ化済みなので、読み込み待ちで固まらない
+        imageTimeout: 15000,
+      });
+    } finally {
+      kira.restore();
+    }
+    await compositeKira(canvas, kira.patches, 1);
+    logLine(`絵の作成 ${Date.now() - started}ms（${canvas.width}x${canvas.height}）`);
+
+    const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/png')).then((b) => {
+      if (!b) throw new Error('PNG に変換できませんでした');
+      return b;
+    });
     const name = `${card.id}_${(card.name || 'card').replace(/[\\/:*?"<>|\s]/g, '')}.png`;
     logLine(`PNG書き出し成功（${width}x${height} / ${Math.round(blob.size / 1024)}KB）`);
     return new File([blob], name, { type: 'image/png' });

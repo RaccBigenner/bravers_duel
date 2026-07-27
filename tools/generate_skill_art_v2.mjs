@@ -58,8 +58,30 @@ const STYLES = {
     "one blazing high-chroma accent color — the skill's element — blown out to pure white at its core.",
     'Violent dry-brush ink strokes, flung pigment spatter and flicked droplets carry the motion.',
   ].join(' '),
-  // W: 採用候補。西洋の水彩＋ペン画。画材の雰囲気は残しつつ、
-  //    線を細く正確にして輪郭を立て、飛沫と紙目を抑える（＝眠く見えない）
+  // W2: 採用候補。W が「全体を均一に正確に」描かせた結果、
+  //     デジタル絵に寄って見どころが消えた。密度を意図的に偏らせるのが肝。
+  //     一点だけ描き込み、離れるほど水彩が溶けて紙の白に還る。
+  //     これで「水彩らしさ」と「メリハリ」が同時に立つ。
+  W2: [
+    'Art direction: expressive traditional watercolour on rough cold-pressed paper, with sparing pen-and-ink accents.',
+    'This must read unmistakably as a watercolour painting and never as a digital render:',
+    'transparent pigment, wet-in-wet bleeds, dragged dry-brush edges, runs, backruns and granulation,',
+    'and large areas of bare white paper left completely untouched.',
+    'Deliberately uneven finish — this is where the picture gets its punch.',
+    'ONE small area, the point of impact, is drawn tight with crisp pen line and full detail;',
+    'everything further from it dissolves fast into loose wash, then into bare paper.',
+    'Never render the whole frame at an even level of detail.',
+    'Extreme value contrast: the darkest near-black wash sits directly against untouched white paper at that focal point.',
+    'The brushwork itself carries the movement — long directional strokes and wet streaks trailing the action,',
+    'pigment dragged along the line of force.',
+    'The palette is greyed and restrained overall so that the single element colour reads as pure and blazing.',
+    // 風・土・守のように色を持たない属性だと、この指定だけでは画面が完全にモノクロに落ちる。
+    // 必ず有彩色を一点、焦点の近くに置かせる。
+    'Even when the skill itself has no colour of its own, the picture must still carry one clear saturated accent —',
+    'heraldry on a banner or surcoat, a lantern flame, blood, a strip of sky — placed at or near the focal point.',
+    'The whole image must never fall to grey.',
+  ].join(' '),
+  // W: 線は立ったが全体が均一に描き込まれ、メリハリが死んだ。不採用
   W: [
     'Art direction: traditional Western watercolour and pen-and-ink illustration —',
     'the look of a European fantasy book plate, not of East Asian brush painting.',
@@ -89,6 +111,44 @@ const BRIEF_FILE = argValue('briefs') ?? 'tools/skill_art_briefs.json';
 const SUFFIX = argValue('suffix') ?? '';
 const briefs = JSON.parse(readFileSync(BRIEF_FILE, 'utf8'));
 
+/**
+ * カードの「話の大きさ」と「温度」を性能から決める。
+ *
+ * 大事な区別: ここで決めるのは「世界のどれだけが巻き込まれるか」であって、
+ * 「絵の勢い」ではない。前のバージョンは安いカードに
+ * 「中庭より大きくするな・空に広げるな」と書いてしまい、絵まで大人しくなった。
+ * 勢いは常に最大。安いカードは"小さく描く"のではなく"寄って描く"。
+ */
+function toneOf(card) {
+  const ap = card.costAp ?? 0;
+  let scope;
+  if (card.rarity === 'USR' || ap >= 7) {
+    scope = 'Scope: cataclysmic — a landscape-altering event that dwarfs everyone present.';
+  } else if (ap >= 5) {
+    scope = 'Scope: large — the effect towers over the people and reshapes the ground they stand on.';
+  } else if (ap >= 3) {
+    scope = 'Scope: a duel — one or two combatants and the ground immediately around them.';
+  } else if (ap >= 1) {
+    scope =
+      'Scope: intimate — one person and one action. Do not shrink the picture to match: move the camera in close so this small act still fills the entire frame.';
+  } else {
+    scope =
+      'Scope: a single small gesture. Get right on top of it — macro close, so that something tiny takes over the whole frame.';
+  }
+  const mood = {
+    attack: 'Mood: committed violence at the instant it lands.',
+    guard: 'Mood: bracing under weight — the strain of holding, not the calm of standing.',
+    heal: 'Mood: warm and hushed, but urgent; someone is being pulled back from the edge.',
+    support: 'Mood: focused and deliberate rather than violent — yet still charged, the light doing the shouting.',
+  }[card.valueType];
+  // 規模がどうであれ、画面は毎回殴ってくること。これを外すと絵が眠くなる。
+  const force =
+    'Whatever the scope, the composition itself must hit hard: the action crosses or breaks the edges of the frame,' +
+    ' bodies are caught off balance in mid-movement rather than posed, perspective is steep,' +
+    ' and something is coming toward the viewer. Never a static, symmetrical, evenly-lit tableau.';
+  return `${scope} ${mood} ${force}`;
+}
+
 function buildPrompt(card, style = STYLE) {
   const brief = briefs[card.id]?.brief;
   if (!brief) throw new Error(`指示書がありません: ${BRIEF_FILE} の ${card.id}`);
@@ -99,11 +159,11 @@ function buildPrompt(card, style = STYLE) {
     'A viewer must be able to tell at a glance who is doing what, where they are,',
     'and what is happening to the world because of it. Show the cause and its result in the same frame.',
     brief,
-    // 画材は和（水彩と墨）だが、世界は西洋ファンタジー。ここを固定しないと
-    // 「Japanese watercolor」に引きずられて和風の城や装束が出てくる。
+    toneOf(card),
+    // 世界は西洋ファンタジー。ここを固定しないと和風の城や装束が出てくる。
     'World: Western high fantasy — European medieval stonework, cathedrals, castles, plate and mail armour,',
     'cloaks, straight swords, lances and round or kite shields.',
-    'No East Asian architecture, costume, katana, kimono or temple roofs anywhere in the picture.',
+    'No East Asian architecture, costume, katana, kimono, temple roofs or samurai anywhere in the picture.',
     'Faces stay hidden — turned away, backlit, shadowed or cropped. Never a rendered facial close-up.',
     STYLES[style],
     'Absolutely no text, letters, numbers, logos or watermarks. No card frame, no border.',
@@ -145,8 +205,9 @@ async function generateOne(card) {
   if (!b64) throw new Error('画像データがありません');
 
   const png = Buffer.from(b64, 'base64');
-  const width = isUsr ? 768 : 1152;
-  const webp = await sharp(png).resize({ width }).webp({ quality: 82 }).toBuffer();
+  // 縮小しすぎ・圧縮しすぎだと線画が眠くなるので、原寸に近いまま残す
+  const width = isUsr ? 896 : 1344;
+  const webp = await sharp(png).resize({ width }).webp({ quality: 90 }).toBuffer();
   writeFileSync(`${OUT_DIR}/${card.id}${SUFFIX}.webp`, webp);
   // 確認用に別フォルダへ出した時は「生成済み」印を付けない（--skip-existing が飛ばしてしまうため）
   if (OUT_DIR === 'assets/card_images') writeFileSync(`${MARK_DIR}/${card.id}`, new Date().toISOString());

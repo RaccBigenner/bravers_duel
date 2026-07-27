@@ -12,7 +12,7 @@ if (!dir) {
   process.exit(1);
 }
 const cards = JSON.parse(readFileSync('data/cards.json', 'utf8'));
-const briefs = JSON.parse(readFileSync('tools/skill_art_briefs.json', 'utf8'));
+const briefs = JSON.parse(readFileSync(process.argv[3] ?? 'tools/skill_art_briefs.json', 'utf8'));
 const byId = Object.fromEntries(cards.map((c) => [c.id, c]));
 
 const ids = readdirSync(dir)
