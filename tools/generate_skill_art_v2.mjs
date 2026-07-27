@@ -50,15 +50,26 @@ const STYLES = {
     'over confident dry-brush ink linework. Bold flat color shapes, not airbrushed gradients.',
     'Limited palette per image: two dominant hues plus one accent. Generous untouched paper as negative space.',
   ].join(' '),
-  // A2: A の派手さ強化版。画材は同じまま、光と墨を暴れさせる
+  // A2: 派手にはなったが、墨の飛沫と紙目が強すぎて水墨画（＝戦国）に寄り、
+  //     細部が潰れて解像度が低く見えた。不採用
   A2: [
     'Art direction: Japanese watercolor-and-ink illustration with the punch of a concert poster.',
     'Transparent watercolor washes on visibly textured paper, but the key light is pushed hard:',
-    "one blazing high-chroma accent color — the skill's element — blown out to pure white at its core,",
-    'bleeding and flaring into the surrounding wash, throwing colored light onto everything nearby.',
+    "one blazing high-chroma accent color — the skill's element — blown out to pure white at its core.",
     'Violent dry-brush ink strokes, flung pigment spatter and flicked droplets carry the motion.',
-    'Deep near-black ink darks placed directly against bare paper for maximum contrast.',
-    'Bold, instantly readable silhouettes; the image must still read at thumbnail size.',
+  ].join(' '),
+  // W: 採用候補。西洋の水彩＋ペン画。画材の雰囲気は残しつつ、
+  //    線を細く正確にして輪郭を立て、飛沫と紙目を抑える（＝眠く見えない）
+  W: [
+    'Art direction: traditional Western watercolour and pen-and-ink illustration —',
+    'the look of a European fantasy book plate, not of East Asian brush painting.',
+    'Fine, controlled pen linework: thin deliberate contour lines that keep every object crisply readable,',
+    'with careful cross-hatching for shadow. Clean transparent watercolour washes laid in confident flat shapes.',
+    'Only a subtle paper tooth — no heavy grain, no ink spatter, no calligraphic brush strokes, no muddy blooms.',
+    'Sharp edges and clean silhouettes; it must look precisely drawn, never like a loose sketch.',
+    'The overall colour is restrained and slightly desaturated so that one luminous accent —',
+    "the skill's own element, glowing to near-white at its core and casting its colour on nearby surfaces —",
+    'carries all of the drama by itself.',
   ].join(' '),
   // B: 不採用。TCG王道のデジタル厚塗り
   B: [
@@ -88,6 +99,11 @@ function buildPrompt(card, style = STYLE) {
     'A viewer must be able to tell at a glance who is doing what, where they are,',
     'and what is happening to the world because of it. Show the cause and its result in the same frame.',
     brief,
+    // 画材は和（水彩と墨）だが、世界は西洋ファンタジー。ここを固定しないと
+    // 「Japanese watercolor」に引きずられて和風の城や装束が出てくる。
+    'World: Western high fantasy — European medieval stonework, cathedrals, castles, plate and mail armour,',
+    'cloaks, straight swords, lances and round or kite shields.',
+    'No East Asian architecture, costume, katana, kimono or temple roofs anywhere in the picture.',
     'Faces stay hidden — turned away, backlit, shadowed or cropped. Never a rendered facial close-up.',
     STYLES[style],
     'Absolutely no text, letters, numbers, logos or watermarks. No card frame, no border.',

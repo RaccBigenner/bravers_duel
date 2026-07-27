@@ -10,7 +10,7 @@ import { toSvg } from 'html-to-image';
 import { CardFrame } from '../../web/src/CardFrame';
 import type { MasterCard } from './api';
 import { toRenderCard } from './cardView';
-import { flattenBackgrounds } from './flattenBackgrounds';
+import { flattenBackgrounds, inlineImages } from './flattenBackgrounds';
 import { logLine } from './log';
 
 /** 書き出す横幅（px）。カードの基準は340pxなので約3倍の解像度になる */
@@ -184,7 +184,17 @@ export async function buildCardPngFile(card: MasterCard): Promise<File> {
 
     // iPhone は CSS の背景を画像化してくれないので、先に本物の <img> に置き換える
     await flattenBackgrounds(node);
+    // 絵の中身も自前で埋め込む（ライブラリ任せだと失敗が黙殺され、書き出しで欠ける）
+    await inlineImages(node);
     await waitForAssets(node); // 差し込んだ <img> の読み込みを待つ
+
+    // 埋め込み漏れが無いか最後に確かめる。残っていたら書き出した絵で必ず欠ける
+    const leftover = [...node.querySelectorAll('img')].filter((i) => i.src && !i.src.startsWith('data:'));
+    const leftoverBg = [node, ...node.querySelectorAll<HTMLElement>('*')].filter((el) => {
+      const bg = getComputedStyle(el).backgroundImage;
+      return bg && bg !== 'none';
+    });
+    logLine(`埋め込み漏れ: 絵${leftover.length}件 / 背景${leftoverBg.length}件`);
 
     const rect = node.getBoundingClientRect();
     logLine(`書き出しサイズ: ${Math.round(rect.width)}x${Math.round(rect.height)}`);

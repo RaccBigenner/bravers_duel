@@ -58,6 +58,16 @@ export function subscribeLog(listener: Listener): () => void {
   };
 }
 
+/**
+ * 起動したプログラムの版を記録する。
+ * 「直したはずなのに直っていない」時、**古いプログラムが端末に残っているだけ**なのか
+ * 本当に直っていないのかを、ログだけで区別できるようにするため。
+ */
+export function logAppVersion(): void {
+  const src = document.querySelector<HTMLScriptElement>('script[type=module][src]')?.src ?? '不明';
+  logLine(`起動: ${src.split('/').pop()}`);
+}
+
 /** 想定外のエラーも取りこぼさないように、画面全体の例外も拾う */
 export function installGlobalErrorLog(): void {
   window.addEventListener('error', (e) => {

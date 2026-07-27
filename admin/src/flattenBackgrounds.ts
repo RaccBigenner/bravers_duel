@@ -113,17 +113,43 @@ function gradientToDataUrl(css: string, width: number, height: number): string |
 async function urlToDataUrl(url: string): Promise<string | null> {
   try {
     const res = await fetch(url);
-    if (!res.ok) return null;
+    if (!res.ok) {
+      logLine(`  取り込み失敗 ${res.status}: ${url.split('/').pop()}`);
+      return null;
+    }
     const blob = await res.blob();
-    return await new Promise<string>((resolve, reject) => {
+    const dataUrl = await new Promise<string>((resolve, reject) => {
       const fr = new FileReader();
       fr.onload = () => resolve(String(fr.result));
       fr.onerror = () => reject(new Error('読み出し失敗'));
       fr.readAsDataURL(blob);
     });
-  } catch {
+    logLine(`  取り込み ${Math.round(blob.size / 1024)}KB: ${decodeURIComponent(url.split('/').pop() ?? '')}`);
+    return dataUrl;
+  } catch (e) {
+    logLine(`  取り込み例外: ${url.split('/').pop()} ${e instanceof Error ? e.message : String(e)}`);
     return null;
   }
+}
+
+/**
+ * `<img>` の中身も自前でデータに埋め込む。
+ * ライブラリ任せだと失敗しても黙って元のURLが残り、書き出した絵で真っ白になる。
+ * ここで1枚ずつ記録しておけば、実機で何が落ちたか後から分かる。
+ */
+export async function inlineImages(root: HTMLElement): Promise<void> {
+  const imgs = [...root.querySelectorAll('img')].filter((img) => img.src && !img.src.startsWith('data:'));
+  logLine(`絵の取り込み: ${imgs.length}枚`);
+  let failed = 0;
+  for (const img of imgs) {
+    const dataUrl = await urlToDataUrl(img.src);
+    if (dataUrl) {
+      img.src = dataUrl;
+    } else {
+      failed++;
+    }
+  }
+  if (failed) logLine(`【注意】${failed}枚は取り込めませんでした（書き出しで欠けます）`);
 }
 
 /** background-size から object-fit を決める */
