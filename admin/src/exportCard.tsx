@@ -160,10 +160,10 @@ async function svgToPngBlob(svgDataUrl: string, width: number, height: number): 
 }
 
 /**
- * カード1枚を透過PNGにして、そのままダウンロードさせる。
+ * カード1枚を透過PNGのファイルにする（保存はしない）。
  * 画面には出さない場所に描いてから撮り、終わったら必ず片付ける。
  */
-export async function downloadCardPng(card: MasterCard): Promise<void> {
+export async function buildCardPngFile(card: MasterCard): Promise<File> {
   logLine(`── PNG書き出し開始: ${card.id} ${card.name}`);
   const holder = document.createElement('div');
   // 画面外に置く。display:none だと大きさが出ず撮れないので、見えない位置に置く
@@ -204,16 +204,9 @@ export async function downloadCardPng(card: MasterCard): Promise<void> {
     logLine(`下絵の作成 ${Date.now() - started}ms（${Math.round(svgDataUrl.length / 1024)}KB）`);
 
     const blob = await svgToPngBlob(svgDataUrl, width, height);
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${card.id}_${(card.name || 'card').replace(/[\\/:*?"<>|\s]/g, '')}.png`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    // すぐ消すと保存が始まらない端末があるので少し置いてから解放する
-    window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+    const name = `${card.id}_${(card.name || 'card').replace(/[\\/:*?"<>|\s]/g, '')}.png`;
     logLine(`PNG書き出し成功（${width}x${height} / ${Math.round(blob.size / 1024)}KB）`);
+    return new File([blob], name, { type: 'image/png' });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     logLine(`【失敗】PNG書き出し: ${message}`);
@@ -222,4 +215,51 @@ export async function downloadCardPng(card: MasterCard): Promise<void> {
     root.unmount();
     holder.remove();
   }
+}
+
+// ---- 保存のしかた ----------------------------------------------------------
+//
+// ブラウザから「写真」アプリへ直接書き込むことはできない。
+// スマホでは **共有シートに渡す**のが唯一の道で、そこで「画像を保存」を選ぶと写真に入る。
+// PC には共有シートが無いので、その場合は普通のダウンロードにする。
+
+/** この端末で共有シートにファイルを渡せるか */
+export function canShareImage(file: File): boolean {
+  return typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] });
+}
+
+/**
+ * 共有シートを開く。写真に保存するにはここから「画像を保存」を選んでもらう。
+ * 戻り値: 共有シートを開けたか（利用者が取り消した場合も true）
+ *
+ * 注意: iPhone は「ボタンを押した直後」でないと共有シートを開けない。
+ * 画像を作るのに数秒かかるので、**作り終えてから改めて押してもらう**作りにしている。
+ */
+export async function shareImageFile(file: File): Promise<boolean> {
+  try {
+    await navigator.share({ files: [file], title: file.name });
+    logLine('共有シートを開いた');
+    return true;
+  } catch (e) {
+    if (e instanceof Error && e.name === 'AbortError') {
+      logLine('共有は取り消された');
+      return true; // 利用者が閉じただけ。失敗ではない
+    }
+    logLine(`共有シートを開けなかった: ${e instanceof Error ? `${e.name} ${e.message}` : String(e)}`);
+    return false;
+  }
+}
+
+/** 普通のダウンロード（PC向け。スマホでは「ファイル」アプリに入る） */
+export function downloadFile(file: File): void {
+  const url = URL.createObjectURL(file);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = file.name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  // すぐ消すと保存が始まらない端末があるので少し置いてから解放する
+  window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+  logLine(`ファイルとして保存: ${file.name}`);
 }

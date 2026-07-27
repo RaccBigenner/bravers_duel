@@ -249,6 +249,15 @@ textarea { resize: vertical; }
 
 .img-upload { text-align: center; }
 
+/* カード画像を書き出した後の保存メニュー */
+.png-ready {
+  margin-top: 10px; padding: 10px; text-align: left;
+  background: var(--panel2); border: 1px solid var(--gold); border-radius: 10px;
+}
+.png-ready .hint-small { margin: 0 0 8px; color: var(--text); }
+.png-ready .a-primary { margin-top: 0; }
+.png-ready .a-btn { margin-top: 8px; }
+
 /* ---- 動作ログ（スマホで原因を追うため） ---- */
 
 .log-inline { margin-top: 10px; text-align: left; border-top: 1px solid var(--line); padding-top: 10px; }

@@ -22,7 +22,7 @@ import {
   type MasterSet,
 } from './api';
 import { isBaseValueGoverned, theoreticalBaseValue } from './balance';
-import { downloadCardPng } from './exportCard';
+import { buildCardPngFile, canShareImage, downloadFile, shareImageFile } from './exportCard';
 import { clearLog, getLog, subscribeLog } from './log';
 import {
   CardGallery,
@@ -710,6 +710,8 @@ function CardEditor({ card, isDraft, saving, imageRev, onSave, onCancel, onDelet
   const originalId = card.id;
   const [uploading, setUploading] = useState(false);
   const [exporting, setExporting] = useState(false);
+  /** 書き出し済みで、まだ保存していないカード画像（スマホは押し直しで共有シートを開く） */
+  const [pngFile, setPngFile] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const up = (patch: Partial<MasterCard>) => setD((prev) => ({ ...prev, ...patch }));
 
@@ -759,17 +761,50 @@ function CardEditor({ card, isDraft, saving, imageRev, onSave, onCancel, onDelet
           disabled={exporting}
           onClick={async () => {
             setExporting(true);
+            setPngFile(null);
             try {
-              await downloadCardPng(d);
+              const file = await buildCardPngFile(d);
+              if (canShareImage(file)) {
+                // スマホ: 画像ができたことを伝え、改めて押してもらう。
+                // 共有シートは「ボタンを押した直後」でないと開けないため、ここでは開かない
+                setPngFile(file);
+              } else {
+                downloadFile(file); // PC はそのままダウンロード
+              }
             } catch (e) {
-              alert(`PNGの書き出しに失敗しました\n\n${e instanceof Error ? e.message : String(e)}`);
+              alert(`カード画像の書き出しに失敗しました\n\n${e instanceof Error ? e.message : String(e)}`);
             } finally {
               setExporting(false);
             }
           }}
         >
-          {exporting ? '書き出し中…' : 'カードを透過PNGで保存'}
+          {exporting ? '書き出し中…' : 'カード画像を作る（透過PNG）'}
         </button>
+
+        {pngFile && (
+          <div className="png-ready">
+            <p className="hint-small">
+              画像ができました。「写真に保存」を押して、出てきたメニューから
+              <b>「画像を保存」</b>を選ぶと写真アプリに入ります。
+            </p>
+            <button
+              className="a-primary"
+              onClick={async () => {
+                const ok = await shareImageFile(pngFile);
+                if (!ok) {
+                  downloadFile(pngFile); // 共有シートが開けない端末はファイル保存に逃がす
+                  alert('共有メニューを開けなかったので、ファイルとして保存しました。');
+                }
+                setPngFile(null);
+              }}
+            >
+              写真に保存
+            </button>
+            <button className="a-btn wide" onClick={() => { downloadFile(pngFile); setPngFile(null); }}>
+              ファイルとして保存
+            </button>
+          </div>
+        )}
         {!imageRev && <p className="hint-small">このカードにはまだ画像がありません。</p>}
         <LogPanel compact />
       </div>
