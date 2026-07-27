@@ -2113,3 +2113,100 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
 .rotate-hint img { width: 54px; height: 54px; object-fit: contain; opacity: 0.9; }
 .rotate-hint p { margin: 0; font-size: 15px; font-weight: 700; line-height: 1.7; }
 .rotate-hint small { color: #99a; font-size: 12px; }
+
+/* 効果でコストが変わっている手札は、数字の色で知らせる（安くなった=水色 / 高くなった=赤） */
+.cost-chip.cheaper { background: #0b3b47; border-color: #6fe0ff; color: #8ff0ff; }
+.cost-chip.pricier { background: #4a1c16; border-color: #ff9a8f; color: #ffb3a8; }
+
+/* ============ 2026-07-27 ポケポケ分析を受けた盤面の作り直し ============ */
+
+/* 【1-A】ゾーン列を画面の端へ寄せて、はみ出させる。
+ * 今までは山札・AP・トラッシュを全部画面内に収めるため縮小していて、
+ * 横幅の23%を食ったうえに小さくて読めなかった。
+ * 端に寄せて半分だけ見せれば、盤面の主役（キャラカード）を大きくできる。 */
+.zone-col {
+  gap: 10px;
+  padding: 0;
+  width: 26px; /* レイアウトが確保する幅。カード自体はここから外へはみ出す */
+}
+.zone-col .pile { width: 26px; }
+/* パイル自体はカードとして読める大きさのまま、外側へはみ出させる */
+.pile-card { width: 56px; }
+.zone-col .pile.deck .pile-card { width: 56px; }
+.pile-card.empty,
+.pile-card.trash-top { height: 78px; }
+.my-area .zone-col .pile-card { margin-left: -6px; } /* 右端から外へはみ出す */
+.enemy-area .zone-col .pile-card { margin-left: 0; }
+.enemy-area .zone-col .pile { display: flex; justify-content: flex-start; }
+.enemy-area .zone-col .pile-card { margin-left: -24px; } /* 左端から外へはみ出す */
+
+/* 文字ラベル（山札/AP/トラッシュ）は消して、枚数だけ大きく見せる */
+.pile-label { display: none; }
+.pile-count {
+  top: auto;
+  bottom: -4px;
+  right: auto;
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 22px;
+  font-size: 13px;
+  padding: 1px 5px;
+  background: rgba(10, 12, 18, 0.92);
+  border-color: #778;
+}
+.pile-count.low { border-color: #f66; color: #f99; }
+
+/* 【1-B】HPは「小さいバー＋極小の数字」ではなく、大きい数字を主役にする。
+ * βで2回指摘された「HPが見えない」の本丸。数字が大きければ多少重なっても読める。 */
+.char-status { bottom: -16px; }
+.status-row { margin-top: 0; }
+.hp-num {
+  font-size: 17px;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  text-shadow:
+    0 0 3px #000, 0 1px 2px #000,
+    -1.2px -1.2px 0 #000, 1.2px -1.2px 0 #000, -1.2px 1.2px 0 #000, 1.2px 1.2px 0 #000;
+}
+.hp-bar { height: 4px; }
+.attr-icons img { width: 14px; height: 14px; }
+/* 控えは小さいので、数字も一段小さく（それでも今までより大きい） */
+.char-slot:not(.actor) .hp-num { font-size: 13px; }
+.char-slot:not(.actor) .attr-icons img { width: 11px; height: 11px; }
+
+/* flexアイテムは既定で min-width:auto なので、中身（パイル画像）の幅まで勝手に広がる。
+ * 0 にして初めて「箱は26px・中身は外へはみ出す」が成立する */
+.zone-col,
+.zone-col .pile { min-width: 0; }
+
+/* 【1-C】上の情報バーを詰める。常に見せるのはターン数とフェーズだけで足りる。
+ * 空いた縦をカードの大きさに回す。 */
+.info-bar { padding: 2px 6px; gap: 4px; font-size: 11px; }
+.info-bar .deck-name { font-size: 11px; }
+.phase-pill { padding: 1px 3px 1px 2px; gap: 2px; }
+.phase-pill .turn-num { font-size: 10px; padding: 0 5px; }
+.phase-pill em { font-size: 9.5px; padding: 0 5px; }
+.chip.small { padding: 1px 7px; font-size: 10px; }
+
+/* HPの数字を大きくしたぶん、ぶら下がりを浅くして手札との距離を戻す */
+.char-status { bottom: -13px; }
+.my-area .char-slot.actor .char-status { padding: 1px 3px 0; }
+@media (max-height: 660px) {
+  /* 低い画面ではHPの数字を一段小さく（それでも従来の9pxより大きい） */
+  .hp-num { font-size: 14px; }
+  .char-slot:not(.actor) .hp-num { font-size: 11px; }
+  .char-status { bottom: -11px; }
+}
+
+/* 320px 幅のような極端に狭い画面では、はみ出しを控えめにして
+ * 山札・APが画面の外へ完全に出てしまうのを防ぐ */
+@media (max-width: 340px) {
+  .pile-card { width: 46px; }
+  .zone-col .pile.deck .pile-card { width: 46px; }
+  .my-area .zone-col .pile-card { margin-left: 0; }
+  .enemy-area .zone-col .pile-card { margin-left: -18px; }
+}
+
+/* フィールド枠は中央へ。左端に寄っていて座りが悪かった
+ * （ゾーン列のラベルを消したことで、余計に浮いて見えるようになった） */
+.center-strip { justify-content: center; }

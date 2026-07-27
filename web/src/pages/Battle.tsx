@@ -91,9 +91,13 @@ function cardWidthFor(vh: number, vw: number): number {
   // 560px より低い画面（古い小型端末・分割画面など）は、段階を切らずに高さへ比例させる。
   // 84px 固定のままだと盤面が縦に収まらず、手札が自分のキャラのHPを覆ってしまう
   // （320x480 で実測して確認）。
+  // 2026-07-27: 上の情報バーとゾーン列を詰めたぶん、各段を少しずつ引き上げた。
+  // 盤面の主役はキャラカードなので、空いた縦は全部ここに回す。
   const byHeight =
-    vh >= 840 ? 112 : vh >= 760 ? 104 : vh >= 700 ? 96 : vh >= 560 ? 84 : Math.max(48, Math.floor((vh - 175) / 5.3));
-  const byWidth = Math.floor((Math.min(vw, 440) - 70) / 3.2);
+    vh >= 840 ? 120 : vh >= 760 ? 112 : vh >= 700 ? 104 : vh >= 620 ? 86 : vh >= 560 ? 76 : Math.max(44, Math.floor((vh - 175) / 6.0));
+  // -70 → -44: ゾーン列（山札・AP・トラッシュ）を画面端へはみ出させて、
+  // レイアウトが確保する幅を 45px×2 から 26px×2 に減らしたぶん、カードを大きくできる
+  const byWidth = Math.floor((Math.min(vw, 440) - 44) / 3.2);
   return Math.min(byHeight, byWidth);
 }
 
@@ -507,6 +511,36 @@ function BattleInner({ setup, onExit, onRematch }: {
     },
   };
 
+  /**
+   * 手札1枚ごとの「今この瞬間の実効値」（消費APと予想ダメージ）。
+   * カードに書かれた素の値をそのまま出すと、フィールドやスイッチでコストが変わっている時に
+   * 表示と実際が食い違う（実際に「新たな地平線」で-1されていても素の数字が出ていた）。
+   * predictSkill は状態を複製するので、値が変わりうる要素をキーにして計算を絞る。
+   */
+  const liveHand = useMemo(() => {
+    const map = new Map<number, { cost: number; value: number }>();
+    me.hand.forEach((id, i) => {
+      const card = safeCard(id);
+      if (!card || card.type !== 'skill') return;
+      try {
+        const pred = predictSkill(state, PLAYER, card);
+        if (pred) map.set(i, { cost: pred.cost, value: pred.kind === 'attack' ? pred.value : card.baseValue });
+      } catch {
+        /* 予測できないカードは素の値のまま */
+      }
+    });
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    me.hand.join(','),
+    me.actorIndex,
+    me.ap.length,
+    me.nextSkillCostDelta,
+    state.field?.cardId,
+    state.turn,
+    state.phase,
+  ]);
+
   const handPlayable = useMemo(() => {
     const map = new Map<number, BattleAction[]>();
     for (const a of myActions) {
@@ -766,7 +800,11 @@ function BattleInner({ setup, onExit, onRematch }: {
             const chargeable = isMyTurn && state.phase === 'charge' && !busy;
             const picked = chargeSel.has(i);
             const showCost = card.type === 'skill' && isMyTurn && state.phase === 'play' && !busy;
-            const lackAp = card.type === 'skill' && me.ap.length < card.costAp;
+            const live = liveHand.get(i);
+            // 表示も判定も「実際に払う額」で行う（素の costAp は使わない）
+            const cost = live?.cost ?? (card.type === 'skill' ? card.costAp : 0);
+            const lackAp = card.type === 'skill' && me.ap.length < cost;
+            const costChanged = card.type === 'skill' && live !== undefined && live.cost !== card.costAp;
             const off = i - (n - 1) / 2;
             const arcRot = off * 4;
             const arcY = off * off * 2.4 + (picked ? -26 : 0);
@@ -788,11 +826,24 @@ function BattleInner({ setup, onExit, onRematch }: {
                 onClick={() => tapHand(i)}
                 {...handPeek}
               >
-                <CardFrame card={card} width={handW} upright />
+                <CardFrame card={card} width={handW} upright live={live} />
                 {picked && <img className="pick-badge" src={IMG('icon_bolt')} alt="チャージ予定" />}
                 {showCost && (
-                  <span className={`cost-chip ${lackAp ? 'lack' : ''}`} title={lackAp ? 'APが足りない' : `コスト${card.costAp}`}>
-                    {card.costAp}
+                  <span
+                    className={[
+                      'cost-chip',
+                      lackAp ? 'lack' : '',
+                      costChanged ? (live!.cost < card.costAp ? 'cheaper' : 'pricier') : '',
+                    ].join(' ')}
+                    title={
+                      costChanged
+                        ? `コスト${card.costAp} → ${cost}（効果で変化）`
+                        : lackAp
+                          ? 'APが足りない'
+                          : `コスト${cost}`
+                    }
+                  >
+                    {cost}
                   </span>
                 )}
               </div>

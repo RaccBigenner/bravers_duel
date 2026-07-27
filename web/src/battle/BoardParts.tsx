@@ -169,7 +169,9 @@ export function Formation({ side, state, pops, targeting, onTap, koShown, cardW,
               ].join(' ')}
             >
               <div className="char-card">
-                <CardFrame card={cardById(c.cardId)} width={frontW} />
+                {/* 最大HPは装備や効果で変わる（ドッソはトラッシュ枚数で最大20まで伸びる）。
+                 * カードに書かれた素のHPを出すと盤面のHPバーと食い違うので、実効値を渡す */}
+                <CardFrame card={cardById(c.cardId)} width={frontW} live={{ hp: maxHp }} />
               </div>
               {koVisible && (
                 <img

@@ -13,6 +13,7 @@ import {
   frameImage,
   innerImage,
   isFullArt,
+  kiraOverlay,
   rarityGradient,
   skillPlate,
   valueTypeLabel,
@@ -23,6 +24,20 @@ interface Props {
   width?: number;
   /** 大型（横長）カードを90度回転して縦持ちで表示する（手札用） */
   upright?: boolean;
+  /**
+   * 「今この瞬間に実際に適用される値」。カードに書かれた素の値と違う時だけ、
+   * 数字をこの値に差し替えて色を変える。
+   * 例: 新たな地平線でコスト-1／ドッソの最大HPがトラッシュ枚数で増える／属性でダメージが伸びる。
+   * 素の値のまま出していると、盤面と手札で数字が食い違って嘘になる。
+   */
+  live?: { hp?: number; cost?: number; value?: number };
+}
+
+/** 実効値の色。良くなっていれば水色、悪くなっていれば赤。同じなら白（＝素の表示） */
+function liveColor(base: number, live: number | undefined, higherIsBetter: boolean): string {
+  if (live === undefined || live === base) return '#fff';
+  const better = higherIsBetter ? live > base : live < base;
+  return better ? '#8ff0ff' : '#ff9a8f';
 }
 
 /**
@@ -31,7 +46,7 @@ interface Props {
  */
 const BASE_WIDTH = 340;
 
-export function CardFrame({ card, width = 300, upright = false }: Props) {
+export function CardFrame({ card, width = 300, upright = false, live }: Props) {
   const isLandscape = card.type === 'character' && card.size === 'legendaryLarge';
   const scale = width / BASE_WIDTH;
   const w = BASE_WIDTH;
@@ -41,6 +56,7 @@ export function CardFrame({ card, width = 300, upright = false }: Props) {
   const outerH = isLandscape && !rotate ? w : h;
   // "1-A041-SR" → "1-A041 SR"（右下のコレクター表記）
   const collectorNo = card.id.replace(/-([A-Z]+)$/, ' $1');
+  const kira = kiraOverlay(card);
 
   return (
     <div
@@ -63,10 +79,10 @@ export function CardFrame({ card, width = 300, upright = false }: Props) {
         }}
       >
         <RarityFrame rarity={card.rarity} w={w} collectorNo={collectorNo}>
-          {card.type === 'character' && <CharacterContent card={card} w={w} h={h} landscape={isLandscape} />}
-          {card.type === 'skill' && <SkillContent card={card} w={w} h={h} />}
-          {card.type === 'equipment' && <EquipmentContent card={card} w={w} />}
-          {card.type === 'field' && <FieldContent card={card} w={w} />}
+          {card.type === 'character' && <CharacterContent card={card} w={w} h={h} landscape={isLandscape} kira={kira} live={live} />}
+          {card.type === 'skill' && <SkillContent card={card} w={w} h={h} kira={kira} live={live} />}
+          {card.type === 'equipment' && <EquipmentContent card={card} w={w} kira={kira} />}
+          {card.type === 'field' && <FieldContent card={card} w={w} kira={kira} />}
         </RarityFrame>
       </div>
     </div>
@@ -100,6 +116,8 @@ function RarityFrame({ rarity, w, collectorNo, children }: {
           backgroundImage: inner ? `url(${inner})` : undefined,
           backgroundSize: 'cover',
           overflow: 'hidden',
+          // キラの合成をこの中だけで完結させる（外の背景と混ざらないように）
+          isolation: 'isolate',
         }}
       >
         {children}
@@ -160,6 +178,45 @@ function Outlined({ text, size, color = '#000', stroke = '#fff', weight = 700, s
 /** 名前用の黒影（高レア画像上の白文字） */
 const nameShadow = '1px 1px 3px #000, -1px 1px 3px #000, 1px -1px 3px #000, -1px -1px 3px #000';
 
+// ---- キラ（ホロ）の層 ------------------------------------------------------
+
+/**
+ * キラの合成方法と強さ。ここだけ変えれば全カードの見え方が変わる。
+ * テクスチャ（`kira_diamond.webp`）自体が淡いので、合成は強め（等倍）で丁度いい。
+ * 実機で multiply / overlay / hard-light / soft-light / screen / color-dodge を
+ * 6枚に当てて見比べ、面がはっきり出て絵も潰れない hard-light を採用した。
+ */
+const KIRA_BLEND = 'hard-light';
+const KIRA_OPACITY = 1;
+
+/**
+ * キラ（ホロ）の層。
+ *
+ * **必ず「カード絵のすぐ上」に置き、名前・属性・HP・値プレート・説明より下にする**（社長指示）。
+ * つまり各コンテンツの中で、絵を描いた直後に差し込む。全面絵のカードはカード全面、
+ * 絵が一部だけのカード（SSRスキルの型抜き絵・装備の丸絵）はその絵の形に沿って乗る。
+ * 掛けないカードでは `src` が null なので何も描かない。
+ */
+function KiraLayer({ src, style }: { src?: string | null; style?: CSSProperties }) {
+  if (!src) return null;
+  return (
+    <div
+      aria-hidden
+      style={{
+        position: 'absolute',
+        inset: 0,
+        backgroundImage: `url(${src})`,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        mixBlendMode: KIRA_BLEND,
+        opacity: KIRA_OPACITY,
+        pointerEvents: 'none',
+        ...style,
+      }}
+    />
+  );
+}
+
 function AttributeIcons({ attrs, size, gap }: { attrs: string[]; size: number; gap: number }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'center', gap }}>
@@ -217,7 +274,9 @@ function DescriptionArea({ effectText, flavorText, w, wide = false }: {
 
 // ---------------------------------------------------------------- キャラクター
 
-function CharacterContent({ card, w, h, landscape }: { card: CharacterCard; w: number; h: number; landscape: boolean }) {
+function CharacterContent({ card, w, h, landscape, kira, live }: {
+  card: CharacterCard; w: number; h: number; landscape: boolean; kira?: string | null; live?: Props['live'];
+}) {
   const fullArt = isFullArt(card.rarity);
   const gradient = rarityGradient(card.rarity);
 
@@ -230,6 +289,8 @@ function CharacterContent({ card, w, h, landscape }: { card: CharacterCard; w: n
           alt={card.name}
         />
       )}
+      {/* 全面絵ならカード全面に。名前・属性・HPはこの後に描かれるので必ず上に来る */}
+      {fullArt && <KiraLayer src={kira} />}
       <div
         style={{
           position: 'relative',
@@ -267,6 +328,7 @@ function CharacterContent({ card, w, h, landscape }: { card: CharacterCard; w: n
           >
             <div
               style={{
+                position: 'relative',
                 width: '100%',
                 height: '100%',
                 borderRadius: w * 0.008,
@@ -277,7 +339,10 @@ function CharacterContent({ card, w, h, landscape }: { card: CharacterCard; w: n
                 backgroundPosition: 'center',
                 boxSizing: 'border-box',
               }}
-            />
+            >
+              {/* 全面絵でないキャラは、絵の窓の中だけに乗せる */}
+              <KiraLayer src={kira} style={{ borderRadius: w * 0.008 }} />
+            </div>
           </div>
         ) : (
           <div style={{ flex: 1 }} />
@@ -300,9 +365,9 @@ function CharacterContent({ card, w, h, landscape }: { card: CharacterCard; w: n
           }}
         >
           <Outlined
-            text={String(card.hp)}
+            text={String(live?.hp ?? card.hp)}
             size={w * 0.062}
-            color="#fff"
+            color={liveColor(card.hp, live?.hp, true)}
             stroke="rgba(0,0,0,0.85)"
             weight={800}
             style={{ fontFamily: NUM_FONT }}
@@ -351,7 +416,7 @@ const SKILL_ART_SHAPES: Record<
 };
 
 /** タイプ別シェイプで切り抜いたスキル画像（リム付き） */
-function SkillArt({ card, w, h }: { card: SkillCard; w: number; h: number }) {
+function SkillArt({ card, w, h, kira }: { card: SkillCard; w: number; h: number; kira?: string | null }) {
   const shape = SKILL_ART_SHAPES[card.valueType] ?? SKILL_ART_SHAPES.attack;
   const rimWidth = w * 0.011;
   const radius = shape.radius?.(w);
@@ -378,13 +443,16 @@ function SkillArt({ card, w, h }: { card: SkillCard; w: number; h: number }) {
             backgroundPosition: 'center',
             ...shared,
           }}
-        />
+        >
+          {/* 切り抜いた絵の形に沿ってキラを乗せる（リムより内側だけ） */}
+          <KiraLayer src={kira} style={shared} />
+        </div>
       </div>
     </div>
   );
 }
 
-function SkillContent({ card, w, h }: { card: SkillCard; w: number; h: number }) {
+function SkillContent({ card, w, h, kira, live }: { card: SkillCard; w: number; h: number; kira?: string | null; live?: Props['live'] }) {
   const fullArt = card.rarity === 'USR';
 
   return (
@@ -396,9 +464,11 @@ function SkillContent({ card, w, h }: { card: SkillCard; w: number; h: number })
           alt={card.name}
         />
       )}
+      {/* 全面絵ならカード全面に。コスト・名前・属性・値プレート・説明はこの後なので必ず上に来る */}
+      {fullArt && <KiraLayer src={kira} />}
 
-      {/* 中段のスキル画像（USR以外）。タイプ別のシェイプで切り抜く */}
-      {!fullArt && <SkillArt card={card} w={w} h={h} />}
+      {/* 中段のスキル画像（USR以外）。タイプ別のシェイプで切り抜く。キラは絵の形に沿わせる */}
+      {!fullArt && <SkillArt card={card} w={w} h={h} kira={kira} />}
 
       <div
         style={{
@@ -423,9 +493,9 @@ function SkillContent({ card, w, h }: { card: SkillCard; w: number; h: number })
               }}
             >
               <Outlined
-                text={String(card.costAp)}
+                text={String(live?.cost ?? card.costAp)}
                 size={w * 0.068}
-                color="#fff"
+                color={liveColor(card.costAp, live?.cost, false)}
                 stroke="rgba(0,0,0,0.85)"
                 weight={800}
                 style={{ fontFamily: NUM_FONT }}
@@ -488,8 +558,21 @@ function SkillContent({ card, w, h }: { card: SkillCard; w: number; h: number })
                 boxSizing: 'border-box',
               }}
             >
-              <span style={{ fontSize: w * 0.075, fontWeight: 800, color: '#1a1205', fontFamily: NUM_FONT }}>
-                {card.baseValue}
+              <span
+                style={{
+                  fontSize: w * 0.075,
+                  fontWeight: 800,
+                  // 素の値と違う時だけ色を変える（帯が明るいので濃い色を使う）
+                  color:
+                    live?.value === undefined || live.value === card.baseValue
+                      ? '#1a1205'
+                      : live.value > card.baseValue
+                        ? '#0a5f7a'
+                        : '#8f2a1a',
+                  fontFamily: NUM_FONT,
+                }}
+              >
+                {live?.value ?? card.baseValue}
               </span>
             </div>
           </div>
@@ -502,7 +585,7 @@ function SkillContent({ card, w, h }: { card: SkillCard; w: number; h: number })
 
 // ---------------------------------------------------------------- 装備
 
-function EquipmentContent({ card, w }: { card: EquipmentCard; w: number }) {
+function EquipmentContent({ card, w, kira }: { card: EquipmentCard; w: number; kira?: string | null }) {
   const gradient = rarityGradient(card.rarity);
   return (
     <div
@@ -527,11 +610,15 @@ function EquipmentContent({ card, w }: { card: EquipmentCard; w: number }) {
             boxSizing: 'border-box',
           }}
         >
-          <img
-            src={IMG(card.id)}
-            style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }}
-            alt={card.name}
-          />
+          <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+            <img
+              src={IMG(card.id)}
+              style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }}
+              alt={card.name}
+            />
+            {/* 装備は丸絵の中だけに乗せる。名前と付与属性はこの外側なので上に来る */}
+            <KiraLayer src={kira} style={{ borderRadius: '50%' }} />
+          </div>
         </div>
         <div style={{ position: 'absolute', top: -w * 0.01, width: '100%', textAlign: 'center' }}>
           <span className="afs" style={{ fontSize: w * 0.08, fontWeight: 700, color: '#fff', textShadow: nameShadow }}>
@@ -556,7 +643,7 @@ function EquipmentContent({ card, w }: { card: EquipmentCard; w: number }) {
 
 // ---------------------------------------------------------------- フィールド
 
-function FieldContent({ card, w }: { card: FieldCard; w: number }) {
+function FieldContent({ card, w, kira }: { card: FieldCard; w: number; kira?: string | null }) {
   const titleImage = fieldTitlePlate(card.rarity);
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
@@ -565,6 +652,8 @@ function FieldContent({ card, w }: { card: FieldCard; w: number }) {
         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
         alt={card.name}
       />
+      {/* フィールドは全面絵。タイトル帯と説明はこの後なので上に来る */}
+      <KiraLayer src={kira} />
       <div
         style={{
           position: 'relative',
