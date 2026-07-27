@@ -89,7 +89,9 @@ export function Formation({ side, state, pops, targeting, onTap, koShown, cardW,
   const step = 360 / Math.max(n, 1);
   // 横長の楕円ホイール: 横方向に大きく広げ、縦はつぶして省スペースにする。
   // 空いた縦の余白ぶんカード自体を大きくできる。
-  const rx = Math.round(cardW * 1.24); // 横半径（カード同士が重ならない余白を確保）
+  // 横半径。カードを大きくしたら、同じ側のアクターと控えが横で噛んだので広げた
+  // （1.24 だと 390x844 で 4px 食い込んでいた）
+  const rx = Math.round(cardW * 1.34);
   const ry = Math.round(cardW * 0.6); // 縦半径
   const frontW = Math.round(cardW * 1.08);
   const backScale = 0.8;
@@ -133,9 +135,12 @@ export function Formation({ side, state, pops, targeting, onTap, koShown, cardW,
         const A = frontAngle - i * step + wheelRot + tilt;
         const rad = (A * Math.PI) / 180;
         const x = Math.round(Math.sin(rad) * rx * 10) / 10;
-        // 前方（中央側）へのせり出しは0.8倍に抑える（敵味方のアクターが被らないように）
+        // 前方（中央側）へのせり出し。敵味方のアクターは中央で向かい合うので、
+        // ここを詰めないとカードが大きい時に真正面でぶつかる。
+        // 0.8 → 0.58: カード幅120pxで敵味方の隙間が6pxしか無く、踏み込み演出で重なっていた。
+        // 数字を下げるほど自分のアクターは手札側へ寄るので、下げすぎるとHPが手札に隠れる。
         const yRaw = -Math.cos(rad) * ry;
-        const y = Math.round((yRaw < 0 ? yRaw * 0.8 : yRaw) * 10) / 10;
+        const y = Math.round((yRaw < 0 ? yRaw * 0.58 : yRaw) * 10) / 10;
         const scale = isActor ? 1 : backScale;
         return (
           <div
