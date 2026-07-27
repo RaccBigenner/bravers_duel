@@ -1,9 +1,24 @@
 /**
  * カードデザイン用の素材マッピング（旧プロトタイプの card_widget.dart を移植）
  */
-import type { Rarity } from '@bravers/engine';
+import type { Card, Rarity } from '@bravers/engine';
+import kiraTexture from './assets/kira_diamond.webp';
 
-export const IMG = (name: string) => `${import.meta.env.BASE_URL}card_images/${name}.webp`;
+/**
+ * カード画像の版番号（管理画面だけが設定する）。
+ * 管理画面は画像を差し替えるので、URL に版番号を付けて
+ * 「変わった時だけ取り直す」ようにしないと一覧が重い。
+ * ゲーム側は設定しないので、これまで通りのURLになる。
+ */
+let imageRevisions: Record<string, string> = {};
+export function setImageRevisions(map: Record<string, string>): void {
+  imageRevisions = map;
+}
+
+export const IMG = (name: string) => {
+  const rev = imageRevisions[name];
+  return `${import.meta.env.BASE_URL}card_images/${name}.webp${rev ? `?v=${rev}` : ''}`;
+};
 /** AI生成し直した透過PNGのアイコン素材（ハート・ダイヤなど） */
 export const IMG_PNG = (name: string) => `${import.meta.env.BASE_URL}card_images/${name}.png`;
 
@@ -75,4 +90,31 @@ export function valueTypeLabel(valueType: string): string {
 /** 画像が全面に敷かれるレアリティ（キャラクター用） */
 export function isFullArt(rarity: Rarity): boolean {
   return rarity === 'USR' || rarity === 'SSR' || rarity === 'LSR';
+}
+
+// ---- キラ（ホロ）加工 ------------------------------------------------------
+
+/**
+ * 第1弾の USR は、キラのテクスチャが**カード絵そのものに描き込まれている**
+ * （`assets/card_images/1-A003-USR.webp` 等。別レイヤーではない）。
+ * 第2弾以降は絵に描き込まず、ここで1枚のテクスチャを重ねて出す。
+ * こうするとカードごとの質感のばらつきが無くなり、後から強さも一括で変えられる。
+ *
+ * **第1弾に掛けると二重掛けになる**ので、vol で必ず切り分けること。
+ */
+const KIRA_FROM_VOL = 2;
+
+/**
+ * キラを掛けるレアリティ。
+ * LSR は枠そのものがこの絵柄なので掛けない。SSR は社長判断で対象外（2026-07-26）。
+ */
+const KIRA_RARITIES: readonly Rarity[] = ['USR'];
+
+/**
+ * そのカードに重ねるキラのテクスチャ。掛けないカードは null。
+ * 種類（キャラ／スキル／装備／フィールド）は問わず、レアリティだけで決まる。
+ */
+export function kiraOverlay(card: Pick<Card, 'rarity'> & { vol: number }): string | null {
+  if (card.vol < KIRA_FROM_VOL) return null; // 第1弾は絵に焼き込み済み
+  return KIRA_RARITIES.includes(card.rarity) ? kiraTexture : null;
 }
