@@ -10,6 +10,7 @@ import { toSvg } from 'html-to-image';
 import { CardFrame } from '../../web/src/CardFrame';
 import type { MasterCard } from './api';
 import { toRenderCard } from './cardView';
+import { flattenBackgrounds } from './flattenBackgrounds';
 import { logLine } from './log';
 
 /** 書き出す横幅（px）。カードの基準は340pxなので約3倍の解像度になる */
@@ -180,6 +181,10 @@ export async function buildCardPngFile(card: MasterCard): Promise<File> {
     logLine('下描き完了');
     node.style.boxShadow = 'none'; // 透過PNGに影は入れない
     await waitForAssets(node);
+
+    // iPhone は CSS の背景を画像化してくれないので、先に本物の <img> に置き換える
+    await flattenBackgrounds(node);
+    await waitForAssets(node); // 差し込んだ <img> の読み込みを待つ
 
     const rect = node.getBoundingClientRect();
     logLine(`書き出しサイズ: ${Math.round(rect.width)}x${Math.round(rect.height)}`);

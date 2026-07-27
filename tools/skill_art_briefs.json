@@ -1,0 +1,434 @@
+{
+  "1-A037-USR": {
+    "memo": "邪竜王ジエンドの顕現跡。捨てられた武器の海から竜頭の波が立つ",
+    "brief": "A colossal wave of violet dragon-energy rearing into the shape of a horned dragon's head, breaking over a plain carpeted with discarded broken weapons and torn banners. Extreme low angle from ground level; the wave fills the upper two thirds and is about to fall toward the viewer. Eclipse light, bone-white sky. Palette: bone white, deep violet, dried-blood red."
+  },
+  "1-A038-USR": {
+    "memo": "黒い太陽が開き、闇の炎の輪が全方位へ",
+    "brief": "A black sun opening in the sky above a razed cathedral district, throwing a ring of dark fire outward in every direction; roof tiles and pews lift off the ground. High vantage looking down across the rooftops, everything reduced to backlit silhouette. Palette: violet-black, ember orange, ash grey."
+  },
+  "1-A039-USR": {
+    "memo": "世界を縦に断つ一本の銀の切れ目。爆発は描かない、完全な静止",
+    "brief": "One impossibly thin silver cut running from the top of the frame to the bottom; the world on either side has already begun to slide apart along the seam, showing starless void between. No blast, no debris, total stillness. Eye level, near-symmetrical. Palette: pale grey-blue, silver, void black."
+  },
+  "1-A040-USR": {
+    "memo": "戦闘不能の味方の復活。水没した鎧へ光の柱、しずくは上へ昇る",
+    "brief": "A vertical shaft of warm light falling into a shallow flooded ruin where an empty suit of armour lies half submerged; droplets of light rise upward instead of falling, like tears returning. Dawn mist. Centred vertical composition, camera low and close to the water surface. Palette: cream gold, pale turquoise water, soft white."
+  },
+  "1-A041-SR": {
+    "memo": "火炎竜巻。燃える紙片を吸い上げる。上端は画面外へ切る",
+    "brief": "A towering fire tornado tearing across a black volcanic flat, sucking burning pages and embers up its spiral. Wide and slightly low camera; the vortex sits on the right third and its top is cropped by the frame edge. Midday, but the sun is blotted to a dull disc. Palette: orange-red core, charcoal ground, sooty ochre sky."
+  },
+  "1-A042-SR": {
+    "memo": "竜の形をした隕石。衝撃輪がひび割れた湖底に触れる瞬間",
+    "brief": "A single meteor wrapped in dragon-shaped flame plunging steeply toward a dry lakebed, its shockwave ring only just touching the cracked clay below. Camera far back and low; the meteor cuts a strong diagonal from the upper right. Night, hard moon. Palette: scarlet, deep indigo night, pale cracked clay."
+  },
+  "1-A043-SR": {
+    "memo": "対象を選ぶ狙撃。矢はもう無く、雪の中の白い航跡だけ",
+    "brief": "The view down a long arrow's flight path: the arrow is already gone, only a straight white-hot trail cutting through drifting snow toward a distant watchtower bell. Camera behind the trail at eye level, extreme depth of field. Overcast dusk. Palette: white, slate blue, one warm spark far away."
+  },
+  "1-A044-SR": {
+    "memo": "千の細い槍が沼から扇状に噴き上がる。水滴がまだ落ちている",
+    "brief": "A forest of a thousand thin spears erupting upward out of a marsh in a widening fan, water still falling from their tips. Camera low, near the waterline, looking along the fan so the spears converge toward the horizon. Cold blue morning. Palette: steel grey, marsh green, white water."
+  },
+  "1-A045-SR": {
+    "memo": "緑の雷が空一面に樹となって広がる。真上を見上げる",
+    "brief": "A vast tree of green lightning growing instantaneously across a black sky, its branching bolts rooting down into a moor. Camera looking straight up from the ground, the crown of the tree filling the frame. Storm night. Palette: acid green, blue-black, wet purple heather."
+  },
+  "1-A046-SR": {
+    "memo": "復讐者レオン。血の滴る刃と、水たまりに映る燃える街",
+    "brief": "A notched sword held point-down in the rain, blood running off the blade into a puddle that reflects a burning street. Close-up on the blade and the hand only; the fire exists only as a reflection in the water below. Night rain. Palette: crimson, wet black, brass firelight."
+  },
+  "1-A047-SR": {
+    "memo": "闇の獣が魔法陣を噛みちぎる。光が布のように裂ける",
+    "brief": "A beast made of hungry darkness biting a glowing sigil out of the air, the sigil's light stretching and tearing like caught cloth. Close mid-shot; the beast is implied by jaw and claw shapes only. A dim cellar of a ruined library, dust hanging in the air. Palette: black, bruised violet, sickly gold light."
+  },
+  "1-A048-SR": {
+    "memo": "金の斬撃が空中で十字に交差して白く炸裂。焼けた大聖堂",
+    "brief": "Two golden cuts crossing in mid-air, the intersection detonating white, the cross shape burned briefly into the dark. Setting: the shadowed nave of a gutted cathedral, broken stained glass on the floor catching the flash. Eye level, symmetrical, the cross centred. Palette: gold, ivory, deep blue shadow."
+  },
+  "1-A049-SR": {
+    "memo": "剣を植えた丘の墓地を、癒しの風が左から右へ抜ける",
+    "brief": "A warm wind sweeping through a hilltop graveyard of planted swords, lifting white petals and streaks of healing light off them. Wide shot, camera at chest height, the wind moving left to right across the entire frame. Golden hour. Palette: honey gold, pale green grass, white."
+  },
+  "1-A050-SR": {
+    "memo": "野営。焚き火を真上から。荷と寝袋が円に並ぶ",
+    "brief": "A small campfire at night seen from directly above, packs and bedrolls arranged in a circle around it, supplies laid out to dry, sparks drifting up toward the camera. Bird's-eye view, circular composition, the pool of firelight surrounded by deep night. Palette: warm orange, deep blue-black."
+  },
+  "1-A051-SR": {
+    "memo": "手札総入れ替え。卓上の地図を一払いする瞬間、紙がまだ宙に",
+    "brief": "A hand sweeping a table clear of maps and markers in one motion while fresh charts unroll themselves — caught at the moment of the sweep, papers still in the air. Top-down on the table only, lamplight raking from one side. Night interior. Palette: parchment cream, ink black, brass lamp gold."
+  },
+  "1-A052-SR": {
+    "memo": "APを全部使う乱撃。残像が重なりすぎて本体が読めない",
+    "brief": "A blurred storm of overlapping strikes: dozens of spear and fist afterimages layered over one another until the attacker himself is unreadable. Tight mid-shot, motion smear across the whole frame. A dust-filled arena floor. Harsh noon. Palette: ochre dust, white afterimages, black."
+  },
+  "1-A053-R": {
+    "memo": "竜巻は小さく、空を大きく。凧が巻き上げられている",
+    "brief": "A tornado crossing a green plain, dragging a spiral of torn leaves and a farmer's kite up with it. Very wide, camera far away and low so the funnel is small but the sky is enormous. Late afternoon, clouds shelved and green-tinged. Palette: green-grey sky, yellow-green field, white funnel."
+  },
+  "1-A054-R": {
+    "memo": "料理人パークルの竈。炎の精霊が形も定まらぬまま這い出る",
+    "brief": "A small fire spirit stepping out of a hearth's embers, trailing sparks, its shape not yet settled. Close, low camera inside the ruined kitchen hearth, ash and pot hooks around it. Night. Palette: ember orange, soot black, a hint of blue where the flame is hottest."
+  },
+  "1-A055-R": {
+    "memo": "地面のマクロ。足跡と轍が氷に封じられ、氷の縁がこちらに迫る",
+    "brief": "Ice spreading fast across a muddy battlefield, sealing boot prints, wheel ruts and a dropped shield under glass. Extreme close-up of the ground, the advancing ice front coming toward the camera. Blue hour. Palette: white, pale cyan, brown mud showing beneath the ice."
+  },
+  "1-A056-R": {
+    "memo": "峡谷の底を低く走る横一文字のブレス。床の高さから見る",
+    "brief": "A wide horizontal wall of dragon breath rolling low along a canyon floor between sheer rock walls. Camera at floor level inside the canyon; the breath fills the lower half of the frame and rushes toward the viewer. Dusty gold light from far above. Palette: amber, red rock, black shadow."
+  },
+  "1-A057-R": {
+    "memo": "石床に槌が触れた一点のマクロ。ひびが白い星形に走る",
+    "brief": "The instant a heavy warhammer meets a stone floor: the flagstones under it turn into a white star of cracks and a ring of dust blows outward. Extreme close-up on the point of impact, the hammer head cropped by the top edge. Overcast. Palette: grey stone, white shock, dull steel."
+  },
+  "1-A058-R": {
+    "memo": "濡れた石畳を走る青い電気の面。街灯の鉄柱を伝う",
+    "brief": "A flat sheet of blue electricity racing along wet cobblestones, jumping between iron lampposts. Camera low, looking down the street as the wave comes toward it. Night rain. Palette: electric cyan, wet black stone, warm dying lamplight."
+  },
+  "1-A059-R": {
+    "memo": "石橋が一撃で真っ二つ。左右が切り口から離れ始めた瞬間",
+    "brief": "A single enormous slash opening a stone bridge in half, the two halves just beginning to fall away from the cut. Camera from the riverbank, side on, the bridge crossing the frame horizontally. Overcast midday. Palette: grey stone, white cut light, brown river."
+  },
+  "1-A060-R": {
+    "memo": "山肌に踏み抜かれた足型のクレーター。溶岩の亀裂が放射状に",
+    "brief": "A giant foot-shaped crater stamped into a hillside, lava seams cracking open outward from it in a radial pattern. Bird's-eye view directly above the crater. Twilight. Palette: black rock, glowing orange seams, dark violet sky."
+  },
+  "1-A061-R": {
+    "memo": "圧縮された砂の錐が尾根を貫通し、反対側へ砂を吹き出す",
+    "brief": "A drill of compressed sand boring through a desert ridge and blowing a fan of grit out the far side. Wide, camera level with the ridge line. Harsh white noon. Palette: bleached sand, pale sky, brown grit cloud."
+  },
+  "1-A062-R": {
+    "memo": "丘に残された鉄の天秤に一条の落雷。皿が吹き飛ぶ",
+    "brief": "A single vertical bolt of white-gold lightning striking a set of iron scales left standing on a hilltop, the pans blown apart. Camera at a distance and low, the bolt on the centre line. Storm at dusk. Palette: white gold, iron grey, bruised purple cloud."
+  },
+  "1-A063-R": {
+    "memo": "炎と氷が相殺する拳大の球。マクロで、周囲はぼける",
+    "brief": "A small sphere where fire and frost meet and annihilate each other, the air around it cracking into a ring of steam and ice needles. Macro close-up: the sphere is the size of a fist and everything else falls out of focus. Neutral grey daylight. Palette: orange, cyan, white steam."
+  },
+  "1-A064-R": {
+    "memo": "槍を墓標にした戦没地。槍が自ら抜け、同じ方角を向く",
+    "brief": "Grave markers made of planted spears pulling themselves out of the earth and turning to point the same way, soil still falling from their shafts. Camera low among the markers. Fog at dawn. Palette: brown earth, grey fog, pale gold rim light."
+  },
+  "1-A065-R": {
+    "memo": "吊るされた真鍮の鐘の手前で矢が静止。左に大きな余白",
+    "brief": "A single arrow frozen a hand's width short of a hanging brass bell that has not yet been struck. Extreme close-up with heavy negative space on the left, where the arrow came from. Clear cold morning. Palette: brass, pale blue sky, white."
+  },
+  "1-A066-R": {
+    "memo": "氷の女王セレーナの湖。城が一秒で結晶しながら立ち上がる",
+    "brief": "A fortress of ice growing upward out of a frozen lake in a single second, its walls and towers still assembling crystal by crystal. Camera low on the ice, looking up the face of the wall. Overcast arctic light. Palette: white, deep glacial blue, faint pink sky."
+  },
+  "1-A067-R": {
+    "memo": "晴れた空から雷雲が凝る。地平線を下に置き、空を五分の四に",
+    "brief": "A thunderhead condensing out of a clear sky above a moor, its underside already flickering, the first strikes reaching down like roots. Very wide, horizon pushed low, sky filling four fifths of the frame. Late afternoon. Palette: slate purple cloud, gold horizon, white flash."
+  },
+  "1-A068-R": {
+    "memo": "抜刀が速すぎて空気が発火。燃える弧だけが闇に残る",
+    "brief": "A blade drawn so fast that the air behind it catches fire, leaving a burning arc hanging in the dark. Only the arc and a suggestion of the swordsman's shoulder are visible. Tight diagonal composition, night. Palette: white-hot core, orange trail, black."
+  },
+  "1-A069-R": {
+    "memo": "斬り口が霜の傷になり、落下中の雨まで凍る",
+    "brief": "A slash that leaves a wound of frost in the air, ice crystals blooming outward from the cut line and freezing the falling rain in place around it. Mid close-up, the cut crossing the frame diagonally. Cold rain at night. Palette: cyan-white, black, silver rain."
+  },
+  "1-A070-R": {
+    "memo": "防御不可。黒煙の壁を白い一条が汚れずに貫く",
+    "brief": "A single narrow beam of pure white passing straight through a wall of black smoke without being touched by it, the smoke curling away from the beam's edge. Eye level, the beam horizontal across the frame. Palette: white, charcoal smoke, faint violet."
+  },
+  "1-A071-R": {
+    "memo": "割れた大理石の床に落ちる金の裁きの槌。床から見上げる",
+    "brief": "A vast hammer of golden light coming down on a courtroom floor of cracked marble, the crack pattern spreading out like a verdict. Low angle from floor level, the hammer cropped by the top edge, shafts of light falling from high windows. Palette: gold, white marble, deep brown shadow."
+  },
+  "1-A072-R": {
+    "memo": "影の矢が柱を回り込み、裏に隠れたものを撃つ",
+    "brief": "Arrows of shadow curving in impossible arcs around a stone pillar to strike whatever is hiding behind it. Camera tucked behind the pillar's edge so the bending of the arrows is clearly visible. Dim, dust-lit interior. Palette: violet-black, grey stone, one warm slit of light."
+  },
+  "1-A073-R": {
+    "memo": "装備破壊。盾の中心の鋲を正確に突き、留具が分解する",
+    "brief": "A spear tip striking the exact rivet at the centre of a shield boss, the shield's straps and plates flying apart around the contact point. Extreme macro on the rivet itself. Flat workshop daylight. Palette: steel blue, leather brown, one white spark."
+  },
+  "1-A074-R": {
+    "memo": "深緑の勇者フォギア。前腕が樹皮化し、指から根が落ちる",
+    "brief": "Bark spreading up a forearm and turning into living branch and leaf, thin roots dropping from the fingertips into the soil. Close-up on the arm alone, the forest floor thrown out of focus behind it. Green dappled forest light. Palette: moss green, bark brown, gold flecks."
+  },
+  "1-A075-R": {
+    "memo": "完全な黒い立方体。矢も炎も表面で消える。不気味なほど静か",
+    "brief": "A perfect matte-black cube hanging in the air, absorbing everything thrown at it — arrows and flame vanish at its surface without leaving a mark. Straight-on eye level, the cube dead centre, unnervingly still. Grey void-like fog around it. Palette: pure black, fog grey, a faint violet edge."
+  },
+  "1-A076-R": {
+    "memo": "控えから撃つ矢。密集した幹の間の光の回廊を縫う",
+    "brief": "An arrow threading between crowded tree trunks along a corridor of light, leaves still spinning in the air where it passed. Camera down the corridor at knee height. Morning forest sunbeams. Palette: emerald, gold beams, brown trunks."
+  },
+  "1-A077-R": {
+    "memo": "次元漂獣アニマ。赤い糸が手に吸われ、通った雪から色が抜ける",
+    "brief": "Threads of red light being drawn out of the darkness and pulled into a cupped hand; the snow they pass over loses its colour. Close-up on the hand and the threads. A winter birch grove at dusk. Palette: white snow, blood-red threads, violet shadow."
+  },
+  "1-A078-R": {
+    "memo": "止めの一撃。振り抜いた黒い籠手の後ろに虚空の円錐",
+    "brief": "A black gauntlet finishing its follow-through, the air behind it collapsed into a cone of void. Mid-shot from behind and below; the target is implied off-frame. A ruined arena at night. Palette: black, dull red, grey dust."
+  },
+  "1-A079-R": {
+    "memo": "味方全体の防御。雨の外側から、野営を覆う盾のドームを見る",
+    "brief": "Overlapping translucent shields locking together into a dome over a huddled camp, seen from outside in the rain. Wide, camera at ground level looking up at the dome's edge. Night downpour. Palette: amber lamplight inside, cold blue rain outside, white shield lines."
+  },
+  "1-A080-R": {
+    "memo": "帯電した刃。火花が水たまりへ飛び移る",
+    "brief": "A sword blade sheathed in crackling electricity, its light stuttering across a rain-soaked stone yard, sparks jumping from the blade to nearby puddles. Mid close-up, the blade held low. Night storm. Palette: white-blue, black stone, silver rain."
+  },
+  "1-A081-R": {
+    "memo": "半人半竜セヴン。人の皮膚の下に鱗が浮かび、金色に光る",
+    "brief": "Dragon-scale patterns surfacing under human skin along a forearm and neck, a faint gold light behind each scale. Very close, skin texture clearly visible. Warm firelight from below. Palette: warm brown skin, gold scale glow, deep red shadow."
+  },
+  "1-A082-R": {
+    "memo": "自傷を伴う呪い。掌に紫の文字が焼き付き、手が震える",
+    "brief": "A ring of violet script burning itself into the caster's own palm, smoke rising from the skin, the hand shaking. Extreme close-up on the palm. A dark stone chamber lit by a single candle. Palette: violet, black, weak candle gold."
+  },
+  "1-A083-R": {
+    "memo": "神速。剣はもう鞘に戻り、斬撃だけが空に残る。誰も見ていない",
+    "brief": "A sword already back in its scabbard, with the cut it made still hanging in the air behind it — nobody saw the swing. Mid-shot from the side, most of the frame deliberately empty. Bright clear morning in a courtyard. Palette: white, pale grey stone, one silver line."
+  },
+  "1-A084-R": {
+    "memo": "花咲く蔓の鞭。影に当たった場所で花が光に弾ける",
+    "brief": "A whip of flowering vine cracking through the air, blossoms bursting into light wherever it strikes shadow. Strong diagonal mid-shot. A sunlit ruined orchard. Palette: white blossom, green vine, gold light, violet shadow."
+  },
+  "1-A085-R": {
+    "memo": "まだ何も起きていない。刃に光の刃筋が宿るだけの静かな一枚",
+    "brief": "A plain iron sword raised in both hands, gathering a faint keen edge of light along the blade — nothing dramatic yet, only potential. Close-up of the blade against a plain empty sky. Overcast. Palette: grey, silver, cool white."
+  },
+  "1-A086-UC": {
+    "memo": "石畳の霜が円形に解けて温もりが戻る。斜め上から",
+    "brief": "A wide circle of gentle white light opening under a kneeling figure's feet on a stone terrace, warmth visibly travelling outward through the frost on the flagstones. High three-quarter angle. Cold clear morning. Palette: white gold, pale grey stone, faint mint."
+  },
+  "1-A087-UC": {
+    "memo": "革の口枷が千切れて落ちる。獣本体は暗い塊のまま",
+    "brief": "A cracked leather muzzle-strap snapping and falling away, the beast's breath steaming in the cold. Close on the broken strap in mid-fall; the beast itself is only a dark mass behind it. Twilight. Palette: black fur, worn leather brown, cold blue steam."
+  },
+  "1-A088-UC": {
+    "memo": "小さな丸盾でかすめる程度に受ける、地味で実直な一枚",
+    "brief": "A small round shield raised in a hurry, catching a glancing blow off its rim — a modest, workmanlike moment, nothing heroic. Tight mid-shot. Flat afternoon light in a training yard. Palette: dull steel, sand, pale sky."
+  },
+  "1-A089-UC": {
+    "memo": "矢の雨が弧の頂点で一瞬止まる。真上を見上げる",
+    "brief": "A volley of arrows at the very top of its arc, hanging for an instant against a pale sky before it falls. Camera looking straight up. Overcast noon. Palette: white sky, black arrow silhouettes, nothing else."
+  },
+  "1-A090-UC": {
+    "memo": "大槌が木の杭を木目に沿って割る",
+    "brief": "A maul coming down on a wooden post, the post splitting along the length of its grain. Mid-shot at the moment of the split. Bright dusty afternoon. Palette: warm wood, iron grey, straw gold."
+  },
+  "1-A091-UC": {
+    "memo": "盾を先頭にした体当たり。柵の向こう側から見る",
+    "brief": "A shield-first shoulder charge slamming into a wooden barricade, the planks bowing outward. Low angle from the far side of the barricade. Grey morning. Palette: brown wood, steel, dull green field."
+  },
+  "1-A092-UC": {
+    "memo": "突風で草原が一本の曲線に伏せる。草の中の低い視点",
+    "brief": "A sudden gust flattening a field of tall grass into a single sweeping curve and tearing a cloak sideways. Wide, camera low down inside the grass. Bright breezy day. Palette: green-gold grass, white cloud, blue sky."
+  },
+  "1-A093-UC": {
+    "memo": "回転する槍が空気を螺旋に削る。槍の軸線から覗く",
+    "brief": "A lance driven forward with its haft spinning, drilling a corkscrew of compressed air that shows as a spiral of dust. Camera looking straight down the lance's axis. Dusty afternoon. Palette: ochre, steel, white spiral."
+  },
+  "1-A094-UC": {
+    "memo": "竜気の顎が虚空を噛み、灰の輪が広がる",
+    "brief": "Jaws of condensed draconic energy closing on empty air, the shockwave of the bite blowing a ring of ash outward. Mid-shot, side on. Ash-fall dusk. Palette: red-orange energy, grey ash, black."
+  },
+  "1-A095-UC": {
+    "memo": "四本の爪痕が旗を短冊に裂く",
+    "brief": "Four parallel trails of claw-light ripping across the frame, tearing a hanging banner into strips. Tight diagonal. A dim hall. Palette: gold banner, red trails, brown shadow."
+  },
+  "1-A096-UC": {
+    "memo": "星の矢が夜空を撃ち抜き、星座の穴から光が漏れる",
+    "brief": "An arrow of starlight fired straight up into the night sky, punching a hole through the constellations that leaks light. Very wide, camera looking up, the horizon pushed to the very bottom edge. Clear night. Palette: deep blue, white stars, gold leak."
+  },
+  "1-A097-UC": {
+    "memo": "樫の扉に残る燃える斬り口。正面からのクローズアップ",
+    "brief": "A burning slash left across a heavy oak door, the cut edges still glowing orange and smoking. Straight-on close-up of the door alone. Night, lantern light from one side. Palette: char black, ember orange, oak brown."
+  },
+  "1-A098-UC": {
+    "memo": "槍の石突きから噴射して控えから飛び出す。砂塵が円錐に",
+    "brief": "A lancer launching forward on a jet of flame from the butt of his lance, dust blown back in a cone behind him. Low side angle with motion streaks. Overcast. Palette: orange jet, grey dust, steel."
+  },
+  "1-A099-UC": {
+    "memo": "両手のあいだに風が球として集まり、枯葉が周回する",
+    "brief": "Loose air gathering into a visible sphere between two open hands, dry leaves orbiting it. Close-up on the hands and the sphere. An autumn hillside at golden hour. Palette: amber leaves, clear white swirl, warm gold."
+  },
+  "1-A100-UC": {
+    "memo": "食樹が石畳を割って生え、瓦礫を花に飲み込む。幹を見上げる",
+    "brief": "A carnivorous tree bursting up through paving stones and swallowing scattered debris into its bloom. Camera low, looking up the trunk. Green-tinted overcast light. Palette: deep green, wet grey stone, violet flower throat."
+  },
+  "1-A101-UC": {
+    "memo": "隆起した土の板が平手打ちのように落ち、砂塵が四方へ",
+    "brief": "A raised slab of earth clapping down flat, dust exploding out from all four of its sides in a low sheet. Wide, camera at ground level. Dry noon. Palette: brown, dust white, pale sky."
+  },
+  "1-A102-UC": {
+    "memo": "補給箱を蹴り開け、中身が敷布に散らばる。真上から",
+    "brief": "A supply crate kicked open, its contents — bandages, flasks, arrows — spilling out across a groundsheet in a rush. Top-down and close on the spill. Daylight filtered through canvas. Palette: canvas beige, glass green, cloth white."
+  },
+  "1-A103-UC": {
+    "memo": "地面から突き出た鉄杭を電気が這う。土がまだ落ちている",
+    "brief": "An iron spike driven up out of the ground with electricity crawling along its length, earth still falling away from it. Low close-up on the spike. Storm-grey light. Palette: rust brown, blue arc, wet soil."
+  },
+  "1-A104-UC": {
+    "memo": "土の壁が画面いっぱいに立ち上がる。もう矢が刺さっている",
+    "brief": "A blunt wall of packed earth and stone thrust up directly in front of the camera, filling the frame; arrows are already embedded in its face. Straight-on, very close, flat and graphic. Overcast. Palette: earth brown, grey stone, black arrow shafts."
+  },
+  "1-A105-UC": {
+    "memo": "光の拳が着弾し、接点から羽根が散る",
+    "brief": "A fist of white light landing, a burst of radiant feathers scattering from the point of contact. Mid close-up. A bright hall. Palette: white, gold, pale blue shadow."
+  },
+  "1-A106-UC": {
+    "memo": "野戦病院。並んだ寝床を光が渡り、灰色の顔に色が戻る",
+    "brief": "Warm light spreading along a row of laid-out bedrolls in a field hospital tent, colour returning to grey faces as it passes over them. Low wide shot down the length of the row. Morning light through canvas. Palette: warm cream, canvas ochre, soft rose."
+  },
+  "1-A107-UC": {
+    "memo": "地図卓に3枚の行軍札を並べ終えた指。真上から",
+    "brief": "Three route cards laid down side by side on a map table, a finger just leaving the third one. Top-down and tight on the table. Lamplight, night. Palette: parchment, ink, brass lamp gold."
+  },
+  "1-A108-UC": {
+    "memo": "氷に閉じた一輪のスノードロップ。窓に霜のシダ模様が広がる",
+    "brief": "A single snowdrop flower sealed inside a bead of ice, the cold spreading out from it across a windowpane in fern patterns. Macro. Pale winter window light. Palette: white, palest blue, a faint green stem."
+  },
+  "1-A109-UC": {
+    "memo": "お互いに補給。密林の葉が雨を受け、下の全員に配る",
+    "brief": "Broad jungle leaves opening to let a sudden warm rain through, fat drops collecting in cupped leaves for everyone below. Camera looking up through the canopy. Bright humid green daylight. Palette: saturated green, silver rain, gold gaps."
+  },
+  "1-A110-UC": {
+    "memo": "欠けたブリキのカップのアイス。戦場の合間の静物画",
+    "brief": "A scoop of pale ice cream in a chipped tin cup, frost on the rim, melting a little in the sun on a battered wooden table. Close still life at three-quarter view. Warm afternoon. Palette: cream white, tin grey, warm wood, one note of mint green."
+  },
+  "1-A111-UC": {
+    "memo": "太鼓を卓にして、扇いだ山から一枚だけ伏せて置く",
+    "brief": "A gloved hand drawing one card from a fanned deck and laying it face down on a drum head being used as a table. Top-down and close. Dim tent light. Palette: card cream, glove brown, drum-skin ivory."
+  },
+  "1-A112-C": {
+    "memo": "三対の手が輪を作り、その空間に小さな灯がともる。真上から",
+    "brief": "Three pairs of hands pressed together in a circle seen from directly above, a small warm light kindling in the space between them. Bird's-eye, tight. Candlelit night. Palette: warm gold, brown hands, deep shadow."
+  },
+  "1-A113-C": {
+    "memo": "掌からの短い火。積まれた紙が2枚飛び、縁が燃える",
+    "brief": "A short flat burst of flame from an open palm, blowing two pages off a stack and igniting their edges. Mid close-up, side on. A dim room. Palette: orange, paper white, brown."
+  },
+  "1-A114-C": {
+    "memo": "白い冷気の吐息が水たまりを輪状に凍らせながら渡る",
+    "brief": "A visible breath of cold rolling outward and freezing a puddle into concentric rings as it passes. Low close-up on the puddle. Grey winter morning. Palette: pale blue, brown mud, white."
+  },
+  "1-A115-C": {
+    "memo": "鎖の二つの輪の間を青い電光が跳ぶ。鍛冶場のマクロ",
+    "brief": "A short blue jolt jumping between two iron rings of a hanging chain, the links glowing at the contact points. Macro close-up. A dark forge interior. Palette: iron black, cyan arc, ember red at the edge of frame."
+  },
+  "1-A116-C": {
+    "memo": "拳が木盾に食い込み、板がたわむ",
+    "brief": "A heavy fist meeting a wooden shield, the shield's boards visibly bending inward. Tight mid-shot from the shield's side. Flat daylight. Palette: brown board, steel knuckle, pale sky."
+  },
+  "1-A117-C": {
+    "memo": "指先を離れる小さな闇の弾。空気が紫の輪に歪む",
+    "brief": "A compact bolt of dark energy leaving a fingertip, the air around it warping into a small violet ring. Macro on the fingertip and the bolt. Dim interior. Palette: violet, black, faint grey."
+  },
+  "1-A118-C": {
+    "memo": "若い竜の素朴なブレス。洞窟の床すれすれを走る火",
+    "brief": "A young dragon's plain breath attack: a wide low sheet of fire skimming along a stone floor. Wide, camera at floor level. A dim cavern. Palette: orange, grey stone, black."
+  },
+  "1-A119-C": {
+    "memo": "凍った翼で滑空し槍を前へ。白い空を背に下から見る",
+    "brief": "A gliding dive on ice-crusted wings with a spear levelled ahead, frost trailing off the wingtips. Wide, seen from below against a white sky. Overcast winter. Palette: white sky, blue-grey wings, silver spear."
+  },
+  "1-A120-C": {
+    "memo": "藁人形に二本目の刺突。藁がまだ飛んでいる",
+    "brief": "A second stab following immediately after the first: two thin puncture lines in a straw practice dummy, straw still flying. Close-up on the dummy. Training-yard afternoon. Palette: straw gold, brown, steel."
+  },
+  "1-A121-C": {
+    "memo": "細い根が落ち葉から色を吸い、触れた所が白く抜ける",
+    "brief": "Fine roots crossing the ground and drinking the colour out of fallen leaves, the leaves going pale wherever they are touched. Macro on the forest floor. Damp shade. Palette: green, brown, drained grey."
+  },
+  "1-A122-C": {
+    "memo": "泥に突き立てた大盾が画面をほぼ塞ぐ。向こう側は隙間だけ",
+    "brief": "An oversized tower shield planted in the mud and braced, filling nearly the whole frame; the world behind it reduced to a sliver at the edge. Straight-on, very close, flat composition. Rainy grey. Palette: dull steel, mud brown, cold grey light."
+  },
+  "1-A123-C": {
+    "memo": "二本の刃が浅い角度で滑り、火花はひとつだけ",
+    "brief": "Two blades meeting at a shallow angle, one sliding the other harmlessly aside, a single spark at the point of contact. Macro on the crossing blades. Neutral light. Palette: steel silver, one warm spark, cool grey."
+  },
+  "1-A124-C": {
+    "memo": "円を描く受け流し。軌跡が空中の光の輪として残る",
+    "brief": "A spear tip turned aside by a circular sweep, the sweep drawn as a clean ring of light left hanging in the air. Mid close-up with the ring centred. An evening yard. Palette: silver ring, dark blue evening, steel."
+  },
+  "1-A125-C": {
+    "memo": "衝突直後に急上昇する鳥。羽根がまだ宙に。空を広く",
+    "brief": "A diving bird pulling up hard just after impact, feathers still hanging in the air where it struck. Camera looking up; the bird is small against a very large sky. Bright morning. Palette: white sky, dark feathers, one warm underwing."
+  },
+  "1-A126-C": {
+    "memo": "太陽の眩しさの中から落ちてくる踵。真下から見上げる",
+    "brief": "A heel dropping straight down out of the sun's glare. Low camera looking straight up, the figure a black silhouette inside the flare. Harsh noon. Palette: white glare, black silhouette, pale blue."
+  },
+  "1-A127-C": {
+    "memo": "画面外へ投げ飛ばされる人。端にブーツと外套だけ残る",
+    "brief": "Someone hurled clean out of frame — only their boots and a trailing cloak are still visible at the edge, with dust kicked up where they left the ground. Wide, camera low. Dusty afternoon. Palette: ochre dust, brown, pale sky."
+  },
+  "1-A128-C": {
+    "memo": "吊るした帆布を斜めに裂く、素朴な一太刀",
+    "brief": "A plain diagonal cut through a hanging sheet of canvas, the two halves just parting. Straight-on close-up. Flat outdoor light. Palette: canvas white, grey, black cut."
+  },
+  "1-A129-C": {
+    "memo": "柵の板の隙間から突き出た刃先。反対側から見る",
+    "brief": "A short quick thrust between the boards of a fence, the blade appearing on the far side. Close-up taken from the far side of the fence. A dim alley. Palette: weathered wood grey, steel, one strip of daylight."
+  },
+  "1-A130-C": {
+    "memo": "包帯の上にかざした掌の光。血の染みが薄れていく",
+    "brief": "A small palm-sized light held over a bandaged forearm, the stain on the bandage visibly fading. Close shot of the two hands only. Soft indoor daylight. Palette: warm white, linen cream, faded rust."
+  },
+  "1-A131-C": {
+    "memo": "火床で焼いた穂先。火花が立ち上る",
+    "brief": "A spearhead held in a brazier until it glows, sparks lifting off it. Close-up with the brazier itself out of focus behind. A dark smithy. Palette: ember orange, black, dull gold."
+  },
+  "1-A132-C": {
+    "memo": "引き抜いた若木を棍棒に。根と土塊が飛ぶ",
+    "brief": "A young tree torn up and swung like a club, roots and clods of soil flying off it mid-swing. Mid-shot with a strong motion arc. Green overcast. Palette: bark brown, leaf green, brown soil."
+  },
+  "1-A133-C": {
+    "memo": "機構のレバーが倒れ、噛み合う歯車が入れ替わる。マクロ",
+    "brief": "A lever thrown over inside a mechanism, one gear disengaging as another catches. Macro on the gears. Cold interior light. Palette: iron grey, brass, oil black."
+  },
+  "1-A134-C": {
+    "memo": "二本の柱に張った電気の網。投擲物が当たって火花",
+    "brief": "A net of thin electric lines strung between two poles, sparking where a thrown weapon has struck it. Straight-on mid-shot. Night. Palette: cyan lines, black night, dull orange sparks."
+  },
+  "1-A135-C": {
+    "memo": "柱の間の光の通路に身体を差し込み、射線を塞ぐ",
+    "brief": "A body stepping into the gap between two pillars, blocking a corridor of light with its silhouette. Wide, camera looking down the corridor. Dust-lit. Palette: black silhouette, gold dust beam, grey stone."
+  },
+  "1-A136-C": {
+    "memo": "屋根から風で飛び出す。瓦が舞い、町を見下ろす",
+    "brief": "A short jump-jet of compressed wind launching someone off a rooftop, loose tiles blown away below. Wide, camera left behind on the rooftop looking after them. Bright morning over a town. Palette: terracotta roofs, white wind, blue sky."
+  },
+  "1-A137-C": {
+    "memo": "石の縁を離れる両足と、風にあおられる外套。下は空",
+    "brief": "Two boots leaving a stone ledge, the wind taking a cloak upward, empty air below. Close on the ledge and the boots with the drop visible beyond. Windy overcast. Palette: grey stone, brown leather, white sky."
+  },
+  "1-A138-C": {
+    "memo": "半引きから放たれた矢。弦がまだ震えている",
+    "brief": "A single arrow loosed from a half-drawn bow, the string still vibrating. Macro on the bow hand and the string. Flat daylight. Palette: bow-wood brown, white string, grey background."
+  },
+  "1-A139-C": {
+    "memo": "布に広げた弁当箱。おにぎりと漬物と欠けた湯呑み。真上から",
+    "brief": "An opened lunch box on a folded cloth: a rice ball, pickles, a chipped cup. Top-down still life with sunlight falling across one corner. Warm midday. Palette: rice white, lacquer black, pickle pink, warm wood."
+  },
+  "1-A140-C": {
+    "memo": "間一髪の受け。盾板に矢が一本だけ立っている",
+    "brief": "A shield raised just in time, a single arrow standing in its face. Close-up of the shield boards and the arrow. Overcast. Palette: faded painted blue, wood, grey."
+  },
+  "1-A141-C": {
+    "memo": "幕を払って光の中へ飛び出す。逆光のシルエット",
+    "brief": "A curtain flung aside as someone bursts through it into the light. Straight-on, the figure backlit and almost entirely silhouette. A bright doorway. Palette: dark interior, white doorway light, red curtain."
+  },
+  "1-A142-C": {
+    "memo": "木の幹に4本の爪痕。ささくれが持ち上がる。マクロ",
+    "brief": "Four short claw scratches raked across a wooden post, splinters lifting. Macro close-up. Dappled forest light. Palette: pale scored wood, dark bark, green light."
+  },
+  "1-A143-C": {
+    "memo": "濡れた砂に走り去った足跡。本人はもう画面外、手袋が片方",
+    "brief": "Footprints running away across wet sand, the runner already out of frame, one dropped glove left behind. Bird's-eye view of the sand. Overcast beach at dusk. Palette: grey sand, white foam, brown glove."
+  },
+  "1-A144-C": {
+    "memo": "床のチョークの矢印。真ん中を消して三番目へ曲線が回り込む",
+    "brief": "Three chalk arrows drawn on a stone floor, the middle one crossed out and a curved line looping past it to the third. Top-down macro on the floor. Dim lamplight. Palette: grey stone, white chalk, warm lamp."
+  }
+}
