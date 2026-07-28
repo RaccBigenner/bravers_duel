@@ -310,13 +310,16 @@ textarea { resize: vertical; }
 
 .tabbar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
-  display: grid; grid-template-columns: repeat(3, 1fr);
+  /* タブの数を増やしても崩れないように列数を固定しない。
+     3列決め打ちだったので「並び」「集計」を足した時に2段になっていた */
+  display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
   background: var(--panel); border-top: 1px solid var(--line);
   padding-bottom: env(safe-area-inset-bottom);
 }
 .tabbar button {
   background: none; border: none; color: var(--muted);
-  padding: 14px 4px; min-height: var(--tabbar-h); font-size: 13px; font-weight: 600;
+  padding: 14px 2px; min-height: var(--tabbar-h); font-size: 12px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .tabbar button.on { color: var(--gold); box-shadow: inset 0 2px 0 var(--gold); }
 
@@ -411,3 +414,20 @@ textarea { resize: vertical; }
 .stats-bars .num { text-align: right; padding-left: 8px; font-variant-numeric: tabular-nums; width: 3em; }
 .stats-bars .pct { text-align: right; padding-left: 6px; color: var(--muted); width: 3.5em; }
 .stats-bars .sub { text-align: right; padding-left: 6px; color: var(--muted); white-space: nowrap; }
+
+/* ---- スマホでの並び替え ----
+   1行に 番号+つまみ+サムネ+名前+コード+▲▼ は入らないので、
+   つまみを消して（タッチではドラッグできないので元々使えない）、
+   コードは変化がある時だけ次の番号を出す。 */
+@media (max-width: 900px) {
+  .order-row { gap: 6px; padding: 6px; }
+  .order-handle { display: none; }
+  .order-no { width: 1.8em; }
+  .order-thumb { width: 44px; height: 30px; }
+  .order-code { font-size: 11px; max-width: 6.5em; text-align: right; }
+  .order-move button { width: 36px; height: 26px; }
+  .order-actions button { flex: 1 1 auto; min-width: 8em; }
+  /* タブバーの下にボタンが隠れないよう余白を足す */
+  .order-confirm { margin-bottom: calc(var(--tabbar-h) + 24px); }
+  .stats-tab { padding-bottom: calc(var(--tabbar-h) + 24px); }
+}
