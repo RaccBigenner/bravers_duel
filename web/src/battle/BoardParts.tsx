@@ -24,7 +24,47 @@ export type Targeting = {
   side: 0 | 1; // 対象側
   hint: string;
   actions: Map<number, BattleAction>; // charIndex → action
+  /** 選んだらどうなるか。対象の上に「9 → 3」で出す（装備など数字が無いものは無し） */
+  effect?: { kind: 'attack' | 'heal' | 'guard' | 'support'; value: number };
 } | null;
+
+/**
+ * プレイヤー単位で続いている状態のバッジ。
+ *
+ * 被ダメージ軽減も「次のドローが減る」も、今までは1.4秒のプレートが出て消えるだけで、
+ * **後から「今どうなっているか」を確認する方法が無かった**。
+ * キャラ単位ではなくプレイヤー単位の状態なので、キャラの下ではなく情報帯に出す。
+ * 何もかかっていない時は何も出さない（普段は空でよい）。
+ */
+export function StatusBadges({ p, turn, mine }: { p: BattleState['players'][number]; turn: number; mine: boolean }) {
+  const items: { key: string; icon?: string; text: string; title: string }[] = [];
+  const dr = p.incomingDamageReduction;
+  if (dr && dr.untilTurn >= turn) {
+    items.push({ key: 'dr', icon: 'icon_shield', text: `-${dr.value}`, title: `受けるダメージを${dr.value}減らす（ターン${dr.untilTurn}まで）` });
+  }
+  if (p.actorLockUntilTurn >= turn) {
+    items.push({ key: 'lock', icon: 'icon_lock', text: `T${p.actorLockUntilTurn}`, title: `ターン${p.actorLockUntilTurn}までアクターを交代できない` });
+  }
+  if (p.nextSkillCostDelta) {
+    const n = p.nextSkillCostDelta;
+    items.push({ key: 'cost', icon: 'icon_bolt', text: `${n > 0 ? '+' : ''}${n}`, title: '次に使うスキルのコストが変わる' });
+  }
+  if (p.nextDrawDelta) {
+    const n = p.nextDrawDelta;
+    items.push({ key: 'draw', text: `引${n > 0 ? '+' : ''}${n}`, title: '次のドロー枚数が変わる' });
+  }
+  if (items.length === 0) return null;
+  return (
+    <span className={`status-badges ${mine ? 'mine' : 'theirs'}`} title={mine ? '自分にかかっている状態' : '相手にかかっている状態'}>
+      {items.map((it) => (
+        <span key={it.key} className="status-badge" title={it.title}>
+          {it.icon && <img src={IMG(it.icon)} alt="" />}
+          {it.text}
+        </span>
+      ))}
+    </span>
+  );
+}
 
 export function longPressHandlers(onLong: () => void) {
   let timer: number | null = null;
@@ -209,6 +249,19 @@ export function Formation({ side, state, pops, targeting, onTap, koShown, cardW,
                   <img src={IMG(c.equipmentCardId)} alt="装備" />
                 </span>
               )}
+              {/* 選ぶとどうなるか。今までは「予想ダメージ」がプレビューの中にしか無く、
+               * 対象を選ぶ画面では何も分からなかった（B-2 ダメージ予定） */}
+              {alive && selectableSet?.has(i) && targeting?.effect && targeting.effect.value > 0 && (
+                <span className={`target-preview ${targeting.effect.kind}`}>
+                  {hp}
+                  <em>→</em>
+                  <b>
+                    {targeting.effect.kind === 'heal'
+                      ? Math.min(maxHp, hp + targeting.effect.value)
+                      : Math.max(0, hp - targeting.effect.value)}
+                  </b>
+                </span>
+              )}
               {alive && (
                 <div className="char-status">
                   <div className="hp-bar">
@@ -301,7 +354,7 @@ function PileThickness({ count, sideways, toLeft }: { count: number; sideways?: 
   );
 }
 
-export function ZoneCol({ side, p, deckRef, apRef, trashRef, onOpenPile }: {
+export function ZoneCol({ side, p, deckRef, apRef, trashRef, onOpenPile, apDelta = 0 }: {
   side: 0 | 1;
   p: BattleState['players'][number];
   deckRef: React.RefObject<HTMLDivElement>;
@@ -309,6 +362,8 @@ export function ZoneCol({ side, p, deckRef, apRef, trashRef, onOpenPile }: {
   trashRef: React.RefObject<HTMLDivElement>;
   /** deck は自分側だけ（相手の山札の中身は見せない） */
   onOpenPile: (kind: 'ap' | 'trash' | 'deck') => void;
+  /** チャージで選んでいる枚数。確定後のAPを先に見せる（B-4） */
+  apDelta?: number;
 }) {
   // 自分の山札だけ「残りの中身」を開ける。並びは種類別に整列して見せるので、
   // 次に何を引くか（本当の並び順）は分からない＝ゲーム性を壊さない。
@@ -332,9 +387,10 @@ export function ZoneCol({ side, p, deckRef, apRef, trashRef, onOpenPile }: {
       <img src={IMG('back')} className="pile-card sideways" />
       {/* 文字ラベルを消したぶん、どの山か分からなくなっていた。
        * AP だけ数字の横に雷の目印を付けて、山札・トラッシュと区別できるようにする */}
-      <span className="pile-count gold">
+      <span className={`pile-count gold ${apDelta > 0 ? 'forecast' : ''}`}>
         <img className="pile-ico" src={IMG('icon_bolt')} alt="" />
-        {p.ap.length}
+        {/* チャージを選んでいる間は「確定するといくつになるか」を先に見せる */}
+        {apDelta > 0 ? `${p.ap.length}→${p.ap.length + apDelta}` : p.ap.length}
       </span>
       <span className="pile-label">AP</span>
     </div>

@@ -8,6 +8,7 @@ import {
   type BattleAction,
   type BattleState,
   type CharacterCard,
+  type SkillCard,
 } from '@bravers/engine';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { BattleSetup } from '../App';
@@ -18,6 +19,7 @@ import { ALL_SFX, isSfxEnabled, playSfx, preloadSfx, setSfxEnabled } from '../ba
 import {
   Formation,
   NarrationBanner,
+  StatusBadges,
   TurnSplash,
   ZoneCol,
   longPressHandlers,
@@ -881,7 +883,13 @@ function BattleInner({ setup, onExit, onRematch }: {
       act([...map.values()][0]);
       return;
     }
-    setTargeting({ side, hint, actions: map });
+    // 対象を選ぶ間、それぞれの相手に「HP いくつ → いくつ」を出すための予測
+    let effect: NonNullable<Targeting>['effect'];
+    if (card.type === 'skill') {
+      const p = predictSkill(state, PLAYER, card);
+      if (p) effect = { kind: p.kind, value: p.value };
+    }
+    setTargeting({ side, hint, actions: map, effect });
   }
 
   /**
@@ -928,6 +936,43 @@ function BattleInner({ setup, onExit, onRematch }: {
     } catch (e) {
       console.warn(e);
     }
+  }
+
+  /**
+   * 攻撃カードの「誰がどうなるか」。
+   * ダメージの数字だけでは倒せるのか分からないので、対象のHPが実際にいくつになるかを出す。
+   * 対象の決まり方はエンジンの効果定義（targeting）が唯一の正。UIで推測しない。
+   */
+  function attackOutcome(card: SkillCard, value: number) {
+    const targeting = skillEffectOf(card.id)?.targeting ?? 'actor';
+    if (targeting === 'choose') return null; // 選ぶカードは対象選択モードで出す
+    const indexes =
+      targeting === 'all'
+        ? foe.characters.map((_, i) => i).filter((i) => isCharAlive(view, ENEMY, i))
+        : targeting === 'standby'
+          ? foe.characters.map((_, i) => i).filter((i) => i !== foe.actorIndex && isCharAlive(view, ENEMY, i))
+          : [foe.actorIndex];
+    const rows = indexes
+      .filter((i) => isCharAlive(view, ENEMY, i))
+      .map((i) => {
+        const maxHp = maxHpOf(view, ENEMY, i);
+        const hp = Math.max(0, maxHp - foe.characters[i].damage);
+        const after = Math.max(0, hp - value);
+        return { i, name: foe.characters[i].name.replace(/^\[[^\]]*\]/, ''), hp, after };
+      });
+    if (rows.length === 0) return null;
+    return (
+      <span className="predict outcome">
+        {rows.map((r) => (
+          <span key={r.i} className={`outcome-row ${r.after === 0 ? 'ko' : ''}`}>
+            {r.name} <b>{r.hp}</b>
+            <em>→</em>
+            <b>{r.after}</b>
+            {r.after === 0 && <i>撃破</i>}
+          </span>
+        ))}
+      </span>
+    );
   }
 
   const fieldCard = view.field ? cardById(view.field.cardId) : null;
@@ -1047,6 +1092,12 @@ function BattleInner({ setup, onExit, onRematch }: {
                 <span className="strip-field-none">FIELD</span>
               )}
             </div>
+            {/* 続いている状態（被ダメージ軽減・ロック・次のコスト/ドロー）。
+             * 何もかかっていなければ何も出ない。帯の真ん中はそのための空き */}
+            <span className="strip-status">
+              <StatusBadges p={foe} turn={state.turn} mine={false} />
+              <StatusBadges p={me} turn={state.turn} mine />
+            </span>
             <div className="phase-pill">
               <b className="turn-num">T{state.turn}</b>
               {isMyTurn ? (
@@ -1064,6 +1115,7 @@ function BattleInner({ setup, onExit, onRematch }: {
           <div className="area my-area">
             <ZoneCol
               side={PLAYER} p={me} deckRef={deckRefP} apRef={apRefP} trashRef={trashRefP}
+              apDelta={chargeSel.size}
               onOpenPile={(kind) => {
                 if (kind === 'trash') setPileList({ title: '自分のトラッシュ', cards: me.trash });
                 if (kind === 'ap') setPileList({ title: '自分のAPエリア', cards: me.ap });
@@ -1103,7 +1155,9 @@ function BattleInner({ setup, onExit, onRematch }: {
             const playable = isMyTurn && state.phase === 'play' && handPlayable.has(i);
             const chargeable = isMyTurn && state.phase === 'charge' && !busy;
             const picked = chargeSel.has(i);
-            const showCost = card.type === 'skill' && isMyTurn && state.phase === 'play' && !busy;
+            // コストは常に見せる（B-5）。以前はメインフェーズ中だけだったので、
+            // チャージフェーズや相手のターンに「次に何が撃てるか」を数えられなかった
+            const showCost = card.type === 'skill';
             const live = liveHand.get(i);
             // 表示も判定も「実際に払う額」で行う（素の costAp は使わない）
             const cost = live?.cost ?? (card.type === 'skill' ? card.costAp : 0);
@@ -1266,6 +1320,10 @@ function BattleInner({ setup, onExit, onRematch }: {
                       {p.value !== card.baseValue && <em className="mod">（基本{card.baseValue}）</em>}
                     </span>
                   )}
+                  {/* 「ダメージ12」だけでは倒せるのか分からない。誰がどうなるかまで出す（B-2）。
+                   * 対象を選べないカード（＝ほとんどの攻撃）は対象選択モードに入らないので、
+                   * ここで見せないと予定を知る機会が無い */}
+                  {p.kind === 'attack' && attackOutcome(card, p.value)}
                   {p.kind === 'heal' && <span className="predict heal">回復量 <b>{p.value}</b></span>}
                   {p.kind === 'guard' && <span className="predict grd">ガード軽減 <b>{p.value}</b></span>}
                   <span className="predict cost">
