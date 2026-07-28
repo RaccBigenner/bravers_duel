@@ -9,6 +9,8 @@ import {
   CARDS_PATH,
   PRIVATE_REPO,
   PUBLIC_REPO,
+  SETS_PATH,
+  assertVolEditable,
   ghGetJson,
   ghPutJson,
   handle,
@@ -18,6 +20,7 @@ import {
   HttpError,
   type Env,
   type MasterCard,
+  type SetsFile,
 } from '../_github';
 
 export const onRequestPost: PagesFunction<Env> = (ctx) =>
@@ -27,6 +30,9 @@ export const onRequestPost: PagesFunction<Env> = (ctx) =>
     if (!id || typeof vol !== 'number') {
       throw new HttpError(400, 'id と vol が必要です');
     }
+
+    const sets = (await ghGetJson<SetsFile>(env, PUBLIC_REPO, SETS_PATH)).data?.sets ?? [];
+    assertVolEditable(vol, sets);
 
     const targets: Array<[string, string]> = [
       [PUBLIC_REPO, CARDS_PATH],

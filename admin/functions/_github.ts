@@ -296,3 +296,24 @@ export function isReleasedVol(vol: number, sets: MasterSet[]): boolean {
 export function cardIsPublic(card: { vol: number; status?: string }, sets: MasterSet[]): boolean {
   return card.status !== 'draft' && isReleasedVol(card.vol, sets);
 }
+
+/**
+ * 公開済みの弾は管理画面から一切変更できない。書き込み系の入口すべてで最初に呼ぶ。
+ *
+ * 実際に事故が起きた: 第2弾のつもりのカードが vol:1 で保存され、公開済みの第1弾に
+ * 145枚目として紛れ込んで公開リポジトリに push された。engine のテスト
+ * （枚数・画像の対応）が止めたので公開ビルドには載らなかったが、
+ * 画像さえ付いていれば素通りしていた。
+ *
+ * 公開済みの弾を直す必要が出たら、リポジトリを直接編集して push する
+ * （テストと CI を必ず通す）。管理画面には抜け道を用意しない。
+ */
+export function assertVolEditable(vol: number, sets: MasterSet[]): void {
+  if (isReleasedVol(vol, sets)) {
+    throw new HttpError(
+      403,
+      `第${vol}弾は公開済みのため、管理画面からは変更できません。` +
+        `直す必要がある場合はリポジトリを直接編集してください。`,
+    );
+  }
+}

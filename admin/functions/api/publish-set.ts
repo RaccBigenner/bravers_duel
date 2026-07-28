@@ -48,6 +48,11 @@ export const onRequestPost: PagesFunction<Env> = (ctx) =>
       throw new HttpError(400, 'vol が必要です');
     }
 
+    // ここだけは assertVolEditable を通さない。公開済みの弾でも再実行できないと、
+    // 手順4まで進んで5で失敗した時（released にはなったが後片付けが残っている状態）に
+    // 直す手段が無くなるため。公開済みの弾に新しい制作中カードを作る経路は
+    // save-card 側で塞いであるので、再実行しても移すものは残っていない。
+
     // 1. 非公開リポの制作中カードを読み、status:'draft' を外す
     const wip = await ghGetJson<MasterCard[]>(env, PRIVATE_REPO, wipCardsPath(vol));
     const wipCards = wip.data ?? [];

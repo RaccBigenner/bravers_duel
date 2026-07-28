@@ -115,11 +115,18 @@ textarea { resize: vertical; }
 }
 .a-btn.on { border-color: var(--gold); color: var(--gold); }
 .a-btn.wide { width: 100%; }
-.a-btn:disabled { opacity: 0.45; }
+.a-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.a-danger:disabled { opacity: 0.45; cursor: not-allowed; }
 .a-add {
   background: var(--gold); color: #1a1200; border: none; border-radius: 10px;
   padding: 10px 14px; min-height: 44px; font-weight: 700; font-size: 14px; white-space: nowrap;
 }
+.a-add:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* 公開済みの弾のメタ情報（読むだけ） */
+.set-readonly { margin: 10px 0 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; font-size: 13px; }
+.set-readonly dt { color: var(--muted); font-size: 12px; }
+.set-readonly dd { margin: 0; }
 
 /* ---- 実装状況・公開前チェック ---- */
 

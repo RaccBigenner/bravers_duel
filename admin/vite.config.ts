@@ -41,6 +41,20 @@ function isReleasedVol(vol: number, sets: SetMetaLike[]): boolean {
 }
 
 /**
+ * 公開済みの弾は管理画面から一切変更できない（クラウド版 functions/_github.ts と同じ規則）。
+ *
+ * 実際に事故が起きた: 第2弾のつもりのカードが vol:1 で保存され、公開済みの第1弾に
+ * 145枚目として紛れ込んで公開リポジトリに push された。engine のテストが止めたので
+ * 公開ビルドには載らなかったが、画像さえ付いていれば素通りしていた。
+ *
+ * 戻り値: 変更してよければ null、駄目ならエラーメッセージ。
+ */
+function volLockError(vol: number, sets: SetMetaLike[]): string | null {
+  if (!isReleasedVol(vol, sets)) return null;
+  return `第${vol}弾は公開済みのため、管理画面からは変更できません。直す必要がある場合はリポジトリを直接編集してください。`;
+}
+
+/**
  * 弾マスタは2つのファイルに分かれている。
  * - data/sets.json      … 公開済みの弾だけ（公開リポ・公開ビルドに入る）
  * - data/wip/sets.json  … 制作中の弾（gitignore・絶対に公開されない）
@@ -178,7 +192,10 @@ function masterApi(): Plugin {
             // { card } を弾の status に応じて cards.json か wip へ保存（id で差し替え/追加）
             const { card } = await readBody(req);
             if (!card?.id || typeof card.vol !== 'number') return sendJson(res, 400, { error: 'card.id と vol が必要' });
-            const target = cardSaveTarget(card, loadSets());
+            const sets = loadSets();
+            const locked = volLockError(card.vol, sets);
+            if (locked) return sendJson(res, 403, { error: locked });
+            const target = cardSaveTarget(card, sets);
             // 反対側のファイルに同じ id が残っていたら消す（released⇄draft を移動したとき二重化を防ぐ）
             const other = target.endsWith('cards.json') ? wipCardsPath(card.vol) : resolve(DATA, 'cards.json');
             if (existsSync(other)) {
@@ -196,6 +213,8 @@ function masterApi(): Plugin {
 
           if (req.method === 'POST' && url === '/api/delete-card') {
             const { id, vol } = await readBody(req);
+            const lockedDel = volLockError(vol, loadSets());
+            if (lockedDel) return sendJson(res, 403, { error: lockedDel });
             // 公開・非公開どちらに入っていても消す（両ファイルから除去。変化がある時だけ書く）
             for (const target of [resolve(DATA, 'cards.json'), wipCardsPath(vol)]) {
               if (!existsSync(target)) continue;
@@ -212,7 +231,10 @@ function masterApi(): Plugin {
             const { id, vol, status, dataUrl } = await readBody(req);
             const m = /^data:image\/webp;base64,(.+)$/.exec(dataUrl ?? '');
             if (!id || !m) return sendJson(res, 400, { error: 'id と webp の dataUrl が必要' });
-            const isPublic = status !== 'draft' && isReleasedVol(vol, loadSets());
+            const imgSets = loadSets();
+            const lockedImg = volLockError(vol, imgSets);
+            if (lockedImg) return sendJson(res, 403, { error: lockedImg });
+            const isPublic = status !== 'draft' && isReleasedVol(vol, imgSets);
             const dir = isPublic ? IMAGES : WIP_IMAGES;
             mkdirSync(dir, { recursive: true });
             writeFileSync(resolve(dir, `${id}.webp`), Buffer.from(m[1], 'base64'));
@@ -281,6 +303,14 @@ function masterApi(): Plugin {
             // 弾（セット）の追加・更新
             const { set } = await readBody(req);
             if (typeof set?.vol !== 'number') return sendJson(res, 400, { error: 'set.vol が必要' });
+            // 公開済みの弾のメタ情報も変更させない
+            const lockedSet = volLockError(set.vol, loadSets());
+            if (lockedSet) return sendJson(res, 403, { error: lockedSet });
+            // 「状態」を手で released にして公開状態を作ることも認めない。
+            // 公開は publish-set（カードと画像を移してから最後に released にする）だけの仕事
+            if (set.status === 'released') {
+              return sendJson(res, 403, { error: '弾を公開するには「弾を公開」を使ってください（状態を直接 released にはできません）。' });
+            }
             // 公開済みなら data/sets.json、制作中なら data/wip/sets.json（非公開）へ。
             // 反対側に同じ vol が残っていたら消す（draft⇄released を行き来しても二重化しない）
             const target = setSaveTarget(set);

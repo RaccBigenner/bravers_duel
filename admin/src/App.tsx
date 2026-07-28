@@ -158,6 +158,13 @@ export function App() {
   const sets = master?.sets ?? [];
   const images = master?.images ?? {};
   const currentSet = sets.find((s) => s.vol === vol);
+  /**
+   * 公開済みの弾は読み取り専用。ここは「押せないようにして事故を防ぐ」ための表示上の制限で、
+   * 本当の防壁はサーバ側（functions/_github.ts の assertVolEditable と、
+   * ローカルの vite.config.ts の volLockError）。画面だけで守ると、
+   * 古いタブが開きっぱなしの時などに素通りする。
+   */
+  const locked = currentSet?.status === 'released';
   const volCards = useMemo(() => (master?.cards ?? []).filter((c) => c.vol === vol), [master, vol]);
 
   const filtered = useMemo(() => {
@@ -274,6 +281,7 @@ export function App() {
 
   function onAddCard() {
     if (!currentSet) return flash('先に弾を作成してください');
+    if (locked) return flash(`第${vol}弾は公開済みのため、カードを追加できません`);
     // 弾内の次の連番 code（A001, A002, ...）。下書き中や既存カードと被らないように
     const used = volCards
       .map((c) => /^A(\d+)$/.exec(c.code)?.[1])
@@ -292,7 +300,6 @@ export function App() {
       type: 'skill',
       effectText: '',
       flavorText: '',
-      status: currentSet.status === 'released' ? 'draft' : undefined,
       costAp: 1,
       conditionAttribute: ['斬'],
       baseValue: 3,
@@ -331,7 +338,14 @@ export function App() {
           <button className={view === 'list' ? 'on' : ''} onClick={() => setView('list')}>リスト</button>
           {!narrow && <button className={view === 'table' ? 'on' : ''} onClick={() => setView('table')}>表</button>}
         </div>
-        <button className="a-add" onClick={onAddCard}>＋ 追加</button>
+        <button
+          className="a-add"
+          onClick={onAddCard}
+          disabled={locked}
+          title={locked ? '公開済みの弾にはカードを追加できません' : ''}
+        >
+          ＋ 追加
+        </button>
       </div>
 
       {filterOpen && (
@@ -427,6 +441,7 @@ export function App() {
     <SetEditor
       vol={vol}
       set={currentSet}
+      locked={locked}
       onSave={async (s) => {
         await saveSet(s);
         // カードと同じ理由で手元を直接更新する（GitHub の読み直しは待たない）
@@ -463,6 +478,7 @@ export function App() {
       key={draftCard ? 'draft' : selected.id}
       card={selected}
       isDraft={!!draftCard}
+      locked={locked}
       saving={saving}
       imageRev={images[selected.id]}
       onSave={onSaveCard}
@@ -557,7 +573,12 @@ export function App() {
 }
 
 // ---------- 弾（セット）エディタ ----------
-function SetEditor({ vol, set, onSave }: { vol: number; set?: MasterSet; onSave: (s: MasterSet) => void }) {
+function SetEditor({ vol, set, locked, onSave }: {
+  vol: number;
+  set?: MasterSet;
+  locked: boolean;
+  onSave: (s: MasterSet) => void;
+}) {
   const blank = (): MasterSet => ({
     vol, themeNo: vol, themeName: '', themeSubtitle: '', packType: 'DX', status: 'draft', releasedAt: '', codename: '',
   });
@@ -568,6 +589,29 @@ function SetEditor({ vol, set, onSave }: { vol: number; set?: MasterSet; onSave:
   }, [set, vol]);
 
   const up = (patch: Partial<MasterSet>) => setDraft((d) => ({ ...d, ...patch }));
+
+  // 公開済みの弾は中身を見せるだけにする。編集できると、公開後の弾に
+  // 手を入れて公開データを壊す事故が起きる（実際に起きた）
+  if (locked && set) {
+    return (
+      <section className="panel set-editor">
+        <h3>第{vol}弾のメタ情報</h3>
+        <p className="audit-line good">この弾は公開済みです。管理画面からは変更できません。</p>
+        <dl className="set-readonly">
+          <dt>テーマ名</dt><dd>{set.themeName || '(未設定)'}</dd>
+          <dt>サブタイトル</dt><dd>{set.themeSubtitle || '(未設定)'}</dd>
+          <dt>テーマNo.</dt><dd>{set.themeNo ?? '-'}</dd>
+          <dt>パックタイプ</dt><dd>{set.packType || '-'}</dd>
+          <dt>公開日</dt><dd>{set.releasedAt || '-'}</dd>
+        </dl>
+        <p className="hint-small">
+          直す必要がある場合は、リポジトリを直接編集して push してください
+          （テストと CI が通ることを必ず確認してください）。
+        </p>
+      </section>
+    );
+  }
+
   return (
     <section className="panel set-editor">
       <h3>第{vol}弾のメタ情報</h3>
@@ -663,7 +707,10 @@ function PublishPanel({ set, preflight, onPublish, onFlash }: {
       <section className="panel">
         <h3>弾を公開</h3>
         <p className="audit-line good">第{set.vol}弾は公開済みです。</p>
-        <p className="hint-small">カードを保存すると、そのまま公開データに反映されます。</p>
+        <p className="hint-small">
+          公開済みの弾は、管理画面からは変更できません（カード・画像・弾の設定のすべて）。
+          直す必要がある場合はリポジトリを直接編集して push してください。
+        </p>
       </section>
     );
   }
@@ -695,9 +742,11 @@ function PublishPanel({ set, preflight, onPublish, onFlash }: {
 }
 
 // ---------- カードエディタ ----------
-function CardEditor({ card, isDraft, saving, imageRev, onSave, onCancel, onDelete, onImageSaved }: {
+function CardEditor({ card, isDraft, locked, saving, imageRev, onSave, onCancel, onDelete, onImageSaved }: {
   card: MasterCard;
   isDraft: boolean;
+  /** 公開済みの弾のカード。閲覧と画像の書き出しだけできる */
+  locked: boolean;
   saving: boolean;
   imageRev?: string;
   onSave: (c: MasterCard, originalId?: string) => void;
@@ -751,9 +800,20 @@ function CardEditor({ card, isDraft, saving, imageRev, onSave, onCancel, onDelet
         <span className={`impl-badge ${st}`}>{IMPL_LABEL[st]}</span>
       </div>
 
+      {locked && (
+        <p className="audit-line good">
+          この弾は公開済みです。内容の変更はできません（カード画像の書き出しはできます）。
+        </p>
+      )}
+
       <div className="img-upload">
         <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={onPickImage} />
-        <button className="a-btn wide" disabled={uploading} onClick={() => fileRef.current?.click()}>
+        <button
+          className="a-btn wide"
+          disabled={uploading || locked}
+          title={locked ? '公開済みの弾の画像は差し替えられません' : ''}
+          onClick={() => fileRef.current?.click()}
+        >
           {uploading ? '変換・保存中…' : '画像を選ぶ / 撮影'}
         </button>
         <button
@@ -886,8 +946,8 @@ function CardEditor({ card, isDraft, saving, imageRev, onSave, onCancel, onDelet
       <div className="editor-actions">
         <button
           className="a-primary"
-          disabled={saving || d.name.trim() === ''}
-          title={d.name.trim() === '' ? '名前を入れてください' : ''}
+          disabled={saving || locked || d.name.trim() === ''}
+          title={locked ? '公開済みの弾は変更できません' : d.name.trim() === '' ? '名前を入れてください' : ''}
           onClick={() => onSave(d, originalId)}
         >
           {saving ? '保存中…' : isDraft ? 'この内容で作成' : '保存'}
@@ -895,7 +955,14 @@ function CardEditor({ card, isDraft, saving, imageRev, onSave, onCancel, onDelet
         {isDraft ? (
           <button className="a-danger" onClick={onCancel}>やめる</button>
         ) : (
-          <button className="a-danger" onClick={() => { if (confirm(`${d.name} を削除しますか？`)) onDelete(); }}>削除</button>
+          <button
+            className="a-danger"
+            disabled={locked}
+            title={locked ? '公開済みの弾は変更できません' : ''}
+            onClick={() => { if (confirm(`${d.name} を削除しますか？`)) onDelete(); }}
+          >
+            削除
+          </button>
         )}
       </div>
     </div>

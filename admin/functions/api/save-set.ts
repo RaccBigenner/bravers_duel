@@ -12,6 +12,7 @@
  * レスポンス: { ok:true, savedTo }
  */
 import {
+  assertVolEditable,
   PRIVATE_REPO,
   PUBLIC_REPO,
   SETS_PATH,
@@ -35,6 +36,17 @@ export const onRequestPost: PagesFunction<Env> = (ctx) =>
       throw new HttpError(400, 'set.vol が必要です');
     }
 
+    // 公開済みの弾のメタ情報（テーマ名・公開日など）も変更させない
+    const current = (await ghGetJson<SetsFile>(env, PUBLIC_REPO, SETS_PATH)).data?.sets ?? [];
+    assertVolEditable(set.vol, current);
+    // 「状態」を手で released にして公開状態を作ることも認めない。
+    // 公開は publish-set（カードと画像を移してから最後に released にする）だけの仕事。
+    if (set.status === 'released') {
+      throw new HttpError(403, '弾を公開するには「弾を公開」を使ってください（状態を直接 released にはできません）。');
+    }
+
+    // ここを通る時点で必ず制作中なので isPublic は常に false。
+    // save-card と同じく、置き場所の規則と書いてよいかの判断は分けて持つ。
     const isPublic = set.status === 'released';
     const target = isPublic
       ? ({ repo: PUBLIC_REPO, path: SETS_PATH } as const)

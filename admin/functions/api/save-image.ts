@@ -7,6 +7,7 @@
  * レスポンス: { ok:true, savedTo }
  */
 import {
+  assertVolEditable,
   PRIVATE_REPO,
   PUBLIC_REPO,
   SETS_PATH,
@@ -39,6 +40,9 @@ export const onRequestPost: PagesFunction<Env> = (ctx) =>
     }
 
     const sets = (await ghGetJson<SetsFile>(env, PUBLIC_REPO, SETS_PATH)).data?.sets ?? [];
+    assertVolEditable(vol, sets);
+
+    // save-card と同じ理由で振り分けは残す（ここを通る時点で必ず非公開側になる）
     const toPublic = cardIsPublic({ vol, status }, sets);
     const repo = toPublic ? PUBLIC_REPO : PRIVATE_REPO;
     const path = toPublic ? publicImagePath(id) : privateImagePath(id);

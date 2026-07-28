@@ -11,6 +11,7 @@
  */
 import {
   CARDS_PATH,
+  assertVolEditable,
   PRIVATE_REPO,
   PUBLIC_REPO,
   SETS_PATH,
@@ -36,6 +37,12 @@ export const onRequestPost: PagesFunction<Env> = (ctx) =>
     }
 
     const sets = (await ghGetJson<SetsFile>(env, PUBLIC_REPO, SETS_PATH)).data?.sets ?? [];
+    assertVolEditable(card.vol, sets);
+
+    // ここを通る時点で弾は必ず未公開なので toPublic は常に false になる。
+    // それでも振り分けを残しているのは、「どこに置くべきか」の規則と
+    // 「書いてよいか」の判断を混ぜないため（公開済みの判定が将来変わっても
+    // 保存先が壊れない）。
     const toPublic = cardIsPublic(card, sets);
 
     const targetRepo = toPublic ? PUBLIC_REPO : PRIVATE_REPO;
