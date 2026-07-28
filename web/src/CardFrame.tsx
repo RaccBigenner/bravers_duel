@@ -525,13 +525,14 @@ function SkillContent({ card, w, h, kira, live }: { card: SkillCard; w: number; 
           </div>
         </div>
 
-        {/* 下段: 値プレート＋説明 */}
+        {/* 下段: 値プレート＋説明
+            サポートは基本値が必ず0で、数字を出しても意味が無いので種別プレートだけにする */}
         <div>
           <div style={{ display: 'flex', justifyContent: 'center', gap: w * 0.013 }}>
             <div
               style={{
                 height: h * 0.088,
-                minWidth: w * 0.56,
+                minWidth: card.valueType === 'support' ? w * 0.82 : w * 0.56,
                 backgroundImage: `url(${skillPlate(card.rarity)})`,
                 backgroundSize: '100% 100%',
                 display: 'flex',
@@ -546,6 +547,7 @@ function SkillContent({ card, w, h, kira, live }: { card: SkillCard; w: number; 
                 {valueTypeLabel(card.valueType)}
               </span>
             </div>
+            {card.valueType !== 'support' && (
             <div
               style={{
                 height: h * 0.088,
@@ -577,6 +579,7 @@ function SkillContent({ card, w, h, kira, live }: { card: SkillCard; w: number; 
                 {live?.value ?? card.baseValue}
               </span>
             </div>
+            )}
           </div>
           <DescriptionArea effectText={card.effectText} flavorText={card.flavorText} w={w} />
         </div>

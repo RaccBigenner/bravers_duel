@@ -214,7 +214,10 @@ export function DeckBuilder({ initial, onUse, onBack }: {
                     <span className="builder-detail">
                       {c.type === 'skill' && (
                         <>
-                          {`${c.valueType.toUpperCase()}・コスト${c.costAp}・値${c.baseValue}・条件`}
+                          {/* サポートは基本値が必ず0なので値を出さない */}
+                          {c.valueType === 'support'
+                            ? `${c.valueType.toUpperCase()}・コスト${c.costAp}・条件`
+                            : `${c.valueType.toUpperCase()}・コスト${c.costAp}・値${c.baseValue}・条件`}
                           <AttrIcons attrs={c.conditionAttribute} />
                         </>
                       )}

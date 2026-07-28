@@ -33,9 +33,10 @@ const rows = ids
   .map((id) => {
     const c = byId[id] ?? {};
     const b = briefs[id] ?? {};
+    const cast = (b.cast || []).join('・');
     return `
 <section>
-  <h2>${esc(c.name)} <small>${esc(id)}／${esc(c.rarity)}／AP${esc(c.costAp)}／${esc((c.conditionAttribute || []).join('・'))}</small></h2>
+  <h2>${esc(c.name)} <small>${esc(id)}／${esc(c.rarity)}／AP${esc(c.costAp)}／${esc((c.conditionAttribute || []).join('・'))}${cast ? `／使い手: ${esc(cast)}` : ''}</small></h2>
   <p class="memo">${esc(b.memo)}</p>
   <div class="pair">
     <figure class="old"><img src="old/${id}.webp" loading="lazy"><figcaption>いまの絵</figcaption></figure>
@@ -55,10 +56,9 @@ section{border-top:1px solid #2a2f37;padding:16px 0}
 h2{font-size:16px;margin:0 0 4px}
 h2 small{font-weight:400;color:#8b929c;font-size:12px;margin-left:8px}
 p.memo{color:#a8b4c4;font-size:13px;margin:0 0 10px}
-.pair{display:grid;grid-template-columns:1fr 2fr;gap:12px;align-items:start}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}
 figure{margin:0}
-figure img{width:100%;border-radius:6px;display:block;background:#000}
-figure.old img{opacity:.55}
+figure img{width:100%;aspect-ratio:3/2;object-fit:contain;border-radius:6px;display:block;background:#000}
 figcaption{font-size:11px;color:#7b828c;margin-top:4px}
 </style></head><body>
 <h1>スキルカードの絵 確認</h1>
