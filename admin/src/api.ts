@@ -30,6 +30,11 @@ export interface MasterCard {
   valueType?: string;
   // equipment
   addAttribute?: string[];
+  /**
+   * 弾の中での並び順（0 始まり）。制作中の弾を手で並べ替えるために持つ。
+   * 無いカードは code 順として扱うので、古いデータもそのまま動く。
+   */
+  order?: number;
   [k: string]: unknown;
 }
 
@@ -42,6 +47,11 @@ export interface MasterSet {
   status: CardStatus;
   releasedAt: string;
   codename?: string;
+  /**
+   * 採番を確定したか。true になったら並び替えも採番もできない。
+   * 番号が刷られたカードの順番を後から動かすと、印刷物やメモと食い違うため。
+   */
+  codesLocked?: boolean;
 }
 
 export interface Master {
@@ -99,6 +109,28 @@ export async function saveCard(card: MasterCard): Promise<{ savedTo: string }> {
     body: JSON.stringify({ card: stripForType(card) }),
   });
   if (!res.ok) throw new Error(`保存失敗: ${(await res.json()).error ?? res.status}`);
+  return res.json();
+}
+
+/**
+ * その弾のカードをまとめて保存する（並び替え・採番用）。
+ * renames を渡すと画像も一緒に引っ越す。id が画像のファイル名なので、
+ * 採番し直したのに画像を動かさないと絵が全部消える。
+ */
+export async function saveCards(
+  vol: number,
+  cards: MasterCard[],
+  renames?: { from: string; to: string }[],
+): Promise<{ savedTo: string; saved: number; movedImages: number }> {
+  const res = await fetch('/api/save-cards', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ vol, cards: cards.map(stripForType), renames }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(`一括保存失敗: ${(body as { error?: string }).error ?? res.status}`);
+  }
   return res.json();
 }
 

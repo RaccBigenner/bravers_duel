@@ -211,6 +211,48 @@ function masterApi(): Plugin {
             return sendJson(res, 200, { ok: true, savedTo: target.replace(REPO + '/', '') });
           }
 
+          if (req.method === 'POST' && url === '/api/save-cards') {
+            // 並び替えと採番のための一括保存。
+            // 1枚ずつ保存すると100枚超で100回ファイルを書くことになるので、
+            // その弾のファイルを一度だけ書き換える。
+            // renames が付いていれば画像も一緒に引っ越す（id がファイル名なので、
+            // これをやらないと採番し直した瞬間に全部の絵が迷子になる）。
+            const { vol, cards, renames } = await readBody(req);
+            if (typeof vol !== 'number' || !Array.isArray(cards)) {
+              return sendJson(res, 400, { error: 'vol と cards が必要' });
+            }
+            const setsForBulk = loadSets();
+            const lockedBulk = volLockError(vol, setsForBulk);
+            if (lockedBulk) return sendJson(res, 403, { error: lockedBulk });
+
+            // 画像を先に動かす。カードだけ先に書いて画像で失敗すると、
+            // 新しい id に対応する絵が無い状態になり、どこが欠けたか分からなくなる
+            let moved = 0;
+            for (const { from, to } of (renames ?? []) as { from: string; to: string }[]) {
+              if (!from || !to || from === to) continue;
+              for (const dir of [WIP_IMAGES, IMAGES]) {
+                const src = resolve(dir, `${from}.webp`);
+                if (!existsSync(src)) continue;
+                copyFileSync(src, resolve(dir, `${to}.webp`));
+                unlinkSync(src);
+                moved++;
+              }
+            }
+
+            // 保存先は1枚目の振り分けに合わせる（弾単位で必ず同じ側に入る）
+            const bulkTarget = cardSaveTarget(cards[0] ?? { vol, status: 'draft' }, setsForBulk);
+            const others = readJson<Record<string, unknown>[]>(bulkTarget, []).filter(
+              (c) => (c as { vol?: number }).vol !== vol,
+            );
+            writeJson(bulkTarget, [...others, ...cards]);
+            return sendJson(res, 200, {
+              ok: true,
+              savedTo: bulkTarget.replace(REPO + '/', ''),
+              saved: cards.length,
+              movedImages: moved,
+            });
+          }
+
           if (req.method === 'POST' && url === '/api/delete-card') {
             const { id, vol } = await readBody(req);
             const lockedDel = volLockError(vol, loadSets());

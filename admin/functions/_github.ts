@@ -268,6 +268,32 @@ export async function ghPutBase64(
   if (!res.ok) throw new GhError(res.status, `PUT ${repo}/${path}`);
 }
 
+/** ファイルを削除する。無ければ何もしない（引っ越しの後始末に使う） */
+export async function ghDelete(env: Env, repo: string, path: string, message: string): Promise<boolean> {
+  const sha = await ghGetSha(env, repo, path);
+  if (!sha) return false;
+  const res = await fetch(ghUrl(repo, path), {
+    method: 'DELETE',
+    headers: { ...ghHeaders(env), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, sha }),
+  });
+  if (!res.ok) throw new GhError(res.status, `DELETE ${repo}/${path}`);
+  return true;
+}
+
+/**
+ * 画像を別の id へ引っ越す（コピーしてから元を消す）。
+ * カードidがそのままファイル名なので、採番をやり直したら必ずこれも動かす。
+ */
+export async function ghMoveImage(env: Env, repo: string, from: string, to: string): Promise<boolean> {
+  const path = repo === PUBLIC_REPO ? publicImagePath : privateImagePath;
+  const bytes = await ghGetRaw(env, repo, path(from));
+  if (!bytes) return false;
+  await ghPutBase64(env, repo, path(to), bytesToBase64(bytes), `move image ${from} -> ${to}`);
+  await ghDelete(env, repo, path(from), `move image ${from} -> ${to}`);
+  return true;
+}
+
 /** JSON 値を人が読める整形（2 スペース + 末尾改行）で書き込む */
 export async function ghPutJson(
   env: Env,

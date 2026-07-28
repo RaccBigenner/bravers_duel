@@ -14,6 +14,7 @@ import {
   fileToWebp,
   publishSet,
   saveCard,
+  saveCards,
   saveImage,
   saveSet,
   stripForType,
@@ -36,6 +37,8 @@ import {
   type ViewMode,
 } from './cardView';
 import { CardFrame } from '../../web/src/CardFrame';
+import { OrderTab } from './OrderTab';
+import { StatsTab } from './StatsTab';
 
 const TYPES = ['character', 'skill', 'equipment', 'field'] as const;
 const TYPE_LABEL: Record<string, string> = {
@@ -117,7 +120,7 @@ export function App() {
   const userClosedRef = useRef(false);
 
   const narrow = useIsNarrow();
-  const [tab, setTab] = useState<'cards' | 'set' | 'check'>('cards');
+  const [tab, setTab] = useState<'cards' | 'order' | 'stats' | 'set' | 'check'>('cards');
   const [view, setView] = useState<ViewMode>(
     () => (localStorage.getItem('bd-admin-view') as ViewMode) || 'card',
   );
@@ -428,6 +431,72 @@ export function App() {
     </main>
   );
 
+  /** 並びの一括保存。カードは全部まとめて1回で書く */
+  async function onSaveOrder(ordered: MasterCard[]) {
+    setSaving(true);
+    try {
+      const r = await saveCards(vol, ordered);
+      setMaster((m) => (m ? { ...m, cards: [...m.cards.filter((c) => c.vol !== vol), ...ordered] } : m));
+      flash(`並びを保存しました（${r.saved}枚 → ${r.savedTo}）`);
+    } catch (e) {
+      flash(String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  /**
+   * 採番の確定。カードのIDと画像を同時に動かし、弾に「確定済み」の印を付ける。
+   * 印を付けた後は並び替えも採番もできない。
+   */
+  async function onConfirmCodes(renumbered: MasterCard[], renames: { from: string; to: string }[]) {
+    if (!currentSet) return;
+    setSaving(true);
+    try {
+      const r = await saveCards(vol, renumbered, renames);
+      const lockedSet: MasterSet = { ...currentSet, codesLocked: true };
+      await saveSet(lockedSet);
+      setMaster((m) =>
+        m
+          ? {
+              ...m,
+              cards: [...m.cards.filter((c) => c.vol !== vol), ...renumbered],
+              sets: [...m.sets.filter((s) => s.vol !== vol), lockedSet].sort((a, b) => a.vol - b.vol),
+            }
+          : m,
+      );
+      setSelectedId(null);
+      // 画像の版番号（?v=）は GitHub 側の sha なので、引っ越し後は読み直さないと合わない
+      await reload();
+      flash(`採番を確定しました（${r.saved}枚・画像${r.movedImages}枚を移動）`);
+    } catch (e) {
+      flash(String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const orderPane = currentSet ? (
+    <main className="admin-main">
+      <OrderTab
+        cards={volCards}
+        set={currentSet}
+        images={images}
+        saving={saving}
+        onSaveOrder={onSaveOrder}
+        onConfirmCodes={onConfirmCodes}
+      />
+    </main>
+  ) : (
+    <main className="admin-main"><p className="empty">先に弾を作成してください。</p></main>
+  );
+
+  const statsPane = (
+    <main className="admin-main">
+      <StatsTab cards={volCards} images={images} />
+    </main>
+  );
+
   const orphanVols = master.orphanVols ?? [];
 
   const setPane = (
@@ -534,12 +603,16 @@ export function App() {
         <>
           <div className="pane">
             {tab === 'cards' && cardsPane}
+            {tab === 'order' && orderPane}
+            {tab === 'stats' && statsPane}
             {tab === 'set' && <aside className="admin-side">{setPane}</aside>}
             {tab === 'check' && <aside className="admin-side">{checkPane}</aside>}
           </div>
 
           <nav className="tabbar">
             <button className={tab === 'cards' ? 'on' : ''} onClick={() => setTab('cards')}>カード</button>
+            <button className={tab === 'order' ? 'on' : ''} onClick={() => setTab('order')}>並び</button>
+            <button className={tab === 'stats' ? 'on' : ''} onClick={() => setTab('stats')}>集計</button>
             <button className={tab === 'set' ? 'on' : ''} onClick={() => setTab('set')}>弾の設定</button>
             <button className={tab === 'check' ? 'on' : ''} onClick={() => setTab('check')}>
               チェックと公開{preflight.allGreen ? '' : ' •'}
@@ -564,7 +637,16 @@ export function App() {
             {setPane}
             {checkPane}
           </aside>
-          {cardsPane}
+          <div className="admin-center">
+            {/* PCでも中央だけを切り替える。編集フォームは右に出したままにしたいので、
+                画面ごと差し替えるのではなくここだけタブにする */}
+            <nav className="center-tabs">
+              <button className={tab === 'cards' ? 'on' : ''} onClick={() => setTab('cards')}>カード</button>
+              <button className={tab === 'order' ? 'on' : ''} onClick={() => setTab('order')}>並び</button>
+              <button className={tab === 'stats' ? 'on' : ''} onClick={() => setTab('stats')}>集計</button>
+            </nav>
+            {tab === 'order' ? orderPane : tab === 'stats' ? statsPane : cardsPane}
+          </div>
           <aside className="admin-editor">{editorPane}</aside>
         </div>
       )}
