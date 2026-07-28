@@ -70,11 +70,18 @@ function useViewportSize(): { vw: number; vh: number } {
 }
 
 /**
- * 横持ちで、盤面が入りきらない高さかどうか。
- * 盤面は縦持ち前提の作り。横向きの狭い高さ（例 844x390）だと控えのHPや山札が
- * 画面の外に出て見えなくなるので、遊ばせずに「縦にして」と出す。
+ * 盤面が入りきらない「横長で低い」画面かどうか。
+ * 盤面は縦長前提の作り。横向きの狭い高さ（例 844x390）だと控えのHPや山札が
+ * 画面の外に出て見えなくなるので、遊ばせずに案内を出す。
  * タブレットの横向き（1024x768 等）は入るので対象外。
+ *
+ * 指で触る端末かどうかも返す。PCのブラウザでウィンドウを低くしただけなのに
+ * 「スマホを縦にしてください」と出ていた（回しようがない）ので、案内文を分ける。
  */
+function isTouchDevice(): boolean {
+  return window.matchMedia?.('(pointer: coarse)').matches ?? navigator.maxTouchPoints > 0;
+}
+
 function useNeedsPortrait(): boolean {
   const check = () => window.innerWidth > window.innerHeight && window.innerHeight < 520;
   const [needs, setNeeds] = useState(check);
@@ -1355,8 +1362,14 @@ function BattleInner({ setup, onExit, onRematch }: {
       {needsPortrait && (
         <div className="rotate-hint">
           <img src={IMG('icon_sword')} alt="" />
-          <p>スマホを縦にしてください</p>
-          <small>バトル画面は縦持ち用に作られています。<br />横向きだと山札や控えのHPが画面の外に出てしまいます。</small>
+          {/* 指で触る端末なら「回してください」、マウスの端末なら「窓を縦長に」。
+           * 以前はPCでも「スマホを縦にしてください」と出ていて、回しようがなかった */}
+          <p>{isTouchDevice() ? '画面を縦にしてください' : 'ウィンドウを縦長にしてください'}</p>
+          <small>
+            バトル画面は縦長の画面用に作られています。
+            <br />
+            横に長いと山札や控えのHPが画面の外に出てしまいます。
+          </small>
         </div>
       )}
 

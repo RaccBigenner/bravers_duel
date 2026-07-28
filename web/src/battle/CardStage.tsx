@@ -87,21 +87,27 @@ function FlyingCard({ move, onDone }: { move: CardMove; onDone: (key: number) =>
     const tiltTo = tiltOf(move.poseTo);
     const rollTo = spin ? 90 : 0;
 
+    // 着地の重み。ぴたっと止めると紙に見えないので、最後にわずかに沈み込ませる。
+    // 直前を「少し浮いた・少し大きい」状態にして、そこから落として止める。
+    const settle = (s: Spot): Spot => ({ ...s, w: s.w * 1.05 });
+
     const frames: Keyframe[] = [];
     if (via) {
       // 手札 → 中央で見せる → トラッシュ。止まっている時間は duration に含める
       const inAt = 0.34;
-      const outAt = Math.min(0.9, inAt + hold / Math.max(duration, 1));
+      const outAt = Math.min(0.88, inAt + hold / Math.max(duration, 1));
       frames.push({ offset: 0, transform: at(from, tiltFrom) });
       frames.push({ offset: inAt, transform: at(via, 0), easing: 'cubic-bezier(0.2,0.8,0.3,1)' });
       frames.push({ offset: outAt, transform: at(via, 0) });
-      frames.push({ offset: 1, transform: at(to, tiltTo, 0, rollTo) });
+      frames.push({ offset: 0.94, transform: at(settle(to), tiltTo, 4, rollTo) });
+      frames.push({ offset: 1, transform: at(to, tiltTo, 0, rollTo), easing: 'ease-out' });
     } else {
       // 直行。真ん中で少し持ち上げて放物線にする
       const mid: Spot = { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2, w: (from.w + to.w) / 2 };
       frames.push({ offset: 0, transform: at(from, tiltFrom) });
       frames.push({ offset: 0.5, transform: at(mid, (tiltFrom + tiltTo) / 2, arc, rollTo / 2) });
-      frames.push({ offset: 1, transform: at(to, tiltTo, 0, rollTo) });
+      frames.push({ offset: 0.9, transform: at(settle(to), tiltTo, 3, rollTo) });
+      frames.push({ offset: 1, transform: at(to, tiltTo, 0, rollTo), easing: 'ease-out' });
     }
 
     const anim = body.animate(frames, {

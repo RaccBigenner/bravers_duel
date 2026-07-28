@@ -268,6 +268,39 @@ export function Formation({ side, state, pops, targeting, onTap, koShown, cardW,
   );
 }
 
+/**
+ * 山の「厚み」。枚数に応じて下に重なった札を出す。
+ *
+ * これまで山札もトラッシュもAPも常に1枚の絵で、枚数は数字でしか分からなかった。
+ * 厚みが変われば、数字を読まなくても増減が体で分かる（紙のカードゲームの感覚）。
+ * 8枚で1段、最大5段。40枚=5段 / 24枚=3段 / 8枚=1段 / 0枚=0段。
+ *
+ * ずらす向きは必ず「画面の端側」。内側へずらすと、下の段がキャラカードに寄っていく。
+ * 縦のずれも、下のパイルとの間隔（--pile-gap は最低6px）を超えないよう小さく抑える。
+ */
+function PileThickness({ count, sideways, toLeft }: { count: number; sideways?: boolean; toLeft?: boolean }) {
+  const layers = Math.min(5, Math.ceil(count / 8));
+  return (
+    <>
+      {Array.from({ length: layers }, (_, i) => {
+        const d = layers - i; // 下の段ほど大きくずらす（1段 = 1px）
+        const x = toLeft ? -d : d;
+        return (
+          <span
+            key={i}
+            className="pile-shim"
+            style={{
+              transform: sideways
+                ? `rotate(90deg) scale(0.92) translate(${d}px, ${-x}px)` // 回転後は軸が入れ替わる
+                : `translate(${x}px, ${d}px)`,
+            }}
+          />
+        );
+      })}
+    </>
+  );
+}
+
 export function ZoneCol({ side, p, deckRef, apRef, trashRef, onOpenPile }: {
   side: 0 | 1;
   p: BattleState['players'][number];
@@ -287,6 +320,7 @@ export function ZoneCol({ side, p, deckRef, apRef, trashRef, onOpenPile }: {
       key="deck"
       onClick={canPeekDeck ? () => onOpenPile('deck') : undefined}
     >
+      <PileThickness count={p.deck.length} toLeft={side === ENEMY} />
       <img src={IMG('back')} className="pile-card" />
       <span className={`pile-count ${p.deck.length <= 10 ? 'low' : ''}`}>{p.deck.length}</span>
       <span className="pile-label">山札</span>
@@ -294,13 +328,20 @@ export function ZoneCol({ side, p, deckRef, apRef, trashRef, onOpenPile }: {
   );
   const ap = (
     <div className="pile ap" ref={apRef} key="ap" onClick={() => onOpenPile('ap')}>
+      <PileThickness count={p.ap.length} sideways toLeft={side === ENEMY} />
       <img src={IMG('back')} className="pile-card sideways" />
-      <span className="pile-count gold">{p.ap.length}</span>
+      {/* 文字ラベルを消したぶん、どの山か分からなくなっていた。
+       * AP だけ数字の横に雷の目印を付けて、山札・トラッシュと区別できるようにする */}
+      <span className="pile-count gold">
+        <img className="pile-ico" src={IMG('icon_bolt')} alt="" />
+        {p.ap.length}
+      </span>
       <span className="pile-label">AP</span>
     </div>
   );
   const trash = (
     <div className="pile trash" ref={trashRef} key="trash" onClick={() => onOpenPile('trash')}>
+      <PileThickness count={p.trash.length} toLeft={side === ENEMY} />
       {p.trash.length > 0 ? (
         <div className="pile-card trash-top" style={{ backgroundImage: `url(${IMG(p.trash[p.trash.length - 1])})` }} />
       ) : (
