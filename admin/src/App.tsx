@@ -615,7 +615,8 @@ export function App() {
             <button className={tab === 'stats' ? 'on' : ''} onClick={() => setTab('stats')}>集計</button>
             <button className={tab === 'set' ? 'on' : ''} onClick={() => setTab('set')}>弾の設定</button>
             <button className={tab === 'check' ? 'on' : ''} onClick={() => setTab('check')}>
-              チェックと公開{preflight.allGreen ? '' : ' •'}
+              {/* 5タブになったので、いちばん長いこれだけ短くする */}
+              公開{preflight.allGreen ? '' : ' •'}
             </button>
           </nav>
 
