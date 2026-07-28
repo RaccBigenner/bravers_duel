@@ -41,7 +41,9 @@ export function innerImage(rarity: Rarity): string | null {
     case 'C': return IMG('inner_background_grey');
     case 'UC': return IMG('inner_background_darkgrey');
     case 'R': return IMG('inner_background_red');
-    case 'SR': return IMG('inner_background_emerald');
+    // SR は緑をやめて黒銀（ヘアライン）にした。R とは色ではなく
+    // 「無地のマットか、磨いた金属面か」で差がつくので、画面の色味に左右されない
+    case 'SR': return IMG('inner_background_gunmetal');
     default: return null;
   }
 }
