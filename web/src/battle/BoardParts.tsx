@@ -12,6 +12,13 @@ import type { DamagePop } from './useBattle';
 const PLAYER = 0 as const;
 const ENEMY = 1 as const;
 
+/**
+ * アクターが盤の中央側へせり出す量の圧縮率。
+ * Battle.tsx の FORMATION_SPAN（陣形2つぶんの縦）と連動するので、
+ * ここを変えたら必ず13サイズの検査を回して FORMATION_SPAN を測り直すこと。
+ */
+const FRONT_SQUASH = 0.58;
+
 /** 対象選択モード。合法手から導出した「選べる対象 → 実行する行動」の表を持つ */
 export type Targeting = {
   side: 0 | 1; // 対象側
@@ -135,12 +142,17 @@ export function Formation({ side, state, pops, targeting, onTap, koShown, cardW,
         const A = frontAngle - i * step + wheelRot + tilt;
         const rad = (A * Math.PI) / 180;
         const x = Math.round(Math.sin(rad) * rx * 10) / 10;
-        // 前方（中央側）へのせり出し。敵味方のアクターは中央で向かい合うので、
+        // 前方（盤の中央側）へのせり出しを詰める。敵味方のアクターは中央で向かい合うので、
         // ここを詰めないとカードが大きい時に真正面でぶつかる。
         // 0.8 → 0.58: カード幅120pxで敵味方の隙間が6pxしか無く、踏み込み演出で重なっていた。
-        // 数字を下げるほど自分のアクターは手札側へ寄るので、下げすぎるとHPが手札に隠れる。
+        //
+        // 「中央側」は側で向きが逆になる（自分は上、相手は下）。
+        // 以前は yRaw<0（＝上）だけを詰めていたので、**相手側は逆に「奥側」を詰めて
+        // アクターは詰めていなかった**。そのせいで相手のアクターだけが中央へ深く出て、
+        // 中央の情報帯に 13〜23px 食い込んでいた。側を見て、中央側だけを詰める。
         const yRaw = -Math.cos(rad) * ry;
-        const y = Math.round((yRaw < 0 ? yRaw * 0.58 : yRaw) * 10) / 10;
+        const towardCenter = side === PLAYER ? yRaw < 0 : yRaw > 0;
+        const y = Math.round((towardCenter ? yRaw * FRONT_SQUASH : yRaw) * 10) / 10;
         const scale = isActor ? 1 : backScale;
         return (
           <div

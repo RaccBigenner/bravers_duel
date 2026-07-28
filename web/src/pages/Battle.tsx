@@ -9,7 +9,7 @@ import {
   type BattleState,
   type CharacterCard,
 } from '@bravers/engine';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { BattleSetup } from '../App';
 import { CardFrame } from '../CardFrame';
 import { IMG } from '../cardAssets';
@@ -37,15 +37,29 @@ import '../battle.css';
 const PLAYER = 0 as const;
 const ENEMY = 1 as const;
 
-/** 画面の高さ（リサイズ追従） */
-function useViewportHeight(): number {
-  const [vh, setVh] = useState(() => window.innerHeight);
+/**
+ * 画面の大きさ（リサイズ追従）。
+ *
+ * 高さだけを見ていた頃は、横幅だけが変わったとき（PCで窓を横に伸ばす等）に
+ * setVh が同じ値になって React が再描画を打ち切り、盤面が古い横幅のままになっていた。
+ * 盤面の寸法は縦と横の両方から決まるので、両方を状態として持つ。
+ */
+function useViewportSize(): { vw: number; vh: number } {
+  const [size, setSize] = useState(() => ({ vw: window.innerWidth, vh: window.innerHeight }));
   useEffect(() => {
     // リサイズは間引く（頻繁なレイアウト変更で画面がガタつくのを防ぐ）
     let timer = 0;
     const onResize = () => {
       window.clearTimeout(timer);
-      timer = window.setTimeout(() => setVh(window.innerHeight), 180);
+      timer = window.setTimeout(
+        () =>
+          setSize((prev) =>
+            prev.vw === window.innerWidth && prev.vh === window.innerHeight
+              ? prev
+              : { vw: window.innerWidth, vh: window.innerHeight },
+          ),
+        180,
+      );
     };
     window.addEventListener('resize', onResize);
     return () => {
@@ -53,7 +67,7 @@ function useViewportHeight(): number {
       window.removeEventListener('resize', onResize);
     };
   }, []);
-  return vh;
+  return size;
 }
 
 /**
@@ -83,32 +97,111 @@ function useNeedsPortrait(): boolean {
 }
 
 /**
- * キャラカードの基準サイズ。
- * 陣形を横長の楕円にしたぶん縦に余裕ができたので、高さ上限を引き上げ、
- * 横は「陣形の全幅が画面に収まる」ことを上限にする。
+ * 盤面まわりの寸法を、画面の高さから逆算する。
+ *
+ * 以前の `budget = 0.3 × 画面高 + 9` は当て推量で、実際に盤面に使える縦
+ * （実測 582px @390x844）を 100px 以上少なく見積もっていた。その差が
+ * 「自分の陣形の下の 63px の死に余白」としてそのまま捨てられていた。
+ *
+ * ここでは画面の高さから「盤面の外にある物」を実測値で引き、
+ * 残りを「相手の手札 + 陣形2つ + 中央の情報帯」で割り付ける。
+ *
+ * ★ここの数字を触ったら、必ず13サイズの検査を回すこと
+ *   （死に余白20px以下 / カードの重なり0 / アクターの隙間15px以上 / 山の見え幅24〜40px）。
  */
-function cardWidthFor(vh: number, vw: number): number {
-  // 敵味方のアクターは盤面の中央で向かい合う。カードを大きくすると必ずここでぶつかる。
-  // 「必要な隙間を残せる大きさ」から逆算する。
-  //
-  // 段階表（vh>=840なら112…）で決めていた時は、画面高の刻みと実際の余白がズレて
-  // 375x667 と 1024x768 でアクター同士が重なった（実測 -2px / -18px）。
-  // 高さに対して連続な式にすれば、どの画面でも同じだけ隙間が残る。
-  //
-  // ACTOR_GAP: 踏み込み演出が中央へ12px＋拡大1.03倍ぶん寄るので、それを飲み込める値。
-  // SPAN: カード2枚ぶんの縦幅＋前へのせり出し（BoardParts の ry と 0.58 に対応）。
-  // BUDGET: 画面高から、上のバー・手札・アクションバーを引いた盤面の実効的な高さ。
-  const ACTOR_GAP = 28;
-  const SPAN = 2.208;
-  const budget = 0.3 * vh + 9;
-  const byHeight = Math.floor((budget - ACTOR_GAP) / SPAN);
-  // 横は「陣形の全幅が画面に収まる」ことが上限（ゾーン列は画面端へはみ出す前提で -44）
-  const byWidth = Math.floor((Math.min(vw, 440) - 44) / 3.2);
-  return Math.max(44, Math.min(byHeight, byWidth));
+/** 陣形2つぶんの縦。カード幅の何倍か（3Dの遠近ぶんを含む実測値） */
+const FORMATION_SPAN = 4.33;
+/** 手札の箱の高さ = カード幅 × 0.74（手札の幅）× 1.58（箱の高さ） */
+const HAND_RATIO = 0.74 * 1.58;
+/** .board の上下パディング（下が厚いのは、3Dの遠近で下端のカードが箱より下へ描かれるため） */
+const BOARD_PAD = 14;
+/** 中央の情報帯の高さ。ここには絶対に何も重ならない領域として確保する */
+const STRIP_H = 70;
+/**
+ * 情報帯の外に、さらに残すすき間の予算。
+ * .board は justify-content: space-between なので、余った縦は要素間のすき間になる。
+ * 敵味方を引き離す仕事は情報帯（STRIP_H）が持つので、ここは「帯にめり込ませない」ための
+ * 上乗せぶんだけでよい。予算がゼロだと、カードを大きくした瞬間にアクターが帯へ食い込む。
+ */
+const ACTOR_GAP_BUDGET = 30;
+/** 山札・AP・トラッシュが画面の内側に見えている幅。残りは画面外へはみ出す */
+const ZONE_VISIBLE = 28;
+/**
+ * 手前（自分側）は3Dの遠近で実際より大きく描かれる倍率。
+ * 陣形の横幅を「3.2 × カード幅」で見積もると、手前側だけこのぶん外へはみ出して
+ * 端のパイル（山札・AP・トラッシュ）に食い込む（実測 390x844 で 13px）。
+ */
+const NEAR_MAGNIFY = 1.06;
+
+interface BoardMetrics {
+  /** キャラカードの基準幅 */
+  cardW: number;
+  /** 手札1枚の幅 */
+  handW: number;
+  /** 山札・AP・トラッシュ1つぶんの幅 */
+  pileW: number;
+  /** ゾーン列の縦のすき間 */
+  pileGap: number;
+}
+
+function boardMetrics(vh: number, vw: number): BoardMetrics {
+  // 低い画面では battle.css の @media (max-height: 780px) が余白とバーを詰めるので、
+  // 引く量もそれに合わせる（ここがズレると狭い端末だけ盤面が画面からはみ出す）
+  const short = vh <= 780;
+  const chrome = short ? 79 : 97; // 余白 + すき間 + 情報バー + アクションバー
+  const enemyHand = short ? 26 : 38; // 相手の裏向き手札の帯
+  const byHeight =
+    (vh - chrome - enemyHand - BOARD_PAD - STRIP_H - ACTOR_GAP_BUDGET) / (FORMATION_SPAN + HAND_RATIO);
+  // 横は「陣形の全幅（3.2×カード幅）＋左右のゾーンの見えている幅」が画面に収まること。
+  // 手前側は遠近で大きく描かれるので、その倍率で割ってからでないとパイルに食い込む。
+  const byWidth = (Math.min(vw, 440) - ZONE_VISIBLE * 2) / (3.2 * NEAR_MAGNIFY);
+  const cardW = Math.max(44, Math.floor(Math.min(byHeight, byWidth)));
+
+  // ゾーン列は「片側の陣形と同じ高さ」に収める。ここを超えると相手側の半分へ食い込み、
+  // さらに（絶対配置にする前は）エリアの高さを押し広げて死に余白を作っていた。
+  const pileGap = Math.max(6, Math.round(cardW * 0.1));
+  const half = (FORMATION_SPAN / 2) * cardW;
+  const pileW = Math.max(28, Math.min(Math.round(cardW * 0.56), Math.floor((half - pileGap * 2) / 3 / 1.4)));
+
+  return { cardW, handW: Math.round(cardW * 0.74), pileW, pileGap };
 }
 
 
 let flightKey = 1;
+let fieldBackKey = 1;
+
+/**
+ * フィールドカードの絵を、卓（バトルマップ）の上に薄く重ねる。
+ *
+ * 卓そのものは消さずに残し、その土地の色に染める。差し替わったら前の絵とクロスフェードする。
+ * 濃く出すと絵が2枚けんかして、盤面のカードも沈むので、あくまで「薄く」。
+ * 動きはゆっくりした流れ（drift）と、斜めに通り抜ける光（sheen）の2つだけ。
+ */
+function FieldBackdrop({ cardId }: { cardId: string | null }) {
+  const [layers, setLayers] = useState<{ key: number; id: string | null }[]>([]);
+  useEffect(() => {
+    const key = fieldBackKey++;
+    // 直前の1枚だけ残す。古いほうが 'out' になって消えていく
+    setLayers((prev) => [...prev.slice(-1), { key, id: cardId }]);
+    const timer = window.setTimeout(() => setLayers((prev) => prev.filter((l) => l.key === key)), 1800);
+    return () => window.clearTimeout(timer);
+  }, [cardId]);
+
+  return (
+    <>
+      {layers.map((l, i) =>
+        l.id ? (
+          <div
+            key={l.key}
+            className={`field-back ${i === layers.length - 1 ? 'in' : 'out'}`}
+            style={{ backgroundImage: `url(${IMG(l.id)})` }}
+          />
+        ) : null,
+      )}
+      {cardId && <div className="field-sheen" />}
+    </>
+  );
+}
 
 /** 表示状態には仮ID（'charged'）が混ざることがあるので安全に引く */
 function safeCard(id: string) {
@@ -201,12 +294,49 @@ function BattleInner({ setup, onExit, onRematch }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const vh = useViewportHeight();
+  const { vw, vh } = useViewportSize();
   const needsPortrait = useNeedsPortrait();
-  const cardW = cardWidthFor(vh, window.innerWidth);
-  // 手札の幅。0.78 → 0.74（2026-07-25 βレビュー対応）。
+  // 手札の幅は cardW × 0.74（2026-07-25 βレビュー対応）。
   // 手札の箱が高いと、その上にある自分のアクターのHP・属性表示に手札がかぶる。
-  const handW = Math.round(cardW * 0.74);
+  const { cardW, handW, pileW, pileGap } = boardMetrics(vh, vw);
+
+  /**
+   * 山札・AP・トラッシュのはみ出し量を「実際に描かれた位置」から1枚ずつ決める。
+   *
+   * 盤は rotateX で奥へ倒れているので、
+   * - 上（相手側）ほど横が狭く見える（実測 390x844: 相手エリア 351px / 自分エリア 384px）
+   * - 同じ列の中でも、上のパイルと下のパイルで奥行きが違う（内側の端が 7px ばらついた）
+   * - APは横倒し（rotate 90deg）なので見た目の幅がそもそも別物
+   *
+   * 式で一律に決めると必ずどれかが食い違うので、描画後に1枚ずつ測って差を打ち消す。
+   * ずれ量とマージンは線形なので、1回の補正でぴったり合う。
+   */
+  const rootRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const rr = root.getBoundingClientRect();
+    root.querySelectorAll<HTMLElement>('.zone-col').forEach((col) => {
+      const enemy = col.classList.contains('enemy');
+      const area = col.parentElement;
+      if (!area) return;
+      // 盤の3Dで伸び縮みしているぶん。盤の中で1px動かすと画面では scale px 動く
+      const scale = area.getBoundingClientRect().width / area.offsetWidth;
+      if (!scale) return;
+      col.querySelectorAll<HTMLElement>('.pile').forEach((pile) => {
+        const card = pile.querySelector<HTMLElement>('.pile-card');
+        if (!card) return;
+        const cr = card.getBoundingClientRect();
+        const visible = enemy ? cr.right - rr.left : rr.right - cr.left;
+        const current = parseFloat(getComputedStyle(pile).marginLeft) || 0;
+        // マージンを増やすとパイルは右へ動く。
+        // 相手（左端）は右へ動くと見え幅が増え、自分（右端）は右へ動くと見え幅が減る。
+        // 符号を分けないと自分側だけ発散する（実際に margin が倍々に増えて画面外へ飛んだ）。
+        const delta = (ZONE_VISIBLE - visible) / scale;
+        pile.style.marginLeft = `${Math.round((current + (enemy ? delta : -delta)) * 10) / 10}px`;
+      });
+    });
+  }, [vw, vh, cardW, pileW]);
   const me = view.players[PLAYER]; // 盤面は表示用ステートを映す
   const foe = view.players[ENEMY];
   const finished = state.phase === 'finished';
@@ -673,7 +803,25 @@ function BattleInner({ setup, onExit, onRematch }: {
   const choicePhase = state.phase === 'choice' && isMyTurn && !busy;
 
   return (
-    <div className={`battle-root ${finished ? '' : isMyTurn ? 'my-turn' : 'enemy-turn'} ${targeting ? 'targeting-mode' : ''}`}>
+    <div
+      ref={rootRef}
+      className={`battle-root ${finished ? '' : isMyTurn ? 'my-turn' : 'enemy-turn'} ${targeting ? 'targeting-mode' : ''}`}
+      // 盤面の寸法はここで一度だけ決めて、CSS変数でCSS側へ渡す。
+      // CSSに固定pxで書くと、画面サイズごとの @media が積み重なって収拾がつかなくなる（実際になった）。
+      // パイルのはみ出し量だけは上の useLayoutEffect が1枚ずつ実測して上書きする。
+      style={
+        {
+          '--card-w': `${cardW}px`,
+          '--pile-w': `${pileW}px`,
+          '--pile-gap': `${pileGap}px`,
+          '--zone-vis': `${ZONE_VISIBLE}px`,
+          '--strip-h': `${STRIP_H}px`,
+        } as React.CSSProperties
+      }
+    >
+      {/* 卓の上に敷くフィールドの絵（一番後ろ） */}
+      <FieldBackdrop cardId={fieldCard?.id ?? null} />
+
       {/* ターンバッジ（常時表示） */}
       {!finished && (
         <div className={`turn-badge ${isMyTurn ? 'mine' : 'theirs'}`}>
@@ -683,17 +831,7 @@ function BattleInner({ setup, onExit, onRematch }: {
       {/* 相手情報バー（表層UI） */}
       <div className="info-bar">
         <span className="deck-name"><em className="vs">vs</em> {setup.enemy.name}</span>
-        <span className="phase-pill">
-          <b className="turn-num">T{state.turn}</b>
-          {isMyTurn ? (
-            <>
-              <em className={state.phase === 'play' || state.phase === 'choice' ? 'on' : ''}>メイン</em>
-              <em className={state.phase === 'charge' ? 'on' : ''}>チャージ</em>
-            </>
-          ) : (
-            <em className="theirs on">相手</em>
-          )}
-        </span>
+        {/* ターンとフェーズは中央の情報帯へ移した（盤面を見たまま今どこか分かるように） */}
         <button
           className={`chip small speed ${speed > 1 ? 'on' : ''}`}
           onClick={() => setSpeed(speed > 1 ? 1 : 2)}
@@ -740,7 +878,10 @@ function BattleInner({ setup, onExit, onRematch }: {
             })}
           </div>
 
-          {/* 相手エリア: 左にゾーン（鏡写し）、右に陣形 */}
+          {/* 相手エリア。ゾーン列はエリアの中で絶対配置なので、エリアの高さには影響しない。
+           * 流れの中に置いていた頃は、ゾーン列（276px）が陣形（207px）より背が高いせいで
+           * エリアの高さがゾーン列に引っ張られ、自分側の下に 63px の死に余白ができていた。
+           * さらに片側だけ場所を取るので、敵味方のアクターの中心が 30px ズレていた。 */}
           <div className="area enemy-area">
             <ZoneCol
               side={ENEMY} p={foe} deckRef={deckRefE} apRef={apRefE} trashRef={trashRefE}
@@ -756,20 +897,39 @@ function BattleInner({ setup, onExit, onRematch }: {
             />
           </div>
 
-          {/* 中央: フィールドのみ（ガイドテキストは廃止。すべて演出で伝える） */}
-          <div className="center-strip">
-            <div className="field-slot">
-              {fieldCard ? <CardFrame card={fieldCard} width={40} /> : <div className="field-empty">FIELD</div>}
+          {/* 中央の情報帯。ここは「絶対に何も重ならない領域」として高さを確保している。
+           * 中央は敵味方のアクターが向かい合う場所なので、帯を作らずにフィールドを置くと
+           * 構造的に必ず潰れる（実測で上下から17px/15px食われて素通しがほぼ0だった）。
+           * フィールドは左端へ。右下は自分の山札・AP・トラッシュと親指の定位置で混んでいる。 */}
+          <div className="field-strip">
+            <div
+              className={`strip-field ${fieldCard ? 'has' : ''}`}
+              onClick={() => fieldCard && setZoomCard(fieldCard.id)}
+            >
+              {fieldCard ? (
+                <>
+                  <CardFrame card={fieldCard} width={Math.round(STRIP_H * 0.58)} />
+                  <span className="strip-field-name">{fieldCard.name}</span>
+                </>
+              ) : (
+                <span className="strip-field-none">FIELD</span>
+              )}
+            </div>
+            <div className="phase-pill">
+              <b className="turn-num">T{state.turn}</b>
+              {isMyTurn ? (
+                <>
+                  <em className={state.phase === 'play' || state.phase === 'choice' ? 'on' : ''}>メイン</em>
+                  <em className={state.phase === 'charge' ? 'on' : ''}>チャージ</em>
+                </>
+              ) : (
+                <em className="theirs on">相手</em>
+              )}
             </div>
           </div>
 
-          {/* 自分エリア: 左に陣形、右にゾーン（山札が一番右） */}
+          {/* 自分エリア（相手エリアと同じ作り） */}
           <div className="area my-area">
-            <Formation
-              side={PLAYER} state={view} pops={pops} targeting={targeting}
-              onTap={tapChar} koShown={koShown} cardW={cardW} vfxList={vfxList}
-              plates={plates} motions={motions} onZoom={setZoomCard}
-            />
             <ZoneCol
               side={PLAYER} p={me} deckRef={deckRefP} apRef={apRefP} trashRef={trashRefP}
               onOpenPile={(kind) => {
@@ -783,6 +943,11 @@ function BattleInner({ setup, onExit, onRematch }: {
                     note: '種類とコスト順に並べています（山札の本当の並び順ではありません）',
                   });
               }}
+            />
+            <Formation
+              side={PLAYER} state={view} pops={pops} targeting={targeting}
+              onTap={tapChar} koShown={koShown} cardW={cardW} vfxList={vfxList}
+              plates={plates} motions={motions} onZoom={setZoomCard}
             />
           </div>
         </div>

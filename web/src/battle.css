@@ -9,16 +9,83 @@
   gap: 4px;
   padding: 6px 8px 10px;
   box-sizing: border-box;
-  /* 静かな布テクスチャの卓（フィールドも手元も画面外もシームレスにつながる） */
+  /* 卓＝真上から見たバトルマップ（プレイマット）。
+   * タイルの繰り返しではなく1枚絵なので cover で敷く。
+   * カードが主役なので、明るい草地のままだと札が沈む。暗幕と周辺減光を重ねて沈める。
+   * 中央だけ少し明るく残すのは「卓の上のライト」の表現（既存の演出と同じ考え方）。 */
   background:
-    radial-gradient(ellipse at 50% 42%, rgba(255, 220, 140, 0.05), transparent 55%),
-    linear-gradient(rgba(8, 10, 18, 0.42), rgba(6, 8, 14, 0.3) 45%, rgba(8, 10, 18, 0.5)),
-    url('./assets/bg_texture.webp') center / 300px repeat,
+    radial-gradient(ellipse at 50% 44%, rgba(255, 228, 160, 0.12), transparent 58%),
+    radial-gradient(ellipse at 50% 46%, transparent 34%, rgba(6, 8, 14, 0.42) 100%),
+    linear-gradient(rgba(8, 10, 18, 0.36), rgba(6, 8, 14, 0.2) 45%, rgba(8, 10, 18, 0.42)),
+    url('./assets/bg_mat.webp') center / cover no-repeat,
     #10131b;
   overflow: hidden;
   position: relative;
   /* ピンチズーム等で画面がずれて山札やAPが見えなくなるのを防ぐ */
   touch-action: none;
+}
+
+/* ============ フィールドの絵を卓の上に敷く ============
+ * 卓（バトルマップ）は消さずに残し、その上に薄く重ねて「その土地になる」。
+ * 濃く出すと絵が2枚けんかして盤面のカードも沈むので、あくまで薄く。
+ * 動くのは transform と opacity だけ（レイアウトを起こさないので軽い）。 */
+.field-back {
+  position: absolute;
+  inset: -7%; /* ゆっくり動かすぶん、画面より大きく取る */
+  z-index: 0;
+  pointer-events: none;
+  background-size: cover;
+  background-position: center;
+  /* 上塗り（普通の重ね）だと、淡い絵のときに卓が真っ白に飛んで草地が消えてしまう。
+   * soft-light で「なじませる」と、明るい絵でも暗い絵でも卓の地形は残ったまま
+   * 色だけがその土地に染まる。カードの読みやすさも崩れない。 */
+  mix-blend-mode: soft-light;
+  filter: saturate(1.5) contrast(1.12) blur(1.5px);
+  opacity: 0;
+  will-change: transform, opacity;
+}
+.field-back.in {
+  animation: field-back-in 1.6s ease forwards, field-back-drift 54s ease-in-out infinite alternate;
+}
+.field-back.out {
+  animation: field-back-out 1.4s ease forwards, field-back-drift 54s ease-in-out infinite alternate;
+}
+@keyframes field-back-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes field-back-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes field-back-drift {
+  from { transform: translate3d(-1.6%, -1.2%, 0) scale(1.04); }
+  to { transform: translate3d(1.6%, 1.4%, 0) scale(1.1); }
+}
+
+/* 斜めに通り抜ける光。これが「薄く流れる」感じの本体 */
+.field-sheen {
+  position: absolute;
+  inset: -40%;
+  z-index: 0;
+  pointer-events: none;
+  background: linear-gradient(115deg, transparent 42%, rgba(255, 240, 200, 0.06) 50%, transparent 58%);
+  animation: field-sheen 19s linear infinite;
+  will-change: transform;
+}
+@keyframes field-sheen {
+  from { transform: translate3d(-38%, -28%, 0); }
+  to { transform: translate3d(38%, 28%, 0); }
+}
+
+/* 動きが苦手な人には止めて見せる（絵は出たまま） */
+@media (prefers-reduced-motion: reduce) {
+  .field-back.in { animation: field-back-in 0.4s ease forwards; }
+  .field-back.out { animation: field-back-out 0.4s ease forwards; }
+  .field-sheen { display: none; }
+}
+
+/* 盤面まわりは必ず絵より前に置く（絵は z-index:0 の後ろ側） */
+.info-bar,
+.board-wrap,
+.my-hand,
+.action-bar {
+  position: relative;
+  z-index: 1;
 }
 
 /* 対象選択中は手札を触れなくして、盤面のキャラ選択を邪魔しない */
@@ -70,7 +137,9 @@
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 4.5em; /* 潰れても最低限デッキ名の頭が読める幅は残す */
-  flex-shrink: 1; /* 縮むのはデッキ名だけ（…で省略） */
+  /* 縮むのはデッキ名だけ（…で省略）。伸びるのもデッキ名だけにして、
+   * ボタン類は常に右端へ寄せる（フェーズ表示を情報帯へ移して真ん中が空いたため） */
+  flex: 1 1 auto;
 }
 .chip.small { padding: 2px 10px; font-size: 11px; }
 .chip.danger { border-color: #944; color: #e99; }
@@ -128,17 +197,17 @@
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
   transform: rotate(180deg);
 }
-.pile { position: relative; width: 44px; text-align: center; }
+/* パイルの大きさは JS（boardMetrics）が --pile-w で渡す。
+ * ここに固定pxを書くと、画面サイズごとの @media が積み重なって収拾がつかなくなる（実際になった）。 */
+.pile { position: relative; text-align: center; }
 .pile-card {
-  width: 40px;
   border-radius: 3px;
   box-shadow: 1px 1px 0 #0a0c10, 2px 2px 0 #0a0c10, 3px 3px 4px rgba(0, 0, 0, 0.6);
   display: block;
 }
 .pile-card.sideways { transform: rotate(90deg) scale(0.92); }
-.pile-card.empty { height: 56px; border: 1px dashed #444; background: rgba(255, 255, 255, 0.03); }
+.pile-card.empty { border: 1px dashed #444; background: rgba(255, 255, 255, 0.03); }
 .pile-card.trash-top {
-  height: 56px;
   background-size: cover;
   background-position: center;
   filter: grayscale(0.6) brightness(0.7);
@@ -224,25 +293,53 @@
   100% { opacity: 0; transform: translate(-50%, -34px) scale(1); }
 }
 
-/* 中央: フィールド + ログ */
-.center-strip {
+/* ============ 中央の情報帯 ============
+ * 敵味方のアクターの間に確保する「何も重ならない」帯。
+ * フィールド（左）とターン・フェーズ（右）をここに集める。 */
+.field-strip {
+  height: var(--strip-h);
+  flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 2px 6px;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 4px;
 }
-.field-slot { flex-shrink: 0; }
-.field-empty {
-  width: 56px;
-  height: 78px;
-  border: 1px dashed #555;
-  border-radius: 5px;
-  color: #555;
-  font-size: 9px;
+.strip-field {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.strip-field.has { cursor: pointer; }
+.strip-field.has:active { filter: brightness(1.2); }
+.strip-field .card-frame {
+  flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
+}
+/* 絵は卓の全面に出ているので、帯では「名前が読めること」を優先する */
+.strip-field-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: #ffe9a0;
+  text-shadow: 0 1px 3px #000, 0 0 6px #000;
+  line-height: 1.25;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.strip-field-none {
   display: flex;
   align-items: center;
   justify-content: center;
-  letter-spacing: 0.2em;
+  width: calc(var(--strip-h) * 0.58);
+  height: calc(var(--strip-h) * 0.8);
+  border: 1px dashed rgba(200, 210, 240, 0.28);
+  border-radius: 5px;
+  color: rgba(200, 210, 240, 0.35);
+  font-size: 8px;
+  letter-spacing: 0.16em;
 }
 
 /* 自分の手札 */
@@ -695,17 +792,11 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
   .battle-root { gap: 2px; padding: 4px 8px 6px; }
   .enemy-hand { height: 26px; }
   .hand-back { width: 24px; }
-  .pile-card { width: 30px; }
-  .pile-card.empty, .pile-card.trash-top { height: 42px; }
-  .pile { width: 34px; }
-  .pile-label { font-size: 8px; }
   .char-row { padding: 3px 0; gap: 8px; }
   .my-hand { padding: 8px 0 0; }
   .action-bar { min-height: 38px; }
   .guide-bar { padding: 4px 8px; }
   .guide-text { font-size: 10.5px; }
-  .center-strip { padding: 0 6px; }
-  .field-empty { width: 44px; height: 62px; }
   .log-line { font-size: 10px; }
 }
 
@@ -736,17 +827,20 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
   /* 背景の卓とシームレスにつなげるため、盤面自体はパネルにしない */
   background: none;
   box-shadow: none;
-  padding: 4px 6px;
+  /* 下だけ厚いのは、3Dの遠近で下端のカードが箱より下へ描かれるため
+   * （820x1180 で自分のカードが手札に 4px 潜り込んでいた） */
+  padding: 4px 6px 10px;
 }
 
+/* エリアの高さを決めるのは陣形だけ（ゾーン列は絶対配置で流れの外）。
+ * だからエリアの高さ＝陣形の高さになり、中央に置けば敵味方のアクターが真正面で向かい合う。 */
 .area {
+  position: relative;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
   gap: 4px;
 }
-.enemy-area { flex-direction: row; }
-.my-area { flex-direction: row; }
 
 /* 陣形（トライアングル配置） */
 .formation {
@@ -759,16 +853,30 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
   transition: left 0.45s ease, right 0.45s ease, top 0.45s ease, bottom 0.45s ease, transform 0.45s ease, filter 0.3s ease;
 }
 
-/* ゾーン縦積み（山札が端） */
+/* ゾーン列（山札・AP・トラッシュ）は、エリアの中で絶対配置して左右の端へ寄せる。
+ * 流れの中に置くと、ゾーン列（陣形より背が高い）がエリアの高さを決めてしまい、
+ * 自分側の下に死に余白ができ、片側だけ場所を取るのでアクターの中心もズレていた。
+ * 大きさ・すき間・はみ出し量は JS（boardMetrics と useLayoutEffect の実測）が渡す。 */
 .zone-col {
+  position: absolute;
+  top: 50%;
+  width: 0; /* 場所を取らない。中身は端から外へはみ出す */
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  align-items: center;
-  flex-shrink: 0;
-  padding: 2px;
+  gap: var(--pile-gap);
+  transform: translateY(-50%);
+  z-index: 5;
 }
-.zone-col .pile.deck .pile-card { width: 38px; }
+/* 相手は左端、自分は右端。縦はそれぞれのエリアの中央 */
+.zone-col.enemy { left: 0; }
+.zone-col:not(.enemy) { right: 0; }
+/* ここのマージンは「だいたいの初期値」でしかない。
+ * 盤が3Dなので、同じ列でも上下で奥行きが違い、APは横倒しで見た目の幅も別物になる。
+ * 正確な値は Battle.tsx の useLayoutEffect が1枚ずつ実測して inline style で上書きする。 */
+.zone-col .pile { width: var(--pile-w); }
+.zone-col.enemy .pile { margin-left: calc(var(--zone-vis) - var(--pile-w)); }
+.zone-col:not(.enemy) .pile { margin-left: calc(-1 * var(--zone-vis)); }
+.zone-col .pile-card { width: var(--pile-w); }
 
 /* キャラ状態（HPバー + 追加属性） */
 .char-status {
@@ -854,7 +962,6 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
 /* 低い画面での圧縮（追加分） */
 @media (max-height: 780px) {
   .board { transform: rotateX(14deg) scale(1.02); }
-  .zone-col { gap: 8px; }
   .char-status { bottom: -12px; }
 }
 
@@ -893,8 +1000,6 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
 .preview-inner .card-frame { box-shadow: 0 8px 30px rgba(0, 0, 0, 0.8); }
 
 /* ============ 中央のガイド帯（薄く） ============ */
-.center-strip { padding: 0 8px; gap: 8px; min-height: 0; }
-.field-empty { width: 40px; height: 56px; font-size: 8px; }
 
 @media (max-height: 780px) {
   .guide-zone { font-size: 10.5px; padding: 4px 7px; }
@@ -1326,12 +1431,6 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
   );
 }
 
-/* ---- フィールド空きスロット: 紋章入り ---- */
-.field-empty {
-  position: relative;
-  background: radial-gradient(circle at 50% 45%, rgba(255, 215, 0, 0.05), transparent 65%);
-}
-
 /* ---- 相手の手札の影（浮いて見えないように） ---- */
 .enemy-hand { filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.45)); }
 
@@ -1586,9 +1685,10 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
   align-items: center;
   justify-content: center;
   gap: 10px;
+  /* バトル画面と同じ卓。読み込み中から地続きに見えるようにする（少しだけ暗く） */
   background:
-    linear-gradient(rgba(10, 12, 20, 0.4), rgba(8, 10, 16, 0.4)),
-    url('./assets/bg_texture.webp') center / 300px repeat,
+    linear-gradient(rgba(8, 10, 18, 0.62), rgba(6, 8, 14, 0.62)),
+    url('./assets/bg_mat.webp') center / cover no-repeat,
     #10131b;
   color: #cbd2e8;
   font-size: 13px;
@@ -2030,17 +2130,6 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
   font-weight: 800;
 }
 
-/* ゾーン列（山札・AP・トラッシュ）を詰める。
- * ここが陣形より背が高く、盤面全体の高さを決めていた。詰めたぶんキャラが上へ寄り、
- * 手札にHP表示が隠れなくなる（2026-07-25 βレビュー対応・実測して決定）。 */
-.zone-col { gap: 8px; }
-.pile-card { width: 36px; }
-.zone-col .pile.deck .pile-card { width: 34px; }
-.pile-card.empty, .pile-card.trash-top { height: 50px; }
-@media (max-height: 780px) {
-  .zone-col { gap: 6px; }
-}
-
 /* 自分のアクターのHP・属性は、手札のすぐ上に来る。
  * 万一かぶっても読めるように、背景を敷いて浮かせる。 */
 .my-area .char-slot.actor .char-status {
@@ -2048,10 +2137,6 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
   padding: 2px 3px 1px;
   border-radius: 5px;
 }
-
-/* 自分の陣形はエリアの上端に寄せる（中央寄せだと、ゾーン列の高さぶん下へ落ちて
- * アクターのHP表示が手札に潜り込む）。相手側は今までどおり中央寄せ。 */
-.my-area { align-items: flex-start; }
 
 /* 控えキャラのHPはカードの内側（下端）に重ねる。カードの下にぶら下げると
  * 手札に潜り込んで見えなくなるため。控えのカードは小さく文字も読めないので、
@@ -2121,24 +2206,9 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
 /* ============ 2026-07-27 ポケポケ分析を受けた盤面の作り直し ============ */
 
 /* 【1-A】ゾーン列を画面の端へ寄せて、はみ出させる。
- * 今までは山札・AP・トラッシュを全部画面内に収めるため縮小していて、
- * 横幅の23%を食ったうえに小さくて読めなかった。
- * 端に寄せて半分だけ見せれば、盤面の主役（キャラカード）を大きくできる。 */
-.zone-col {
-  gap: 10px;
-  padding: 0;
-  width: 26px; /* レイアウトが確保する幅。カード自体はここから外へはみ出す */
-}
-.zone-col .pile { width: 26px; }
-/* パイル自体はカードとして読める大きさのまま、外側へはみ出させる */
-.pile-card { width: 56px; }
-.zone-col .pile.deck .pile-card { width: 56px; }
-.pile-card.empty,
-.pile-card.trash-top { height: 78px; }
-.my-area .zone-col .pile-card { margin-left: -6px; } /* 右端から外へはみ出す */
-.enemy-area .zone-col .pile-card { margin-left: 0; }
-.enemy-area .zone-col .pile { display: flex; justify-content: flex-start; }
-.enemy-area .zone-col .pile-card { margin-left: -24px; } /* 左端から外へはみ出す */
+ * 位置と大きさの指定は「ゾーン列」のブロック（上の方）に一本化した。
+ * ここに二重に書いていたせいで、片側だけはみ出し量が違う（相手の山札だけ 0px）という
+ * 食い違いが起きていた。 */
 
 /* 文字ラベル（山札/AP/トラッシュ）は消して、枚数だけ大きく見せる */
 .pile-label { display: none; }
@@ -2155,6 +2225,11 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
   border-color: #778;
 }
 .pile-count.low { border-color: #f66; color: #f99; }
+
+/* パイルは半分近く画面の外にいるので、枚数は「画面に残っている側」に寄せる。
+ * 中央寄せのままだと数字まで画面の外へ出てしまう。 */
+.zone-col.enemy .pile-count { left: auto; right: 1px; transform: none; }
+.zone-col:not(.enemy) .pile-count { left: 1px; right: auto; transform: none; }
 
 /* 【1-B】HPは「小さいバー＋極小の数字」ではなく、大きい数字を主役にする。
  * βで2回指摘された「HPが見えない」の本丸。数字が大きければ多少重なっても読める。 */
@@ -2173,11 +2248,6 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
 /* 控えは小さいので、数字も一段小さく（それでも今までより大きい） */
 .char-slot:not(.actor) .hp-num { font-size: 13px; }
 .char-slot:not(.actor) .attr-icons img { width: 11px; height: 11px; }
-
-/* flexアイテムは既定で min-width:auto なので、中身（パイル画像）の幅まで勝手に広がる。
- * 0 にして初めて「箱は26px・中身は外へはみ出す」が成立する */
-.zone-col,
-.zone-col .pile { min-width: 0; }
 
 /* 【1-C】上の情報バーを詰める。常に見せるのはターン数とフェーズだけで足りる。
  * 空いた縦をカードの大きさに回す。 */
@@ -2198,15 +2268,7 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
   .char-status { bottom: -11px; }
 }
 
-/* 320px 幅のような極端に狭い画面では、はみ出しを控えめにして
- * 山札・APが画面の外へ完全に出てしまうのを防ぐ */
-@media (max-width: 340px) {
-  .pile-card { width: 46px; }
-  .zone-col .pile.deck .pile-card { width: 46px; }
-  .my-area .zone-col .pile-card { margin-left: 0; }
-  .enemy-area .zone-col .pile-card { margin-left: -18px; }
-}
+/* 狭い画面のはみ出し調整も boardMetrics（--pile-w / --zone-vis）が面倒を見るので、
+ * ここでの上書きは不要になった。 */
 
-/* フィールド枠は中央へ。左端に寄っていて座りが悪かった
- * （ゾーン列のラベルを消したことで、余計に浮いて見えるようになった） */
-.center-strip { justify-content: center; }
+
