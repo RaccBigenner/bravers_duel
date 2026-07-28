@@ -16,15 +16,14 @@ import { IMG } from '../cardAssets';
 import type { NarrEvent } from '../battle/narrator';
 import { ALL_SFX, isSfxEnabled, playSfx, preloadSfx, setSfxEnabled } from '../battle/sfx';
 import {
-  FlyGhost,
   Formation,
   NarrationBanner,
   TurnSplash,
   ZoneCol,
   longPressHandlers,
-  type Flight,
   type Targeting,
 } from '../battle/BoardParts';
+import { CardStage, type CardMove, type Spot } from '../battle/CardStage';
 import { useBattle } from '../battle/useBattle';
 import { logEvent } from '../telemetry';
 import { encodeSharedLog, type SharedLog } from '../shareLog';
@@ -280,7 +279,7 @@ function BattleInner({ setup, onExit, onRematch }: {
   const [targeting, setTargeting] = useState<Targeting>(null);
   const [confirmExit, setConfirmExit] = useState(false);
   const [showRules, setShowRules] = useState(false);
-  const [flights, setFlights] = useState<Flight[]>([]);
+  const [moves, setMoves] = useState<CardMove[]>([]);
   const [sfxOn, setSfxOn] = useState(isSfxEnabled());
 
   // 公開βのログ: バトル開始を1回だけ記録
@@ -357,24 +356,73 @@ function BattleInner({ setup, onExit, onRematch }: {
   const trashRefs = [trashRefP, trashRefE];
   const handRefs = [handRefP, handRefE];
 
-  function centerOf(el: HTMLElement | null): { x: number; y: number } | null {
+  /** 要素の「今いる場所」。パイルは箱ではなく中のカードの位置を使う */
+  function spotOf(el: HTMLElement | null, w?: number): Spot | null {
     if (!el) return null;
-    const r = el.getBoundingClientRect();
-    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    const target = el.querySelector<HTMLElement>('.pile-card') ?? el;
+    const r = target.getBoundingClientRect();
+    if (r.width === 0 && r.height === 0) return null;
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: w ?? r.width };
   }
 
-  function spawnFlight(fromEl: HTMLElement | null, toEl: HTMLElement | null, count = 1, faceCardId?: string) {
-    const from = centerOf(fromEl);
-    const to = centerOf(toEl);
+  /** 各ゾーンの位置。カードはここからここへ動く */
+  const spot = {
+    deck: (s: 0 | 1) => spotOf(deckRefs[s].current, pileW),
+    ap: (s: 0 | 1) => spotOf(apRefs[s].current, pileW),
+    trash: (s: 0 | 1) => spotOf(trashRefs[s].current, pileW),
+    hand: (s: 0 | 1) => spotOf(handRefs[s].current, s === PLAYER ? handW : pileW),
+    // 盤の中央（使ったカードを見せる場所）
+    center: (): Spot | null => {
+      const b = boardRef.current?.getBoundingClientRect();
+      if (!b) return null;
+      return { x: b.left + b.width / 2, y: b.top + b.height * 0.44, w: Math.min(220, Math.round(vw * 0.54)) };
+    },
+    /** 盤面の任意の要素（フィールド枠・キャラの枠など） */
+    el: (selector: string): Spot | null =>
+      spotOf(rootRef.current?.querySelector<HTMLElement>(selector) ?? null),
+  };
+
+  /**
+   * カードを1枚動かす。これが物理演出の唯一の入口。
+   * count が複数のときは少しずつ時間をずらして、束で流れるように見せる。
+   */
+  function flyCard(
+    m: Omit<CardMove, 'key' | 'from' | 'to' | 'via'> & {
+      from: Spot | null;
+      to: Spot | null;
+      via?: Spot | null;
+      count?: number;
+      cardIds?: (string | undefined)[];
+    },
+  ) {
+    const { from, to, via, count = 1, cardIds, ...rest } = m;
     if (!from || !to) return;
+    // 途中で見せる場所が取れなければ直行に落とす（演出が止まるより出したほうがよい）
+    if (via) (rest as CardMove).via = via;
     playSfx('se_card', 0.3); // カードが擦れて滑る音
     for (let i = 0; i < Math.min(count, 3); i++) {
-      const f: Flight = { key: flightKey++, from, to, faceCardId };
-      window.setTimeout(() => {
-        setFlights((prev) => [...prev, f]);
-        window.setTimeout(() => setFlights((prev) => prev.filter((x) => x.key !== f.key)), 700);
-      }, i * 130);
+      const move: CardMove = { ...rest, key: flightKey++, from, to, cardId: cardIds?.[i] ?? rest.cardId };
+      const delay = i * 130;
+      window.setTimeout(() => setMoves((prev) => [...prev, move]), delay);
+      // 保険: アニメーションの完了イベントは、タブが裏に回っている間は来ない。
+      // それだけを頼りにすると、戻ってきたときに飛びかけのカードが画面に残り続ける。
+      window.setTimeout(() => setMoves((prev) => prev.filter((x) => x.key !== move.key)), delay + move.duration + 500);
     }
+  }
+
+  /** 山札→手札などの「そのまま滑らせる」移動のひな型 */
+  function slide(from: Spot | null, to: Spot | null, opts: Partial<CardMove> & { count?: number; cardIds?: (string | undefined)[] } = {}) {
+    flyCard({
+      from,
+      to,
+      arc: 26,
+      duration: 620,
+      faceFrom: 'back',
+      faceTo: 'back',
+      poseFrom: 'lay',
+      poseTo: 'lay',
+      ...opts,
+    });
   }
 
   // スキルの属性を覚えておき、続くダメージ等のVFXに使う
@@ -469,32 +517,56 @@ function BattleInner({ setup, onExit, onRematch }: {
     const se = SFX_BY_KIND[current.kind];
     if (se) playSfx(se[0], se[1]);
     switch (current.kind) {
-      case 'draw':
-        spawnFlight(deckRefs[s].current, handRefs[s].current, current.amount ?? 1);
+      // ---- カードの移動（どれも「同じ1枚が動く」） ----
+      case 'draw': {
+        const n = current.amount ?? 1;
+        // 自分が引いた札は、着地の瞬間に表へ翻る（引いた実感が出る）。
+        // 相手の札は裏のまま（見せてはいけない情報）。
+        const drawn = s === PLAYER ? me.hand.slice(-n) : [];
+        slide(spot.deck(s), spot.hand(s), {
+          count: n,
+          cardIds: drawn,
+          faceTo: s === PLAYER ? 'front' : 'back',
+          poseTo: 'stand', // 卓に寝ていた札が、手札で自分に正対して立つ
+          arc: 34,
+          duration: 700,
+        });
         break;
+      }
       case 'charge':
-        spawnFlight(handRefs[s].current, apRefs[s].current, 1);
+      case 'chargeAll':
+        // 手札の札を横倒しにしてAPへ重ねる
+        slide(spot.hand(s), spot.ap(s), {
+          count: current.kind === 'chargeAll' ? (current.amount ?? 1) : 1,
+          faceFrom: 'front',
+          poseFrom: 'stand',
+          spin: true,
+          duration: 600,
+        });
         break;
       case 'chargeDeck':
-        spawnFlight(deckRefs[s].current, apRefs[s].current, current.amount ?? 1);
+        slide(spot.deck(s), spot.ap(s), { count: current.amount ?? 1, spin: true });
         break;
       case 'chargeTrash':
-        spawnFlight(trashRefs[s].current, apRefs[s].current, current.amount ?? 1);
-        break;
-      case 'chargeAll':
-        spawnFlight(handRefs[s].current, apRefs[s].current, current.amount ?? 1);
+        slide(spot.trash(s), spot.ap(s), { count: current.amount ?? 1, faceFrom: 'front', spin: true });
         break;
       case 'mill':
-        spawnFlight(deckRefs[s].current, trashRefs[s].current, current.amount ?? 1);
+        // デッキから落ちる札は、表に翻ってからトラッシュへ（何が落ちたか見える）
+        slide(spot.deck(s), spot.trash(s), { count: current.amount ?? 1, faceTo: 'front' });
         break;
       case 'apTrash':
-        spawnFlight(apRefs[s].current, trashRefs[s].current, current.amount ?? 1);
+        slide(spot.ap(s), spot.trash(s), { count: current.amount ?? 1, faceTo: 'front' });
         break;
       case 'handTrash':
-        spawnFlight(handRefs[s].current, trashRefs[s].current, current.amount ?? 1);
+        slide(spot.hand(s), spot.trash(s), {
+          count: current.amount ?? 1,
+          faceFrom: 'front',
+          faceTo: 'front',
+          poseFrom: 'stand',
+        });
         break;
       case 'trashToDeck':
-        spawnFlight(trashRefs[s].current, deckRefs[s].current, current.amount ?? 1);
+        slide(spot.trash(s), spot.deck(s), { count: current.amount ?? 1, faceFrom: 'front' });
         break;
       case 'attack':
         // 攻撃者が前（中央側）へ踏み込む
@@ -523,12 +595,54 @@ function BattleInner({ setup, onExit, onRematch }: {
         if (current.kind === 'guard' && current.amountBefore !== undefined) {
           spawnPlate(current.side, current.charIndex, `${current.amountBefore} → ${current.amount}`, 'guard', 1900, 'icon_shield');
         }
-        // カットインのあと、使ったカードがトラッシュへ飛ぶ
-        window.setTimeout(() => {
-          spawnFlight(boardRef.current, trashRefs[s].current, 1, current.card?.id);
-        }, Math.max(0, current.duration - 420));
+        // 使ったカードは「手札から浮いて → 盤の中央で見せて → トラッシュへ滑る」の一続き。
+        // 以前はここが3つの別物（消える手札／中央のreveal／小さいゴースト）に分かれていた。
+        flyCard({
+          cardId: current.card?.id,
+          from: spot.hand(s),
+          via: spot.center(),
+          to: spot.trash(s),
+          hold: Math.max(300, current.duration - 900),
+          faceFrom: 'front',
+          faceTo: 'front',
+          poseFrom: 'stand',
+          poseTo: 'lay',
+          duration: Math.max(700, current.duration - 260),
+        });
         break;
       }
+      case 'field':
+        // フィールドは情報帯の枠へ置かれて、そのまま残る
+        flyCard({
+          cardId: current.card?.id,
+          from: spot.hand(s),
+          via: spot.center(),
+          to: spot.el('.strip-field'),
+          hold: Math.max(300, current.duration - 900),
+          faceFrom: 'front',
+          faceTo: 'front',
+          poseFrom: 'stand',
+          poseTo: 'lay',
+          duration: Math.max(700, current.duration - 260),
+        });
+        break;
+      case 'equip':
+        // 装備は対象キャラの足元へ滑り込む
+        if (current.card && current.charIndex !== undefined && current.side !== undefined) {
+          flyCard({
+            cardId: current.card.id,
+            from: spot.hand(s),
+            via: spot.center(),
+            to: spot.el(`[data-slot="${current.side}-${current.charIndex}"]`),
+            hold: Math.max(300, current.duration - 900),
+            faceFrom: 'front',
+            faceTo: 'front',
+            poseFrom: 'stand',
+            poseTo: 'lay',
+            duration: Math.max(700, current.duration - 260),
+          });
+        }
+        break;
       case 'turn':
         lastAttrsRef.current = [];
         break;
@@ -574,7 +688,18 @@ function BattleInner({ setup, onExit, onRematch }: {
         }
         break;
       case 'search':
-        spawnFlight(deckRefs[s].current, handRefs[s].current, 1);
+        // 何を持ってきたかを中央で一度見せてから手札へ
+        flyCard({
+          from: spot.deck(s),
+          via: spot.center(),
+          to: spot.hand(s),
+          hold: 420,
+          faceFrom: 'back',
+          faceTo: 'front',
+          poseFrom: 'lay',
+          poseTo: 'stand',
+          duration: Math.max(700, current.duration - 200),
+        });
         break;
       default:
         break;
@@ -1110,14 +1235,9 @@ function BattleInner({ setup, onExit, onRematch }: {
       {/* テキスト表示はターン・先攻・決着のみ。ほかは全部その場の演出で伝える */}
       {current && current.kind === 'turn' && <TurnSplash key={current.key} mine={current.side === PLAYER} text={current.text} />}
       {current && ['coin', 'end'].includes(current.kind) && <NarrationBanner ev={current} />}
-      {current && current.card && ['play', 'guard', 'field', 'equip'].includes(current.kind) && (
-        <div className={`reveal ${current.side === ENEMY ? 'from-top' : 'from-bottom'}`}>
-          <CardFrame card={current.card} width={190} />
-        </div>
-      )}
 
-      {/* 飛んでいくカード */}
-      {flights.map((f) => <FlyGhost key={f.key} flight={f} />)}
+      {/* 動いているカード（使ったカードを中央で見せるのも、ここが担う） */}
+      <CardStage moves={moves} onDone={(key) => setMoves((prev) => prev.filter((m) => m.key !== key))} />
 
       {/* 手札カードの拡大プレビュー */}
       {previewHand !== null && previewHand < me.hand.length && (

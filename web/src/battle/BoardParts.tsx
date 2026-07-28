@@ -26,14 +26,6 @@ export type Targeting = {
   actions: Map<number, BattleAction>; // charIndex → action
 } | null;
 
-/** 飛んでいくカードの演出 */
-export interface Flight {
-  key: number;
-  from: { x: number; y: number };
-  to: { x: number; y: number };
-  faceCardId?: string;
-}
-
 export function longPressHandlers(onLong: () => void) {
   let timer: number | null = null;
   let fired = false;
@@ -322,27 +314,6 @@ export function ZoneCol({ side, p, deckRef, apRef, trashRef, onOpenPile }: {
   return (
     <div className={`zone-col ${side === ENEMY ? 'enemy' : ''}`}>
       {side === PLAYER ? [trash, ap, deck] : [deck, ap, trash]}
-    </div>
-  );
-}
-
-export function FlyGhost({ flight }: { flight: Flight }) {
-  const [pos, setPos] = useState(flight.from);
-  useEffect(() => {
-    const raf = requestAnimationFrame(() => setPos(flight.to));
-    return () => cancelAnimationFrame(raf);
-  }, [flight]);
-  return (
-    // left/top ではなく transform で動かす（レイアウト計算を起こさず、カクつかない）
-    // 末尾の translate(-50%,-50%) はカード自身の中心合わせ（無いと半カード分ズレる）
-    <div className="fly-ghost" style={{ transform: `translate(${pos.x}px, ${pos.y}px) translate(-50%, -50%)` }}>
-      {flight.faceCardId ? (
-        <div className="fly-face">
-          <CardFrame card={cardById(flight.faceCardId)} width={54} />
-        </div>
-      ) : (
-        <img src={IMG('back')} />
-      )}
     </div>
   );
 }
