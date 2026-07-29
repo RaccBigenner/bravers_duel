@@ -1,7 +1,7 @@
 # STATE — BRAVER'S DUEL
 
 - 最終更新: 2026-07-29
-- フェーズ: G0 Foundation / P0（OLG-003完了、次はOLG-003P→OLG-004）
+- フェーズ: G0 Foundation / P0（OLG-003・OLG-004完了、OLG-003P未完了、次はOLG-005）
 
 ## プロジェクトの今
 
@@ -58,7 +58,14 @@
   `GITHUB_PUBLIC_TOKEN`（public read）を設定して管理画面を再デプロイする必要がある。
   設定実施は承認済みだが、token値の発行・同期・本番デプロイはまだ行っていない。
 - 本番有効化作業は、OLG-003のコード完了と分けて`OLG-003P`として登録した。
-- 次はOLG-004（version付きformatとデッキ合法性）。
+- OLG-004（version付きformatとデッキ合法性）は完了。`data/formats.json`をフォーマット版マスタにし、
+  `formatId`＋`version`で版を固定した（公開済みの版は書き換えず、新しい版を足す）。
+  デッキ合法性の判定を`engine/src/deckLegality.ts`の純粋関数へ集約し、
+  保存時・参加時・試合開始前の3つの入口が同じ関数を呼ぶ。Web/管理画面もengine経由で同じ判定を使う。
+  ルール文書に定義がない設定（最新N弾の数え方、制限カードの上限枚数）は、
+  黙って無視せず読込時に落とす。どちらもP8で確定させる。
+- OLG-003PはG0 exit前に必ず完了するproduction blockerとして並行管理し、完了順を取り違えない。
+- 次はOLG-005（engine/content/format versionの固定）。
 - P2へNPCシングル市場を正式登録した。G2 Collection Closed Betaは固定買取/販売、有限な実在個体在庫、
   atomic quote/orderで開始する。固定価格のraw集計からpolicyを承認し、2〜4週間shadow計算する。
   日次±5%・基準80〜120%の動的価格を実注文へ使えるのはG8だけとし、G4以降の標本、

@@ -1,0 +1,22 @@
+{
+  "_comment": "対戦フォーマット（デッキ構築ルールの版）。仕様は docs/ONLINE_SERVICE_DESIGN_2026-07-29.md 4.5、枚数などのルール本体は docs/GAME_RULES.md 4章が正本。formatId + version の組で1つの版を表し、公開済みの版は書き換えず新しい version を足す（進行中の試合・リプレイが開始時の版を参照し続けるため）。ここに書いた内容はブラウザに丸ごと配信されるので、非公開の弾IDやカードIDを書かないこと。",
+  "formats": [
+    {
+      "formatId": "FREE_V1",
+      "version": 1,
+      "nameKey": "format.free.name",
+      "name": "フリー",
+      "activeFrom": "2026-07-29",
+      "activeTo": null,
+      "setPolicy": "ALL",
+      "latestN": null,
+      "allowedSetIds": [],
+      "bannedOracleIds": [],
+      "restrictedOracleIds": [],
+      "deckSize": 40,
+      "maxCopies": 4,
+      "characterSlotPolicy": "EXACT_CAPACITY_3",
+      "zoneCopyPolicy": "MAIN_DECK_LIMIT_ONLY"
+    }
+  ]
+}

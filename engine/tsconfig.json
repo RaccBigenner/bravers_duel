@@ -10,5 +10,5 @@
     "skipLibCheck": true,
     "types": ["vitest/globals", "node"]
   },
-  "include": ["src", "test", "../data/cards.json", "../data/sets.json"]
+  "include": ["src", "test", "../data/cards.json", "../data/sets.json", "../data/formats.json"]
 }

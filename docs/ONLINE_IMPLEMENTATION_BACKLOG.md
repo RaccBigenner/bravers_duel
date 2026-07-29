@@ -315,11 +315,44 @@ P5のコミュニティガイドライン、通報画面、管理設計は早く
 
 ### OLG-004 version付きformatとデッキ合法性
 
+状態: 完了（2026-07-29）
+
 - `FREE_V1`
 - `EXACT_CAPACITY_3`
 - `MAIN_DECK_LIMIT_ONLY`
 - formatの保存/読込/検証
 - 保存時、参加時、試合開始前の検証API
+
+実装:
+
+- `data/formats.json`をフォーマット版マスタにし、`formatId`＋`version`で1つの版を表す。
+  公開済みの版は書き換えず新しい`version`を足す（進行中試合とリプレイが開始時の版を参照し続けるため）
+- `engine/src/formats.ts`: 読込(`ALL_FORMATS`)、検証(`validateFormat`)、保存(`serializeFormat`)、
+  版検索(`formatByVersionId` / `latestFormat` / `formatVersionsOf`)、
+  有効期間判定(`isFormatActiveAt`。現在時刻はエンジン外から渡す)
+- `engine/src/deckLegality.ts`: 判定本体`checkDeckLegality`と、
+  保存時`checkDeckForSave` / 参加時`checkDeckForJoin` / 試合開始前`checkDeckForMatchStart`。
+  3つの入口は必ず同じ関数へ委譲し、I/Oも現在時刻も持たない純粋関数
+- 違反はコード付き（`DECK_SIZE`、`MAX_COPIES`、`CHARACTER_SLOTS`、`BANNED_CARD`等9種）で返し、
+  日本語メッセージは既存のまま。Web/管理画面はengine経由で同じ判定を共用する
+- `createBattle`に`format`を追加し、試合開始直前の検証を同じ関数へ寄せた
+- 意味がルール文書で未定義の設定は黙って無視せず読込時に落とす
+  （`setPolicy: LATEST_N`の数え方、`restrictedOracleIds`の上限枚数。どちらもP8で確定させる）
+
+受入:
+
+- 合法・非合法の両方、フォーマット版違い（`deckSize` 40/30、`maxCopies` 4/3）、
+  境界値（39/40/41枚、同名4枚/5枚、キャラ2枠/3枠/4枠、有効期間の初日と最終日）を検証
+- 既存デッキJSONと共有ログv1の値は変えない（`printingId`のまま。判定の同名集計だけ`oracleId`）
+- `deckProblems`の出力は旧実装と完全一致（サンプル・プリセット・変異デッキ計3,400通りで差分0）
+
+検証: 2026-07-29にengine 177 tests（+63）、npm test 251件、engine/admin typecheck、
+Web/Admin production build、未公開データ漏洩検査を通過
+
+未解決（P8へ持ち越し）:
+
+- 最新N弾フォーマットのNの数え方（公開日基準か弾番号基準か）
+- 制限カードで何枚まで入れられるか
 
 ### OLG-005 engine/content/format versionを固定
 

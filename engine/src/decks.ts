@@ -4,6 +4,8 @@
  * （キャラ3枠ちょうど・カード40枚・40枚側は同名4枚まで）
  */
 import { ALL_CARDS, PUBLIC_CARD_CATALOG, type CardCatalog } from './cards';
+import { checkDeckLegality } from './deckLegality';
+import { DEFAULT_FORMAT, type FormatDefinition } from './formats';
 import { mulberry32, pickOne, shuffled, type Rng } from './rng';
 import {
   DECK_SIZE,
@@ -31,96 +33,30 @@ export const DEFAULT_DECK_RULES: DeckRules = {
   maxCopies: MAX_COPIES_PER_CARD,
 };
 
-/** デッキがルールに合っているか調べて、問題の一覧を返す（空なら合格） */
+/**
+ * 実験用のデッキ枚数ルールを、既定フォーマット（FREE_V1）へ上書きした一時的なフォーマットにする。
+ * シミュレーターが `--deckSize` / `--maxCopies` を変えて回すためだけの入口で、
+ * 保存済みフォーマットの版を書き換えるものではない。
+ */
+export function formatForDeckRules(rules: DeckRules = DEFAULT_DECK_RULES): FormatDefinition {
+  if (rules.deckSize === DEFAULT_FORMAT.deckSize && rules.maxCopies === DEFAULT_FORMAT.maxCopies) {
+    return DEFAULT_FORMAT;
+  }
+  return { ...DEFAULT_FORMAT, deckSize: rules.deckSize, maxCopies: rules.maxCopies };
+}
+
+/**
+ * デッキがルールに合っているか調べて、問題の一覧を返す（空なら合格）。
+ * 判定本体は `checkDeckLegality`（deckLegality.ts）。ここは文字列だけ欲しい呼び出し向けの薄い皮。
+ */
 export function deckProblems(
   deck: DeckList,
   rules: DeckRules = DEFAULT_DECK_RULES,
   catalog: CardCatalog = PUBLIC_CARD_CATALOG,
 ): string[] {
-  const problems: string[] = [];
-
-  if (deck.characterIds.length < 2 || deck.characterIds.length > MAX_CHARACTERS) {
-    problems.push(`キャラクターは2〜${MAX_CHARACTERS}枚（今: ${deck.characterIds.length}枚）`);
-  }
-
-  // 大型（legendaryLarge）はキャラクター枠を2つ使う
-  let slots = 0;
-  for (const id of deck.characterIds) {
-    try {
-      const card = catalog.cardByPrintingId(id);
-      if (card.type === 'character') {
-        slots += card.size === 'legendaryLarge' ? 2 : 1;
-      }
-    } catch {
-      /* 存在しないカードは下で報告される */
-    }
-  }
-  if (slots !== MAX_CHARACTERS) {
-    problems.push(`キャラクター枠は${MAX_CHARACTERS}枠ちょうど（大型は2枠）。今: ${slots}枠`);
-  }
-  if (deck.cardIds.length !== rules.deckSize) {
-    problems.push(`デッキは${rules.deckSize}枚（今: ${deck.cardIds.length}枚）`);
-  }
-
-  for (const id of [...deck.characterIds, ...deck.cardIds]) {
-    try {
-      catalog.cardByPrintingId(id);
-    } catch {
-      problems.push(`存在しないカード: ${id}`);
-    }
-  }
-
-  for (const id of deck.characterIds) {
-    try {
-      if (catalog.cardByPrintingId(id).type !== 'character') {
-        problems.push(`キャラクター枠にキャラクター以外のカード: ${id}`);
-      }
-    } catch {
-      /* 上で報告済み */
-    }
-  }
-
-  const characterCounts = new Map<string, { count: number; printingIds: string[] }>();
-  for (const printingId of deck.characterIds) {
-    try {
-      const oracleId = catalog.cardByPrintingId(printingId).oracleId;
-      const entry = characterCounts.get(oracleId) ?? { count: 0, printingIds: [] };
-      entry.count++;
-      entry.printingIds.push(printingId);
-      characterCounts.set(oracleId, entry);
-    } catch {
-      /* 存在しないカードは上で報告済み */
-    }
-  }
-  for (const [oracleId, entry] of characterCounts) {
-    if (entry.count > 1) {
-      problems.push(
-        `キャラクター枠の同名カードは1枚まで: ${oracleId}（${entry.printingIds.join(', ')}）が${entry.count}枚`,
-      );
-    }
-  }
-
-  const counts = new Map<string, { count: number; printingIds: Set<string> }>();
-  for (const printingId of deck.cardIds) {
-    try {
-      const oracleId = catalog.cardByPrintingId(printingId).oracleId;
-      const entry = counts.get(oracleId) ?? { count: 0, printingIds: new Set<string>() };
-      entry.count++;
-      entry.printingIds.add(printingId);
-      counts.set(oracleId, entry);
-    } catch {
-      /* 存在しないカードは上で報告済み */
-    }
-  }
-  for (const [oracleId, entry] of counts) {
-    if (entry.count > rules.maxCopies) {
-      problems.push(
-        `40枚側の同名カードは${rules.maxCopies}枚まで: ${oracleId}（${[...entry.printingIds].join(', ')}）が${entry.count}枚`,
-      );
-    }
-  }
-
-  return problems;
+  return checkDeckLegality(deck, formatForDeckRules(rules), catalog).violations.map(
+    (v) => v.message,
+  );
 }
 
 /**

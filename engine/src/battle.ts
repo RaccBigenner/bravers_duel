@@ -10,7 +10,9 @@
  * 選択が必要な一部のカード効果は、効果ごとの実装状況を参照する。
  */
 import { cardByPrintingId, oracleIdOfPrinting } from './cards';
-import { containsAll, deckProblems, DEFAULT_DECK_RULES, type DeckList, type DeckRules } from './decks';
+import { checkDeckForMatchStart, describeDeckViolations } from './deckLegality';
+import { containsAll, formatForDeckRules, DEFAULT_DECK_RULES, type DeckList, type DeckRules } from './decks';
+import type { FormatDefinition } from './formats';
 import {
   characterEffectOf,
   equipmentEffectOf,
@@ -805,8 +807,10 @@ function healCharacter(state: BattleState, player: PlayerIndex, charIndex: numbe
 export interface CreateBattleOptions {
   firstPlayer?: PlayerIndex;
   validate?: boolean;
-  /** 実験用のデッキ構築ルール（省略時は公式ルール） */
+  /** 実験用のデッキ構築ルール（省略時は公式ルール）。`format` を渡したときは無視される */
   deckRules?: DeckRules;
+  /** この試合が参照するフォーマット版（省略時は既定フォーマット FREE_V1 の最新版） */
+  format?: FormatDefinition;
   /** このプレイヤーの任意能力（アニマ等）は自動発動せず、手動アクションで発動する */
   manualFor?: PlayerIndex;
 }
@@ -818,11 +822,13 @@ export function createBattle(
 ): BattleState {
   const rng = mulberry32(seed);
 
+  // 試合開始直前の検証（設計 4.5 の3回目）。保存時・参加時と同じ関数を使う。
   if (options.validate !== false) {
+    const format = options.format ?? formatForDeckRules(options.deckRules ?? DEFAULT_DECK_RULES);
     decks.forEach((deck, i) => {
-      const problems = deckProblems(deck, options.deckRules ?? DEFAULT_DECK_RULES);
-      if (problems.length > 0) {
-        throw new Error(`プレイヤー${i + 1}のデッキが不正です: ${problems.join(' / ')}`);
+      const legality = checkDeckForMatchStart(deck, format);
+      if (!legality.legal) {
+        throw new Error(`プレイヤー${i + 1}のデッキが不正です: ${describeDeckViolations(legality)}`);
       }
     });
   }
