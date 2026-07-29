@@ -1,107 +1,234 @@
 /**
  * POST /api/save-cards  body: { vol, cards, renames? }
  *
- * その弾のカードを**まとめて**書き換える。並び替えと採番のための入口。
- *
- * 1枚ずつ /api/save-card を呼ぶと、100枚の弾では GitHub へ100往復することになり、
- * 遅いうえに途中で失敗すると並びが半端に残る。ここでは対象の弾のファイルを
- * 1回だけ読んで1回だけ書く。
- *
- * renames が付いていれば画像も引っ越す。カードidがそのまま画像のファイル名なので、
- * 採番をやり直すと、これをやらない限り全部の絵が迷子になる。
- * 画像を先に動かしてからカードを書く（逆にすると、新しいidに絵が無い状態が残る）。
- *
- * レスポンス: { ok:true, savedTo, saved, movedImages }
+ * 並び保存または一括採番を行う。カードJSONと全画像renameを非公開リポジトリの
+ * 同一Git commitへ入れるため、循環rename・画像欠損・途中失敗でも半端な状態を作らない。
  */
 import {
-  CARDS_PATH,
+  PRIVATE_IMAGE_DIR,
   PRIVATE_REPO,
   PUBLIC_REPO,
   SETS_PATH,
+  WIP_SETS_PATH,
   assertVolEditable,
-  cardIsPublic,
-  bytesToBase64,
-  ghDelete,
+  ghCommitFiles,
   ghGetJson,
-  ghGetRaw,
-  ghPutBase64,
-  ghPutJson,
-  privateImagePath,
-  publicImagePath,
+  ghListDir,
   handle,
   json,
+  normalizeMasterCards,
+  privateImagePath,
   readJsonBody,
+  requireCanonicalMasterCards,
   wipCardsPath,
   HttpError,
   type Env,
-  type MasterCard,
+  type GitFileReference,
   type SetsFile,
 } from '../_github';
+import {
+  CardIdentityError,
+  validatePrintingRenames,
+} from '../../shared/cardIdentity';
 
 interface Rename {
   from: string;
   to: string;
 }
 
+const encodeJson = (value: unknown) =>
+  new TextEncoder().encode(`${JSON.stringify(value, null, 2)}\n`);
+
 export const onRequestPost: PagesFunction<Env> = (ctx) =>
   handle(async () => {
     const env = ctx.env;
-    const { vol, cards, renames } = await readJsonBody<{
+    const { vol, cards: rawCards, renames } = await readJsonBody<{
       vol: number;
-      cards: MasterCard[] | null;
+      cards: Record<string, unknown>[] | null;
       renames?: Rename[];
     }>(ctx.request);
-
-    // cards を省く（null）と「画像の引っ越しだけ」になる。
-    // レアリティを変えて id が変わった時に使う（カード本体は save-card が書いている）
-    if (typeof vol !== 'number' || (cards != null && !Array.isArray(cards))) {
-      throw new HttpError(400, 'vol が必要です（cards は配列か null）');
+    if (
+      typeof vol !== 'number' ||
+      !Number.isInteger(vol) ||
+      vol < 1 ||
+      !Array.isArray(rawCards) ||
+      (renames != null && !Array.isArray(renames))
+    ) {
+      throw new HttpError(
+        400,
+        'vol・cards配列と、任意のrenames配列が必要です',
+      );
     }
-    if (cards?.some((c) => !c?.id || c.vol !== vol)) {
-      throw new HttpError(400, 'cards には同じ vol のカードだけを入れてください');
+    const cards = requireCanonicalMasterCards(rawCards);
+    if (cards.some((card) => card.vol !== vol)) {
+      throw new HttpError(
+        400,
+        'cards には同じ vol のカードだけを入れてください',
+      );
     }
 
-    const sets = (await ghGetJson<SetsFile>(env, PUBLIC_REPO, SETS_PATH)).data?.sets ?? [];
-    assertVolEditable(vol, sets);
+    const path = wipCardsPath(vol);
+    const [publicSetsFile, wipSetsFile, file, imageDirectory] =
+      await Promise.all([
+        ghGetJson<SetsFile>(env, PUBLIC_REPO, SETS_PATH),
+        ghGetJson<SetsFile>(env, PRIVATE_REPO, WIP_SETS_PATH),
+        ghGetJson<Record<string, unknown>[]>(
+          env,
+          PRIVATE_REPO,
+          path,
+        ),
+        ghListDir(env, PRIVATE_REPO, PRIVATE_IMAGE_DIR),
+      ]);
+    assertVolEditable(vol, [
+      ...(publicSetsFile.data?.sets ?? []),
+      ...(wipSetsFile.data?.sets ?? []),
+    ]);
+    const current = requireCanonicalMasterCards(
+      normalizeMasterCards(file.data ?? []),
+    );
+    if (current.some((card) => card.vol !== vol)) {
+      throw new HttpError(
+        409,
+        `cards/vol${vol}.json に別volのカードがあります`,
+      );
+    }
 
-    // 画像を先に引っ越す。
-    //
-    // 採番し直すと A→B, B→C のように「移動先が別の移動元」になる（入れ替え・玉突き）。
-    // 順番に上書きすると先に動かした側が潰れ、画像が失われる。実際にこれで
-    // 第2弾の5枚が壊れた（27→30→31→28→29→27 の循環）。
-    // 必ず全部を退避してから、退避したものを配り直す。
+    const requestedRenames = (renames ?? []) as Rename[];
+    // 旧逐次版でJSONだけ確定し、from-only画像の削除だけ残った状態を冪等に回収する。
+    if (
+      requestedRenames.length > 0 &&
+      JSON.stringify(current) === JSON.stringify(cards)
+    ) {
+      const renameByTarget = new Map(
+        requestedRenames.map((rename) => [rename.to, rename.from]),
+      );
+      const reconstructed = current.map((card) => {
+        const from = renameByTarget.get(card.printingId);
+        if (!from) return card;
+        return {
+          ...card,
+          printingId: from,
+          code: from.split('-')[1],
+        };
+      });
+      let completedRenames: Rename[];
+      try {
+        completedRenames = validatePrintingRenames(
+          reconstructed,
+          cards,
+          requestedRenames,
+          vol,
+        );
+      } catch (error) {
+        if (error instanceof CardIdentityError) {
+          throw new HttpError(409, error.message);
+        }
+        throw error;
+      }
+      const toIds = new Set(completedRenames.map((rename) => rename.to));
+      const expected: Record<string, string | null> = {
+        [path]: file.sha,
+        [WIP_SETS_PATH]: wipSetsFile.sha,
+      };
+      const cleanupReferences: GitFileReference[] = [];
+      let restoredImages = 0;
+      for (const rename of completedRenames) {
+        if (toIds.has(rename.from)) continue;
+        const sourcePath = privateImagePath(rename.from);
+        const targetPath = privateImagePath(rename.to);
+        const sourceSha = imageDirectory[`${rename.from}.webp`] ?? null;
+        const targetSha = imageDirectory[`${rename.to}.webp`] ?? null;
+        expected[sourcePath] = sourceSha;
+        expected[targetPath] = targetSha;
+        if (!sourceSha) continue;
+        if (!targetSha) {
+          cleanupReferences.push({ path: targetPath, sha: sourceSha });
+          restoredImages++;
+        }
+        cleanupReferences.push({ path: sourcePath, sha: null });
+      }
+      if (cleanupReferences.length > 0) {
+        await ghCommitFiles(
+          env,
+          PRIVATE_REPO,
+          [],
+          `finish reorder cleanup vol${vol}`,
+          expected,
+          cleanupReferences,
+        );
+      }
+      return json({
+        ok: true,
+        savedTo: `${PRIVATE_REPO}/${path}`,
+        saved: cards.length,
+        movedImages: restoredImages,
+        cleanupPending: [],
+      });
+    }
+
+    let list: Rename[];
+    try {
+      list = validatePrintingRenames(
+        current,
+        cards,
+        requestedRenames,
+        vol,
+      );
+    } catch (error) {
+      if (error instanceof CardIdentityError) {
+        throw new HttpError(409, error.message);
+      }
+      throw error;
+    }
+
+    const fromIds = new Set(list.map((rename) => rename.from));
+    const toIds = new Set(list.map((rename) => rename.to));
+    const expected: Record<string, string | null> = {
+      [path]: file.sha,
+      [WIP_SETS_PATH]: wipSetsFile.sha,
+    };
+    const desiredImages = new Map<string, string | null>();
     let movedImages = 0;
-    const list = (renames ?? []).filter((r) => r?.from && r?.to && r.from !== r.to);
-    for (const repo of [PRIVATE_REPO, PUBLIC_REPO]) {
-      const path = repo === PRIVATE_REPO ? privateImagePath : publicImagePath;
-      // 1) 退避（元の中身を全部読んでから消す）
-      const held: { to: string; bytes: Uint8Array }[] = [];
-      for (const r of list) {
-        const bytes = await ghGetRaw(env, repo, path(r.from));
-        if (!bytes) continue;
-        held.push({ to: r.to, bytes });
-        await ghDelete(env, repo, path(r.from), `move image ${r.from} -> ${r.to}`);
+
+    for (const rename of list) {
+      const sourceSha =
+        imageDirectory[`${rename.from}.webp`] ?? null;
+      const targetSha =
+        imageDirectory[`${rename.to}.webp`] ?? null;
+      if (targetSha && !fromIds.has(rename.to)) {
+        throw new HttpError(
+          409,
+          `移動先 ${rename.to} の画像は既に存在します`,
+        );
       }
-      // 2) 配り直す
-      for (const h of held) {
-        await ghPutBase64(env, repo, path(h.to), bytesToBase64(h.bytes), `move image -> ${h.to}`);
-        movedImages++;
+      expected[privateImagePath(rename.from)] = sourceSha;
+      expected[privateImagePath(rename.to)] = targetSha;
+      // 元画像が欠損している場合は、循環先に残っている旧画像を明示的に削除する。
+      desiredImages.set(privateImagePath(rename.to), sourceSha);
+      if (sourceSha) movedImages++;
+    }
+    for (const from of fromIds) {
+      if (!toIds.has(from)) {
+        desiredImages.set(privateImagePath(from), null);
       }
     }
+    const imageReferences: GitFileReference[] = [...desiredImages].map(
+      ([imagePath, sha]) => ({ path: imagePath, sha }),
+    );
 
-    if (cards == null) {
-      return json({ ok: true, savedTo: '(画像のみ)', saved: 0, movedImages });
-    }
-
-    // 保存先は弾単位で決まる（この弾は未公開なので実際は必ず非公開側）
-    const toPublic = cardIsPublic({ vol, status: cards[0]?.status }, sets);
-    const repo = toPublic ? PUBLIC_REPO : PRIVATE_REPO;
-    const path = toPublic ? CARDS_PATH : wipCardsPath(vol);
-
-    const file = await ghGetJson<MasterCard[]>(env, repo, path);
-    // 同じファイルに他の弾が同居している場合（公開 cards.json）は、その弾ぶんだけ差し替える
-    const others = (file.data ?? []).filter((c) => c.vol !== vol);
-    await ghPutJson(env, repo, path, [...others, ...cards], `reorder vol${vol} (${cards.length} cards)`, file.sha);
-
-    return json({ ok: true, savedTo: `${repo}/${path}`, saved: cards.length, movedImages });
+    await ghCommitFiles(
+      env,
+      PRIVATE_REPO,
+      [{ path, bytes: encodeJson(cards) }],
+      `reorder vol${vol} (${cards.length} cards)`,
+      expected,
+      imageReferences,
+    );
+    return json({
+      ok: true,
+      savedTo: `${PRIVATE_REPO}/${path}`,
+      saved: cards.length,
+      movedImages,
+      cleanupPending: [],
+    });
   });

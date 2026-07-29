@@ -3,7 +3,7 @@ import {
   DECK_SIZE,
   MAX_CHARACTERS,
   MAX_COPIES_PER_CARD,
-  cardById,
+  cardByPrintingId,
   containsAll,
   deckProblems,
   type Card,
@@ -60,9 +60,16 @@ export function DeckBuilder({ initial, onUse, onBack }: {
   const [copied, setCopied] = useState(false);
 
   const allChars = useMemo(() => ALL_CARDS.filter((c): c is CharacterCard => c.type === 'character'), []);
-  const teamAttrs = useMemo(() => chars.map((id) => (cardById(id) as CharacterCard).attribute), [chars]);
+  const teamAttrs = useMemo(
+    () => chars.map((printingId) => (cardByPrintingId(printingId) as CharacterCard).attribute),
+    [chars],
+  );
 
-  const slotsUsed = chars.reduce((n, id) => n + ((cardById(id) as CharacterCard).size === 'legendaryLarge' ? 2 : 1), 0);
+  const slotsUsed = chars.reduce(
+    (n, printingId) =>
+      n + ((cardByPrintingId(printingId) as CharacterCard).size === 'legendaryLarge' ? 2 : 1),
+    0,
+  );
   const cardIds = useMemo(() => {
     const list: string[] = [];
     counts.forEach((n, id) => {
@@ -74,10 +81,28 @@ export function DeckBuilder({ initial, onUse, onBack }: {
   const deck: DeckList = { characterIds: chars, cardIds };
   const problems = deckProblems(deck);
 
+  /** 4枚制限は収録違いを合算し、ゲーム上同じカード（oracle）単位で数える。 */
+  const oracleTotals = useMemo(() => {
+    const totals = new Map<string, number>();
+    counts.forEach((n, printingId) => {
+      const oracleId = cardByPrintingId(printingId).oracleId;
+      totals.set(oracleId, (totals.get(oracleId) ?? 0) + n);
+    });
+    return totals;
+  }, [counts]);
+
+  const printingCountByOracle = useMemo(() => {
+    const totals = new Map<string, number>();
+    for (const card of ALL_CARDS) {
+      totals.set(card.oracleId, (totals.get(card.oracleId) ?? 0) + 1);
+    }
+    return totals;
+  }, []);
+
   const typeCounts = useMemo(() => {
     const t = { attack: 0, guard: 0, support: 0, heal: 0, character: 0, equipment: 0, field: 0 };
-    for (const id of cardIds) {
-      const c = cardById(id);
+    for (const printingId of cardIds) {
+      const c = cardByPrintingId(printingId);
       if (c.type === 'skill') t[c.valueType]++;
       else t[c.type]++;
     }
@@ -85,22 +110,40 @@ export function DeckBuilder({ initial, onUse, onBack }: {
   }, [cardIds]);
 
   function toggleChar(c: CharacterCard) {
-    if (chars.includes(c.id)) {
-      setChars(chars.filter((id) => id !== c.id));
+    const sameOracleIndex = chars.findIndex(
+      (printingId) => cardByPrintingId(printingId).oracleId === c.oracleId,
+    );
+    if (sameOracleIndex >= 0) {
+      if (chars[sameOracleIndex] === c.printingId) {
+        setChars(chars.filter((_, i) => i !== sameOracleIndex));
+      } else {
+        // 同じキャラクターの別収録を押した時は、順番を保ったまま絵柄だけ差し替える。
+        setChars(chars.map((printingId, i) => (i === sameOracleIndex ? c.printingId : printingId)));
+      }
       return;
     }
     const need = c.size === 'legendaryLarge' ? 2 : 1;
     if (slotsUsed + need > MAX_CHARACTERS) return;
-    setChars([...chars, c.id]);
+    setChars([...chars, c.printingId]);
   }
 
-  function changeCount(id: string, delta: number) {
+  function changeCount(printingId: string, delta: number) {
     setCounts((prev) => {
+      const oracleId = cardByPrintingId(printingId).oracleId;
+      let oracleTotal = 0;
+      let deckTotal = 0;
+      prev.forEach((count, existingPrintingId) => {
+        deckTotal += count;
+        if (cardByPrintingId(existingPrintingId).oracleId === oracleId) oracleTotal += count;
+      });
+      if (delta > 0 && (deckTotal >= DECK_SIZE || oracleTotal >= MAX_COPIES_PER_CARD)) return prev;
+
       const next = new Map(prev);
-      const n = Math.max(0, Math.min(MAX_COPIES_PER_CARD, (next.get(id) ?? 0) + delta));
-      if (delta > 0 && total >= DECK_SIZE && n > (prev.get(id) ?? 0)) return prev; // 40枚上限
-      if (n === 0) next.delete(id);
-      else next.set(id, n);
+      const current = next.get(printingId) ?? 0;
+      const maxForThisPrinting = current + Math.max(0, MAX_COPIES_PER_CARD - oracleTotal);
+      const n = Math.max(0, Math.min(maxForThisPrinting, current + delta));
+      if (n === 0) next.delete(printingId);
+      else next.set(printingId, n);
       return next;
     });
   }
@@ -163,12 +206,16 @@ export function DeckBuilder({ initial, onUse, onBack }: {
           <p className="builder-hint">3枠ちょうど選ぼう（大型は2枠）。並び順＝アクターの交代順</p>
           <div className="char-grid">
             {allChars.map((c) => {
-              const idx = chars.indexOf(c.id);
+              const idx = chars.indexOf(c.printingId);
+              const sameOracleIndex = chars.findIndex(
+                (printingId) => cardByPrintingId(printingId).oracleId === c.oracleId,
+              );
               return (
                 <div
-                  key={c.id}
+                  key={c.printingId}
                   className={`char-pick ${idx >= 0 ? 'on' : ''}`}
                   onClick={() => toggleChar(c)}
+                  title={idx >= 0 ? '選択を外す' : sameOracleIndex >= 0 ? 'この収録へ差し替える' : undefined}
                 >
                   <CardFrame card={c} width={88} upright />
                   {idx >= 0 && <span className="pick-order">{idx + 1}</span>}
@@ -203,9 +250,11 @@ export function DeckBuilder({ initial, onUse, onBack }: {
           </div>
           <div className="builder-list">
             {cardPool.map((c) => {
-              const n = counts.get(c.id) ?? 0;
+              const n = counts.get(c.printingId) ?? 0;
+              const oracleTotal = oracleTotals.get(c.oracleId) ?? 0;
+              const hasOtherPrintings = (printingCountByOracle.get(c.oracleId) ?? 0) > 1;
               return (
-                <div key={c.id} className={`builder-row ${n > 0 ? 'has' : ''}`}>
+                <div key={c.printingId} className={`builder-row ${n > 0 ? 'has' : ''}`}>
                   <div className="builder-thumb" onClick={() => setZoom(c)}>
                     <CardFrame card={c} width={46} upright />
                   </div>
@@ -234,12 +283,24 @@ export function DeckBuilder({ initial, onUse, onBack }: {
                         </>
                       )}
                       {c.type === 'field' && 'フィールド'}
+                      {hasOtherPrintings && `・同名合計${oracleTotal}/${MAX_COPIES_PER_CARD}`}
                     </span>
                   </div>
                   <div className="builder-count">
-                    <button className="chip small" onClick={() => changeCount(c.id, -1)} disabled={n === 0}>−</button>
+                    <button className="chip small" onClick={() => changeCount(c.printingId, -1)} disabled={n === 0}>−</button>
                     <b className={n > 0 ? 'gold' : ''}>{n}</b>
-                    <button className="chip small" onClick={() => changeCount(c.id, 1)} disabled={n >= MAX_COPIES_PER_CARD || total >= DECK_SIZE}>＋</button>
+                    <button
+                      className="chip small"
+                      onClick={() => changeCount(c.printingId, 1)}
+                      disabled={oracleTotal >= MAX_COPIES_PER_CARD || total >= DECK_SIZE}
+                      title={
+                        oracleTotal >= MAX_COPIES_PER_CARD
+                          ? `収録違いを合わせて${MAX_COPIES_PER_CARD}枚まで`
+                          : undefined
+                      }
+                    >
+                      ＋
+                    </button>
                   </div>
                 </div>
               );

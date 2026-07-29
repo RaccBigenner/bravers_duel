@@ -37,7 +37,7 @@ mkdirSync(MARK_DIR, { recursive: true });
 
 const cards = JSON.parse(readFileSync('data/cards.json', 'utf8'));
 let skills = cards.filter((c) => c.type === 'skill');
-if (ONLY_IDS) skills = skills.filter((c) => ONLY_IDS.includes(c.id));
+if (ONLY_IDS) skills = skills.filter((c) => ONLY_IDS.includes(c.printingId));
 else if (!ALL) {
   console.error('--ids か --all を指定してください');
   process.exit(1);
@@ -112,13 +112,15 @@ async function generateOne(card) {
   const png = Buffer.from(b64, 'base64');
   const width = isUsr ? 768 : 1152; // 表示に十分なサイズへ縮小してwebp化
   const webp = await sharp(png).resize({ width }).webp({ quality: 82 }).toBuffer();
-  writeFileSync(`${OUT_DIR}/${card.id}.webp`, webp);
-  writeFileSync(`${MARK_DIR}/${card.id}`, new Date().toISOString());
+  writeFileSync(`${OUT_DIR}/${card.printingId}.webp`, webp);
+  writeFileSync(`${MARK_DIR}/${card.printingId}`, new Date().toISOString());
   return webp.length;
 }
 
 const CONCURRENCY = Number(argValue('concurrency') ?? 4);
-const queue = skills.filter((c) => !(SKIP_EXISTING && existsSync(`${MARK_DIR}/${c.id}`)));
+const queue = skills.filter(
+  (c) => !(SKIP_EXISTING && existsSync(`${MARK_DIR}/${c.printingId}`)),
+);
 const total = queue.length;
 let done = 0;
 let failed = [];
@@ -129,10 +131,12 @@ async function worker() {
     try {
       const bytes = await generateOne(card);
       done++;
-      console.log(`OK ${card.id} ${card.name} (${Math.round(bytes / 1024)}KB) [${done}/${total}]`);
+      console.log(
+        `OK ${card.printingId} ${card.name} (${Math.round(bytes / 1024)}KB) [${done}/${total}]`,
+      );
     } catch (e) {
-      failed.push(card.id);
-      console.error(`NG ${card.id} ${card.name}: ${e.message}`);
+      failed.push(card.printingId);
+      console.error(`NG ${card.printingId} ${card.name}: ${e.message}`);
     }
   }
 }

@@ -44,27 +44,46 @@ export const onRequestGet: PagesFunction<Env> = (ctx) =>
     const contentType = MIME[ext] ?? 'application/octet-stream';
     const version = new URL(ctx.request.url).searchParams.get('v');
 
-    // 公開 → 無ければ非公開 の順で探す
-    const find = async () =>
-      (await ghGetRaw(ctx.env, PUBLIC_REPO, `assets/card_images/${name}`)) ??
-      (await ghGetRaw(ctx.env, PRIVATE_REPO, `images/${name}`));
+    // 公開 → 無ければ非公開 の順で探し、キャッシュ方針を混同しない。
+    const find = async (): Promise<{
+      bytes: Uint8Array;
+      visibility: 'public' | 'private';
+    } | null> => {
+      const publicBytes = await ghGetRaw(
+        ctx.env,
+        PUBLIC_REPO,
+        `assets/card_images/${name}`,
+      );
+      if (publicBytes) return { bytes: publicBytes, visibility: 'public' };
+      const privateBytes = await ghGetRaw(
+        ctx.env,
+        PRIVATE_REPO,
+        `images/${name}`,
+      );
+      return privateBytes
+        ? { bytes: privateBytes, visibility: 'private' }
+        : null;
+    };
 
-    let bytes = await find();
+    let found = await find();
     // 上げた直後は GitHub 側の反映に数秒かかることがあり、そのままだと
     // 「保存できたのに画像が出ない」に見える。版番号つき（＝上げ直した直後）の時だけ一度待って再取得する。
-    if (!bytes && version) {
+    if (!found && version) {
       await new Promise((r) => setTimeout(r, 1200));
-      bytes = await find();
+      found = await find();
     }
-    if (!bytes) return new Response('not found', { status: 404 });
+    if (!found) return new Response('not found', { status: 404 });
 
-    return new Response(bytes, {
+    return new Response(found.bytes, {
       status: 200,
       headers: {
         'Content-Type': contentType,
-        'Cache-Control': version
-          ? 'public, max-age=31536000, immutable'
-          : 'public, max-age=300',
+        'Cache-Control':
+          found.visibility === 'private'
+            ? 'private, no-store'
+            : version
+              ? 'public, max-age=31536000, immutable'
+              : 'public, max-age=300',
       },
     });
   });

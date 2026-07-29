@@ -1,0 +1,314 @@
+name: Publish card set
+run-name: Publish card set vol${{ inputs.vol }} (${{ inputs.request_id }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      vol:
+        description: Canonical positive integer set volume
+        required: true
+        type: string
+      request_id:
+        description: Publish operation UUID
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bravers-card-publish
+  cancel-in-progress: false
+
+env:
+  # node:22-bookworm-slim のmulti-arch OCI digest。秘密・WIPに触れる処理で
+  # mutable tagを実行しない。更新時はDocker Hubのmanifest digestを確認する。
+  VALIDATION_NODE_IMAGE: node@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3
+  VALIDATION_RUNTIME_IMAGE: bravers-card-validation:node22
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Validate workflow inputs
+        id: canonical
+        env:
+          RAW_VOL: ${{ inputs.vol }}
+          RAW_REQUEST_ID: ${{ inputs.request_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$RAW_VOL" =~ ^[1-9][0-9]*$ ]]; then
+            exit 1
+          fi
+          if [[ ! "$RAW_REQUEST_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]]; then
+            exit 1
+          fi
+          echo "vol=$RAW_VOL" >> "$GITHUB_OUTPUT"
+
+      - name: Check out public repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: RaccBigenner/bravers_duel
+          path: public
+          ref: main
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: public/package-lock.json
+
+      # 外部取得はprivate WIPをcheckoutする前にすべて完了する。
+      # lifecycle scriptは実行せず、public側コードをhostで動かさない。
+      - name: Prepare isolated validation runtime
+        working-directory: public
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts
+          docker pull "$VALIDATION_NODE_IMAGE"
+          docker build \
+            --build-arg "BASE_IMAGE=$VALIDATION_NODE_IMAGE" \
+            --tag "$VALIDATION_RUNTIME_IMAGE" \
+            - <<'DOCKERFILE'
+          ARG BASE_IMAGE
+          FROM ${BASE_IMAGE}
+          RUN apt-get update -qq \
+            && apt-get install -y --no-install-recommends webp \
+            && rm -rf /var/lib/apt/lists/*
+          DOCKERFILE
+
+      - name: Check out private WIP repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: wip
+          ref: main
+          persist-credentials: false
+
+      # このscriptはpublic checkoutではなく、workflowと一緒にprivate repoへ置く正本。
+      - name: Validate snapshot and build public candidate
+        id: prepare
+        working-directory: wip
+        env:
+          PUBLISH_VOL: ${{ steps.canonical.outputs.vol }}
+          PUBLISH_REQUEST_ID: ${{ inputs.request_id }}
+          CARD_IMAGE_DECODER: ${{ github.workspace }}/wip/.github/scripts/decode-webp-sandbox.sh
+          CARD_IMAGE_DECODER_REQUIRED: "1"
+          WIP_IMAGE_ROOT: ${{ github.workspace }}/wip/images
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -x .github/scripts/decode-webp-sandbox.sh
+          node .github/scripts/publish-card-set.mjs prepare \
+            --vol "$PUBLISH_VOL" \
+            --request-id "$PUBLISH_REQUEST_ID" \
+            --public-dir ../public \
+            --wip-dir .
+
+      - name: Detect public candidate changes
+        id: public_changes
+        working-directory: public
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(git status --porcelain -- \
+            data/cards.json \
+            data/sets.json \
+            assets/card_images \
+            engine/src/effects \
+            engine/test/effects)"
+          if [[ -n "$status" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # candidateだけを別directoryへ複製し、WIP checkout・git資格情報・host環境をmountしない。
+      # public由来のtest/buildはnetwork noneのcontainer内だけで実行する。
+      - name: Run publication gates in a network-isolated copy
+        shell: bash
+        run: |
+          set -euo pipefail
+          validation_dir="$(mktemp -d "$RUNNER_TEMP/bravers-validation.XXXXXX")"
+          rsync -a --exclude=.git public/ "$validation_dir/"
+          docker run --rm \
+            --network none \
+            --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --pids-limit 512 \
+            --user "$(id -u):$(id -g)" \
+            --env npm_config_cache=/tmp/npm-cache \
+            --tmpfs /tmp:rw,nosuid,nodev \
+            --volume "$validation_dir:/workspace" \
+            --workdir /workspace \
+            "$VALIDATION_RUNTIME_IMAGE" \
+            sh -ceu '
+              mkdir -p /tmp/npm-cache
+              npm test
+              npm --workspace engine run typecheck
+              npm run build
+              npm --workspace admin run build
+              npx --no-install tsc --noEmit -p admin/functions/tsconfig.json
+              npm run check:leak
+            '
+
+      - name: Commit and push public set
+        if: steps.public_changes.outputs.changed == 'true'
+        id: public_push
+        working-directory: public
+        env:
+          PUBLISH_VOL: ${{ steps.canonical.outputs.vol }}
+          PUBLIC_PUBLISH_TOKEN: ${{ secrets.PUBLIC_PUBLISH_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- \
+            data/cards.json \
+            data/sets.json \
+            assets/card_images \
+            engine/src/effects \
+            engine/test/effects
+          if git diff --cached --quiet; then
+            exit 1
+          fi
+          git commit --quiet -m "Publish card set vol${PUBLISH_VOL}"
+          auth="$(printf 'x-access-token:%s' "$PUBLIC_PUBLISH_TOKEN" | base64 -w0)"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+            push --quiet origin HEAD:main
+
+      # remote mainを新しいworktreeとして読み直し、ローカルcandidateではなく
+      # 実際に公開されたcards/sets/imagesの完全一致を検証してからWIPを消す。
+      - name: Verify remote public result
+        id: remote_public
+        working-directory: public
+        env:
+          PUBLISH_VOL: ${{ steps.canonical.outputs.vol }}
+          PUBLISH_REQUEST_ID: ${{ inputs.request_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --quiet origin main
+          remote_dir="$(mktemp -d "$RUNNER_TEMP/bravers-public-main.XXXXXX")"
+          rmdir "$remote_dir"
+          git worktree add --quiet --detach "$remote_dir" origin/main
+          wip_snapshot="$(mktemp -d "$RUNNER_TEMP/bravers-wip-snapshot.XXXXXX")"
+          rmdir "$wip_snapshot"
+          git -C ../wip worktree add --quiet --detach "$wip_snapshot" HEAD
+          node ../wip/.github/scripts/publish-card-set.mjs verify \
+            --vol "$PUBLISH_VOL" \
+            --request-id "$PUBLISH_REQUEST_ID" \
+            --public-dir "$remote_dir" \
+            --wip-dir ../wip
+          echo "dir=$remote_dir" >> "$GITHUB_OUTPUT"
+          echo "wip_snapshot=$wip_snapshot" >> "$GITHUB_OUTPUT"
+
+      - name: Clean verified WIP snapshot
+        working-directory: wip
+        env:
+          PUBLISH_VOL: ${{ steps.canonical.outputs.vol }}
+          PUBLISH_REQUEST_ID: ${{ inputs.request_id }}
+          REMOTE_PUBLIC_DIR: ${{ steps.remote_public.outputs.dir }}
+        run: >-
+          node .github/scripts/publish-card-set.mjs cleanup
+          --vol "$PUBLISH_VOL"
+          --request-id "$PUBLISH_REQUEST_ID"
+          --public-dir "$REMOTE_PUBLIC_DIR"
+          --wip-dir .
+
+      - name: Reverify public main and push WIP cleanup
+        working-directory: wip
+        env:
+          PUBLISH_VOL: ${{ steps.canonical.outputs.vol }}
+          PUBLISH_REQUEST_ID: ${{ inputs.request_id }}
+          WIP_PUSH_TOKEN: ${{ github.token }}
+          WIP_SNAPSHOT_DIR: ${{ steps.remote_public.outputs.wip_snapshot }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C ../public fetch --quiet origin main
+          latest_dir="$(mktemp -d "$RUNNER_TEMP/bravers-public-latest.XXXXXX")"
+          rmdir "$latest_dir"
+          git -C ../public worktree add --quiet --detach "$latest_dir" origin/main
+          node "$WIP_SNAPSHOT_DIR/.github/scripts/publish-card-set.mjs" verify \
+            --vol "$PUBLISH_VOL" \
+            --request-id "$PUBLISH_REQUEST_ID" \
+            --public-dir "$latest_dir" \
+            --wip-dir "$WIP_SNAPSHOT_DIR"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- \
+            sets.wip.json \
+            "cards/vol${PUBLISH_VOL}.json" \
+            "effects/vol${PUBLISH_VOL}.ts" \
+            "effects/vol${PUBLISH_VOL}.test.ts" \
+            images \
+            publish_jobs
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit --quiet -m "Finish card set publish vol${PUBLISH_VOL}"
+          auth="$(printf 'x-access-token:%s' "$WIP_PUSH_TOKEN" | base64 -w0)"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+            push --quiet origin HEAD:main
+
+      # public mainがsnapshotと完全一致するなら公開後なのでlockを保持し、再実行でcleanupする。
+      # 未公開または別内容ならdraftへ戻す。statusだけでは判定しない。
+      - name: Unlock WIP after a pre-publication failure
+        if: failure()
+        env:
+          PUBLISH_VOL: ${{ steps.canonical.outputs.vol }}
+          PUBLISH_REQUEST_ID: ${{ inputs.request_id }}
+          WIP_PUSH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${PUBLISH_VOL:-}" || ! -d public/.git || ! -d wip/.git ]]; then
+            exit 0
+          fi
+          if ! git -C public fetch --quiet origin main; then
+            exit 0
+          fi
+          auth="$(printf 'x-access-token:%s' "$WIP_PUSH_TOKEN" | base64 -w0)"
+          if ! git -C wip \
+            -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+            fetch --quiet origin main
+          then
+            exit 0
+          fi
+          failure_wip="$(mktemp -d "$RUNNER_TEMP/bravers-failure-wip.XXXXXX")"
+          rmdir "$failure_wip"
+          git -C wip worktree add --quiet --detach "$failure_wip" origin/main
+          if [[ ! -f "$failure_wip/publish_jobs/active.json" ]]; then
+            exit 0
+          fi
+          remote_dir="$(mktemp -d "$RUNNER_TEMP/bravers-failure-main.XXXXXX")"
+          rmdir "$remote_dir"
+          git -C public worktree add --quiet --detach "$remote_dir" origin/main
+          if node "$failure_wip/.github/scripts/publish-card-set.mjs" verify \
+            --vol "$PUBLISH_VOL" \
+            --request-id "$PUBLISH_REQUEST_ID" \
+            --public-dir "$remote_dir" \
+            --wip-dir "$failure_wip"
+          then
+            exit 0
+          fi
+          node "$failure_wip/.github/scripts/publish-card-set.mjs" unlock \
+            --vol "$PUBLISH_VOL" \
+            --request-id "$PUBLISH_REQUEST_ID" \
+            --wip-dir "$failure_wip"
+          git -C "$failure_wip" config user.name "github-actions[bot]"
+          git -C "$failure_wip" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$failure_wip" add -A -- sets.wip.json publish_jobs
+          if git -C "$failure_wip" diff --cached --quiet; then
+            exit 0
+          fi
+          git -C "$failure_wip" commit --quiet -m "Unlock failed card set publish vol${PUBLISH_VOL}"
+          git -C "$failure_wip" \
+            -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+            push --quiet origin HEAD:main

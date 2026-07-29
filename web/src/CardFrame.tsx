@@ -54,8 +54,9 @@ export function CardFrame({ card, width = 300, upright = false, live }: Props) {
   const rotate = isLandscape && upright; // 横長カードを縦持ちに
   const outerW = isLandscape && !rotate ? h : w;
   const outerH = isLandscape && !rotate ? w : h;
-  // "1-A041-SR" → "1-A041 SR"（右下のコレクター表記）
-  const collectorNo = card.id.replace(/-([A-Z]+)$/, ' $1');
+  // printingId "1-A041-SR" → "1-A041 SR"（右下のコレクター表記）
+  // oracleId は再録で共有されるため、絵柄・収録番号には使わない。
+  const collectorNo = card.printingId.replace(/-([A-Z]+)$/, ' $1');
   const kira = kiraOverlay(card);
 
   return (
@@ -286,7 +287,7 @@ function CharacterContent({ card, w, h, landscape, kira, live }: {
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       {fullArt && (
         <img
-          src={IMG(card.id)}
+          src={IMG(card.printingId)}
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
           alt={card.name}
         />
@@ -336,7 +337,7 @@ function CharacterContent({ card, w, h, landscape, kira, live }: {
                 borderRadius: w * 0.008,
                 borderTop: `${w * 0.005}px solid rgba(0,0,0,0.4)`,
                 borderLeft: `${w * 0.005}px solid rgba(0,0,0,0.4)`,
-                backgroundImage: `url(${IMG(card.id)})`,
+                backgroundImage: `url(${IMG(card.printingId)})`,
                 backgroundSize: 'cover',
                 backgroundPosition: 'center',
                 boxSizing: 'border-box',
@@ -440,7 +441,7 @@ function SkillArt({ card, w, h, kira }: { card: SkillCard; w: number; h: number;
           style={{
             position: 'absolute',
             inset: rimWidth,
-            backgroundImage: `url(${IMG(card.id)})`,
+            backgroundImage: `url(${IMG(card.printingId)})`,
             backgroundSize: 'cover',
             backgroundPosition: 'center',
             ...shared,
@@ -461,7 +462,7 @@ function SkillContent({ card, w, h, kira, live }: { card: SkillCard; w: number; 
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       {fullArt && (
         <img
-          src={IMG(card.id)}
+          src={IMG(card.printingId)}
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
           alt={card.name}
         />
@@ -617,7 +618,7 @@ function EquipmentContent({ card, w, kira }: { card: EquipmentCard; w: number; k
         >
           <div style={{ position: 'relative', width: '100%', height: '100%' }}>
             <img
-              src={IMG(card.id)}
+              src={IMG(card.printingId)}
               style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }}
               alt={card.name}
             />
@@ -653,7 +654,7 @@ function FieldContent({ card, w, kira }: { card: FieldCard; w: number; kira?: st
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       <img
-        src={IMG(card.id)}
+        src={IMG(card.printingId)}
         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
         alt={card.name}
       />

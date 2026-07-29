@@ -8,7 +8,10 @@ import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ALL_CARDS } from '../src/cards';
 import { ALL_SETS, isVolReleased, RELEASED_SETS, setOfVol } from '../src/sets';
-import { hasEffectImplementation } from '../src/effects';
+import {
+  hasCompatibleEffectImplementation,
+  implementedEffectOracleIds,
+} from '../src/effects';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '../..');
@@ -63,13 +66,13 @@ describe('公開ゲート（制作中カードが漏れないこと）', () => {
 describe('画像とカードの対応（リリース事故防止）', () => {
   it('公開カードには対応する画像ファイルがある', () => {
     for (const c of ALL_CARDS) {
-      expect(existsSync(resolve(IMAGES_DIR, `${c.id}.webp`))).toBe(true);
+      expect(existsSync(resolve(IMAGES_DIR, `${c.printingId}.webp`))).toBe(true);
     }
   });
 
   it('カード番号の形をした画像で、公開カードに対応しないもの（stray）が無い', () => {
     // 例: 1-A200-C.webp のような「id形式だがカードが存在しない画像」＝未公開カードの絵の置き忘れ
-    const publicIds = new Set(ALL_CARDS.map((c) => c.id));
+    const publicIds = new Set(ALL_CARDS.map((c) => c.printingId));
     const strays = readdirSync(IMAGES_DIR)
       .filter((f) => /^\d+-[A-Z]\d+-[A-Z]+\.webp$/.test(f))
       .map((f) => f.replace(/\.webp$/, ''))
@@ -78,10 +81,28 @@ describe('画像とカードの対応（リリース事故防止）', () => {
   });
 });
 
-describe('効果実装の突き合わせ（参考・落とさない）', () => {
-  it('効果テキストがあるのに未実装のカードを数える', () => {
-    const missing = ALL_CARDS.filter((c) => c.effectText !== '' && !hasEffectImplementation(c.id));
-    // 情報として記録するだけ（落とさない）。管理画面でも同じ集計を出す
-    expect(missing.length).toBeGreaterThanOrEqual(0);
+describe('効果実装の公開ゲート', () => {
+  it('効果テキストがある公開カードはOracle効果が同じカード種別で実装済み', () => {
+    const incompatible = ALL_CARDS.filter(
+      (c) =>
+        c.effectText !== '' &&
+        !hasCompatibleEffectImplementation(c.oracleId, c.type),
+    );
+    // 未公開カードの名前やIDをActionsログへ展開せず、件数だけで停止する。
+    expect(
+      incompatible.length,
+      `効果が未実装またはカード種別と不一致の公開カードが${incompatible.length}枚あります`,
+    ).toBe(0);
+  });
+
+  it('公開効果moduleに公開カードの無いOracleを先行混載しない', () => {
+    const publicOracleIds = new Set(ALL_CARDS.map((card) => card.oracleId));
+    const strayCount = implementedEffectOracleIds()
+      .filter((oracleId) => !publicOracleIds.has(oracleId))
+      .length;
+    expect(
+      strayCount,
+      `公開カードに対応しない効果実装が${strayCount}件あります`,
+    ).toBe(0);
   });
 });

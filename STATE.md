@@ -1,18 +1,40 @@
 # STATE — BRAVER'S DUEL
 
-- 最終更新: 2026-07-26
-- フェーズ: バトルエンジン v2 完成（コアルール＋装備・フィールド含む効果113枚実装済み）
+- 最終更新: 2026-07-29
+- フェーズ: オンライン基盤 P0（OLG-003 カード同一性の二層化まで完了）
 
 ## プロジェクトの今
 
 - 2026-07-22 に社長 Racc の指示でプロジェクトを仕切り直した。
 - 昔の Flutter プロトタイプは全部 `archive/2026-07-22_flutter_prototype/` に保管した（もうさわらない）。
-- ゲームルールを言語化して `docs/GAME_RULES.md` にまとめた（v0.5、装備・フィールド含めほぼ確定）。**これがルールの唯一の正しい情報源。**
+- ゲームルールを言語化して `docs/GAME_RULES.md` にまとめた（v0.11）。**これがルールの唯一の正しい情報源。**
 - カードマスターデータは `data/cards.json`、カード画像は `assets/card_images/` にある。
 - 新プラットフォームは **TypeScript** に決定（理由: ブラウザβに必須＋同じエンジンで自動対戦テストができる）。
   - `engine/`: ルールエンジン + AI + シミュレーター（vitest でテスト）
   - `web/`: Vite + React のブラウザ画面
   - npm workspaces 構成。`npm test`・`npm run sim`・`npm run dev`・`npm run build` が動くことを確認済み。
+
+## オンライン基盤の現在地（2026-07-29）
+
+- 作業ブランチは `feat/online-foundation`。OLG-001（現行ルール同期）とOLG-002（基準ブランチ統合）は完了。
+- **OLG-003でカードIDを二層化**:
+  - `oracleId`: ゲーム上の不変な同一性。再録・別言語・別イラストでも共有し、コピー上限と効果解決に使う
+  - `printingId`: 収録・レアリティ・画像の単位。従来IDの値を維持し、デッキJSONと共有ログv1もこの値のまま
+- 公開カード144枚は両IDへ移行済み。エンジン、Web、管理画面、画像生成ツールを同期した。
+- 管理画面は旧WIPを読み取り互換するが、仮Oracleを明示確定するまで公開不可。
+  Printing ID変更・一括採番・削除にはvol照合、衝突拒否、同一Git commit、失敗後の冪等再試行を追加した。
+- 弾公開はCloudflare Workerで大量画像を処理せず、非公開`bravers_duel_wip`のGitHub Actionsへ委譲する。
+  Pages Functionsはカード・弾・効果module・弾固有test・全画像SHAをschema v3 manifestへ固定し、
+  `publishing`ロックを作るだけ。
+  Actionsは外部取得後にprivate WIPをcheckoutし、対象弾を反映した公開候補copyだけを
+  networkなし・資格情報なし・非対象WIPなしのcontainerへmountして全ゲートを通す。
+  カード・弾・画像・効果・testを公開側1commit→WIP cleanup 1commitで反映する。
+- 本番有効化には、非公開リポへ`ops/bravers_duel_wip/.github/`のworkflow＋trusted scripts 2本を同期、
+  対象弾のprivate効果module/testを用意、`PUBLIC_PUBLISH_TOKEN` Actions secret、
+  Cloudflareの`GITHUB_PRIVATE_TOKEN`（private write/Actions）と
+  `GITHUB_PUBLIC_TOKEN`（public read）を設定して管理画面を再デプロイする必要がある。
+  設定実施は承認済みだが、token値の発行・同期・本番デプロイはまだ行っていない。
+- 次はOLG-004（version付きformatとデッキ合法性）。
 
 ## 社長のやりたいことリスト（2026-07-22）
 
@@ -109,7 +131,7 @@
     基本値の理論値計算・弾メタ編集。保存は「制作中→data/wip（gitignore）／公開弾→data/cards.json」に自動振り分け。
   - 漏れ防止の多層防御: engineゲート＋物理分離（data/wip・assets/wip_card_images は gitignore）＋
     CIの `scripts/check-no-wip-leak.mjs`（deploy.yml に組込・公開JSを走査）＋ `engine/test/sets.test.ts`。
-  - テスト 81→90。将来の再録/エラッタは oracleId 二層モデルへ拡張可能な設計にしてある（今は未導入）。
+  - テスト 81→90。当時は将来拡張としていたoracleId二層モデルは、2026-07-29のOLG-003で導入済み。
 - 2026-07-24: **管理画面をスマホから使えるように（完成・稼働中）**。当初 Tailscale を提案したが
   社長が「アプリを入れたくない・外出先から使いたい」→ **Cloudflare Tunnel + Access** に変更。
   社長は既に Cloudflare ヘビーユーザーで `racc.games` ドメイン保有。
@@ -160,8 +182,10 @@
     （メールOTPではない）。OTP に戻すなら Zero Trust の Authentication で One-time PIN を有効化する。
   - 実測確認: 未認証の `/`・`/api/master`・`/api/save-card` はすべて 302 でブロック。
     トンネルを止めた状態でカード一覧（第1弾144枚・第2弾8枚）が出ることも確認した。
-  - **注意: 環境変数 `GITHUB_TOKEN`（fine-grained PAT）は 2026-08-24 ごろ期限切れ**。
-    差し替えたら再デプロイが必要。**`--branch main` を必ず付ける**
+  - **当時の注意**: 旧環境変数 `GITHUB_TOKEN`（fine-grained PAT）は
+    2026-08-24 ごろ期限切れ。OLG-003でprivate write/Actions用
+    `GITHUB_PRIVATE_TOKEN`とpublic read-only用`GITHUB_PUBLIC_TOKEN`へ分離したため、
+    本番切替後は旧tokenをrevokeする。差し替えたら再デプロイが必要。**`--branch main` を必ず付ける**
     （付けないと今の git ブランチ名で Preview 環境に上がり、cards.racc.games に反映されない）:
     `cd admin && npx vite build && npx wrangler pages deploy dist --project-name bravers-admin --branch main`
   - 撤去したもの: `~/Library/LaunchAgents/com.bravers.{admin,tunnel}.plist`（unload して削除）。
@@ -210,7 +234,7 @@
     8枚とも表示を確認済み。
   - **再発防止**: `/api/master` が非公開リポの `cards/` を直接見るようにした。
     ファイルがある vol は弾メタが無くても必ず読み、弾タブを出して赤い「要設定」バッジを付ける
-    （`orphanVols`）。同 id は公開側を正として重複も排除。ローカル開発サーバーにも同じ処理を入れた。
+    （`orphanVols`）。同じPrinting IDは公開側を正として重複も排除。ローカル開発サーバーにも同じ処理を入れた。
   - **残る注意**: 制作中の弾メタの置き場は **ローカル=`data/wip/sets.json` / クラウド=非公開リポ
     `sets.wip.json`** と2つある。**片方を編集しても、もう片方には反映されない。**
     今はクラウド版だけを使うのでまず問題ないが、ローカル管理画面を触る時は必ず思い出すこと。
@@ -248,7 +272,7 @@
   - 公開済み `data/cards.json`（第1弾144枚）は元から種類ごとに項目が揃っていて、汚れは無かった。
 - 2026-07-26: **保存すると一覧に戻った後で勝手にカード編集画面へ飛ばされる件を修正**（社長報告）。
   - **原因**: `onSaveCard` が `await reload()`（GitHubから全件読み直し・数秒）してから
-    `setSelectedId(card.id)` していた。待っている間に「← 一覧へ」を押しても、
+    旧実装が `setSelectedId(card.id)` していた。待っている間に「← 一覧へ」を押しても、
     後から選択が復活してシートが開き直していた。**遅い非同期処理が、利用者の操作を後から上書きする**古典的な事故。
   - **直し方（2つ）**:
     ① `userClosedRef` で「保存中に閉じたか」を見て、閉じていたら開き直さない。

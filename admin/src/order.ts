@@ -53,11 +53,11 @@ export function inCurrentOrder(cards: MasterCard[]): MasterCard[] {
 /** 第1弾と同じ考え方で並べ替える。同点は今の並びを保つ（＝手で直した順序が消えない） */
 export function autoSort(cards: MasterCard[]): MasterCard[] {
   const current = inCurrentOrder(cards);
-  const indexOf = new Map(current.map((c, i) => [c.id, i]));
+  const indexOf = new Map(current.map((c, i) => [c.printingId, i]));
   return [...current].sort((a, b) => {
     const byRule = compareKeys(sortKey(a), sortKey(b));
     if (byRule !== 0) return byRule;
-    return (indexOf.get(a.id) ?? 0) - (indexOf.get(b.id) ?? 0);
+    return (indexOf.get(a.printingId) ?? 0) - (indexOf.get(b.printingId) ?? 0);
   });
 }
 
@@ -68,7 +68,7 @@ export function withOrder(cards: MasterCard[]): MasterCard[] {
 
 export interface Renumbered {
   cards: MasterCard[];
-  /** 画像の引っ越し表。ID が変わったカードだけ入る */
+  /** 画像の引っ越し表。printingId が変わったカードだけ入る */
   renames: { from: string; to: string }[];
   changed: number;
 }
@@ -76,8 +76,9 @@ export interface Renumbered {
 /**
  * 今の並びのとおりに A001 から採番し直す。
  *
- * id は `{vol}-{code}-{rarity}` なので、code が変われば id も変わる。
- * 画像は id をファイル名にしているため、**同時に引っ越さないと絵が消える**。
+ * printingId は `{vol}-{code}-{rarity}` なので、code が変われば printingId も変わる。
+ * 画像は printingId をファイル名にしているため、**同時に引っ越さないと絵が消える**。
+ * oracleId はカード定義の不変IDなので、採番では絶対に変更しない。
  * その対応表も一緒に返す。
  */
 export function renumber(cards: MasterCard[], vol: number): Renumbered {
@@ -85,9 +86,9 @@ export function renumber(cards: MasterCard[], vol: number): Renumbered {
   const renames: { from: string; to: string }[] = [];
   const out = ordered.map((c, i) => {
     const code = `A${String(i + 1).padStart(3, '0')}`;
-    const id = `${vol}-${code}-${c.rarity}`;
-    if (id !== c.id) renames.push({ from: c.id, to: id });
-    return { ...c, code, id, order: i };
+    const printingId = `${vol}-${code}-${c.rarity}`;
+    if (printingId !== c.printingId) renames.push({ from: c.printingId, to: printingId });
+    return { ...c, code, printingId, order: i };
   });
   return { cards: out, renames, changed: renames.length };
 }
@@ -174,6 +175,6 @@ export function computeStats(cards: MasterCard[], images: Record<string, string>
     byAttribute: [...attrTotal.entries()]
       .sort((a, b) => b[1] - a[1])
       .map(([key, c]) => ({ key, count: c, cards: attrCards.get(key) ?? 0 })),
-    noImage: cards.filter((c) => !images[c.id]).length,
+    noImage: cards.filter((c) => !images[c.printingId]).length,
   };
 }

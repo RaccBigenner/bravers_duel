@@ -1,6 +1,7 @@
 [
   {
-    "id": "1-A001-LSR",
+    "oracleId": "1-A001",
+    "printingId": "1-A001-LSR",
     "vol": 1,
     "code": "A001",
     "rarity": "LSR",
@@ -18,7 +19,8 @@
     ]
   },
   {
-    "id": "1-A002-LSR",
+    "oracleId": "1-A002",
+    "printingId": "1-A002-LSR",
     "vol": 1,
     "code": "A002",
     "rarity": "LSR",
@@ -36,7 +38,8 @@
     ]
   },
   {
-    "id": "1-A003-USR",
+    "oracleId": "1-A003",
+    "printingId": "1-A003-USR",
     "vol": 1,
     "code": "A003",
     "rarity": "USR",
@@ -53,7 +56,8 @@
     ]
   },
   {
-    "id": "1-A004-USR",
+    "oracleId": "1-A004",
+    "printingId": "1-A004-USR",
     "vol": 1,
     "code": "A004",
     "rarity": "USR",
@@ -72,7 +76,8 @@
     ]
   },
   {
-    "id": "1-A005-USR",
+    "oracleId": "1-A005",
+    "printingId": "1-A005-USR",
     "vol": 1,
     "code": "A005",
     "rarity": "USR",
@@ -89,7 +94,8 @@
     ]
   },
   {
-    "id": "1-A006-USR",
+    "oracleId": "1-A006",
+    "printingId": "1-A006-USR",
     "vol": 1,
     "code": "A006",
     "rarity": "USR",
@@ -105,7 +111,8 @@
     ]
   },
   {
-    "id": "1-A007-SSR",
+    "oracleId": "1-A007",
+    "printingId": "1-A007-SSR",
     "vol": 1,
     "code": "A007",
     "rarity": "SSR",
@@ -122,7 +129,8 @@
     ]
   },
   {
-    "id": "1-A008-SSR",
+    "oracleId": "1-A008",
+    "printingId": "1-A008-SSR",
     "vol": 1,
     "code": "A008",
     "rarity": "SSR",
@@ -139,7 +147,8 @@
     ]
   },
   {
-    "id": "1-A009-SR",
+    "oracleId": "1-A009",
+    "printingId": "1-A009-SR",
     "vol": 1,
     "code": "A009",
     "rarity": "SR",
@@ -155,7 +164,8 @@
     ]
   },
   {
-    "id": "1-A010-SR",
+    "oracleId": "1-A010",
+    "printingId": "1-A010-SR",
     "vol": 1,
     "code": "A010",
     "rarity": "SR",
@@ -172,7 +182,8 @@
     ]
   },
   {
-    "id": "1-A011-SR",
+    "oracleId": "1-A011",
+    "printingId": "1-A011-SR",
     "vol": 1,
     "code": "A011",
     "rarity": "SR",
@@ -189,7 +200,8 @@
     ]
   },
   {
-    "id": "1-A012-SR",
+    "oracleId": "1-A012",
+    "printingId": "1-A012-SR",
     "vol": 1,
     "code": "A012",
     "rarity": "SR",
@@ -206,7 +218,8 @@
     ]
   },
   {
-    "id": "1-A013-SR",
+    "oracleId": "1-A013",
+    "printingId": "1-A013-SR",
     "vol": 1,
     "code": "A013",
     "rarity": "SR",
@@ -222,7 +235,8 @@
     ]
   },
   {
-    "id": "1-A014-SR",
+    "oracleId": "1-A014",
+    "printingId": "1-A014-SR",
     "vol": 1,
     "code": "A014",
     "rarity": "SR",
@@ -235,7 +249,8 @@
     "attribute": []
   },
   {
-    "id": "1-A015-SR",
+    "oracleId": "1-A015",
+    "printingId": "1-A015-SR",
     "vol": 1,
     "code": "A015",
     "rarity": "SR",
@@ -251,7 +266,8 @@
     ]
   },
   {
-    "id": "1-A016-SR",
+    "oracleId": "1-A016",
+    "printingId": "1-A016-SR",
     "vol": 1,
     "code": "A016",
     "rarity": "SR",
@@ -267,7 +283,8 @@
     ]
   },
   {
-    "id": "1-A017-R",
+    "oracleId": "1-A017",
+    "printingId": "1-A017-R",
     "vol": 1,
     "code": "A017",
     "rarity": "R",
@@ -283,7 +300,8 @@
     ]
   },
   {
-    "id": "1-A018-R",
+    "oracleId": "1-A018",
+    "printingId": "1-A018-R",
     "vol": 1,
     "code": "A018",
     "rarity": "R",
@@ -299,7 +317,8 @@
     ]
   },
   {
-    "id": "1-A019-R",
+    "oracleId": "1-A019",
+    "printingId": "1-A019-R",
     "vol": 1,
     "code": "A019",
     "rarity": "R",
@@ -316,7 +335,8 @@
     ]
   },
   {
-    "id": "1-A020-R",
+    "oracleId": "1-A020",
+    "printingId": "1-A020-R",
     "vol": 1,
     "code": "A020",
     "rarity": "R",
@@ -333,7 +353,8 @@
     ]
   },
   {
-    "id": "1-A021-R",
+    "oracleId": "1-A021",
+    "printingId": "1-A021-R",
     "vol": 1,
     "code": "A021",
     "rarity": "R",
@@ -350,7 +371,8 @@
     ]
   },
   {
-    "id": "1-A022-R",
+    "oracleId": "1-A022",
+    "printingId": "1-A022-R",
     "vol": 1,
     "code": "A022",
     "rarity": "R",
@@ -367,7 +389,8 @@
     ]
   },
   {
-    "id": "1-A023-R",
+    "oracleId": "1-A023",
+    "printingId": "1-A023-R",
     "vol": 1,
     "code": "A023",
     "rarity": "R",
@@ -383,7 +406,8 @@
     ]
   },
   {
-    "id": "1-A024-R",
+    "oracleId": "1-A024",
+    "printingId": "1-A024-R",
     "vol": 1,
     "code": "A024",
     "rarity": "R",
@@ -398,7 +422,8 @@
     ]
   },
   {
-    "id": "1-A025-SR",
+    "oracleId": "1-A025",
+    "printingId": "1-A025-SR",
     "vol": 1,
     "code": "A025",
     "rarity": "SR",
@@ -412,7 +437,8 @@
     ]
   },
   {
-    "id": "1-A026-SR",
+    "oracleId": "1-A026",
+    "printingId": "1-A026-SR",
     "vol": 1,
     "code": "A026",
     "rarity": "SR",
@@ -425,7 +451,8 @@
     ]
   },
   {
-    "id": "1-A027-R",
+    "oracleId": "1-A027",
+    "printingId": "1-A027-R",
     "vol": 1,
     "code": "A027",
     "rarity": "R",
@@ -439,7 +466,8 @@
     ]
   },
   {
-    "id": "1-A028-R",
+    "oracleId": "1-A028",
+    "printingId": "1-A028-R",
     "vol": 1,
     "code": "A028",
     "rarity": "R",
@@ -453,7 +481,8 @@
     ]
   },
   {
-    "id": "1-A029-C",
+    "oracleId": "1-A029",
+    "printingId": "1-A029-C",
     "vol": 1,
     "code": "A029",
     "rarity": "C",
@@ -464,7 +493,8 @@
     "addAttribute": []
   },
   {
-    "id": "1-A030-C",
+    "oracleId": "1-A030",
+    "printingId": "1-A030-C",
     "vol": 1,
     "code": "A030",
     "rarity": "C",
@@ -475,7 +505,8 @@
     "addAttribute": []
   },
   {
-    "id": "1-A031-C",
+    "oracleId": "1-A031",
+    "printingId": "1-A031-C",
     "vol": 1,
     "code": "A031",
     "rarity": "C",
@@ -489,7 +520,8 @@
     ]
   },
   {
-    "id": "1-A032-C",
+    "oracleId": "1-A032",
+    "printingId": "1-A032-C",
     "vol": 1,
     "code": "A032",
     "rarity": "C",
@@ -502,7 +534,8 @@
     ]
   },
   {
-    "id": "1-A033-SR",
+    "oracleId": "1-A033",
+    "printingId": "1-A033-SR",
     "vol": 1,
     "code": "A033",
     "rarity": "SR",
@@ -512,7 +545,8 @@
     "flavorText": ""
   },
   {
-    "id": "1-A034-SR",
+    "oracleId": "1-A034",
+    "printingId": "1-A034-SR",
     "vol": 1,
     "code": "A034",
     "rarity": "SR",
@@ -522,7 +556,8 @@
     "flavorText": ""
   },
   {
-    "id": "1-A035-R",
+    "oracleId": "1-A035",
+    "printingId": "1-A035-R",
     "vol": 1,
     "code": "A035",
     "rarity": "R",
@@ -532,7 +567,8 @@
     "flavorText": ""
   },
   {
-    "id": "1-A036-R",
+    "oracleId": "1-A036",
+    "printingId": "1-A036-R",
     "vol": 1,
     "code": "A036",
     "rarity": "R",
@@ -542,7 +578,8 @@
     "flavorText": ""
   },
   {
-    "id": "1-A037-USR",
+    "oracleId": "1-A037",
+    "printingId": "1-A037-USR",
     "vol": 1,
     "code": "A037",
     "rarity": "USR",
@@ -559,7 +596,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A038-USR",
+    "oracleId": "1-A038",
+    "printingId": "1-A038-USR",
     "vol": 1,
     "code": "A038",
     "rarity": "USR",
@@ -575,7 +613,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A039-USR",
+    "oracleId": "1-A039",
+    "printingId": "1-A039-USR",
     "vol": 1,
     "code": "A039",
     "rarity": "USR",
@@ -592,7 +631,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A040-USR",
+    "oracleId": "1-A040",
+    "printingId": "1-A040-USR",
     "vol": 1,
     "code": "A040",
     "rarity": "USR",
@@ -610,7 +650,8 @@
     "valueType": "heal"
   },
   {
-    "id": "1-A041-SR",
+    "oracleId": "1-A041",
+    "printingId": "1-A041-SR",
     "vol": 1,
     "code": "A041",
     "rarity": "SR",
@@ -626,7 +667,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A042-SR",
+    "oracleId": "1-A042",
+    "printingId": "1-A042-SR",
     "vol": 1,
     "code": "A042",
     "rarity": "SR",
@@ -642,7 +684,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A043-SR",
+    "oracleId": "1-A043",
+    "printingId": "1-A043-SR",
     "vol": 1,
     "code": "A043",
     "rarity": "SR",
@@ -658,7 +701,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A044-SR",
+    "oracleId": "1-A044",
+    "printingId": "1-A044-SR",
     "vol": 1,
     "code": "A044",
     "rarity": "SR",
@@ -674,7 +718,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A045-SR",
+    "oracleId": "1-A045",
+    "printingId": "1-A045-SR",
     "vol": 1,
     "code": "A045",
     "rarity": "SR",
@@ -691,7 +736,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A046-SR",
+    "oracleId": "1-A046",
+    "printingId": "1-A046-SR",
     "vol": 1,
     "code": "A046",
     "rarity": "SR",
@@ -708,7 +754,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A047-SR",
+    "oracleId": "1-A047",
+    "printingId": "1-A047-SR",
     "vol": 1,
     "code": "A047",
     "rarity": "SR",
@@ -724,7 +771,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A048-SR",
+    "oracleId": "1-A048",
+    "printingId": "1-A048-SR",
     "vol": 1,
     "code": "A048",
     "rarity": "SR",
@@ -741,7 +789,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A049-SR",
+    "oracleId": "1-A049",
+    "printingId": "1-A049-SR",
     "vol": 1,
     "code": "A049",
     "rarity": "SR",
@@ -758,7 +807,8 @@
     "valueType": "heal"
   },
   {
-    "id": "1-A050-SR",
+    "oracleId": "1-A050",
+    "printingId": "1-A050-SR",
     "vol": 1,
     "code": "A050",
     "rarity": "SR",
@@ -775,7 +825,8 @@
     "valueType": "support"
   },
   {
-    "id": "1-A051-SR",
+    "oracleId": "1-A051",
+    "printingId": "1-A051-SR",
     "vol": 1,
     "code": "A051",
     "rarity": "SR",
@@ -791,7 +842,8 @@
     "valueType": "support"
   },
   {
-    "id": "1-A052-SR",
+    "oracleId": "1-A052",
+    "printingId": "1-A052-SR",
     "vol": 1,
     "code": "A052",
     "rarity": "SR",
@@ -808,7 +860,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A053-R",
+    "oracleId": "1-A053",
+    "printingId": "1-A053-R",
     "vol": 1,
     "code": "A053",
     "rarity": "R",
@@ -824,7 +877,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A054-R",
+    "oracleId": "1-A054",
+    "printingId": "1-A054-R",
     "vol": 1,
     "code": "A054",
     "rarity": "R",
@@ -840,7 +894,8 @@
     "valueType": "support"
   },
   {
-    "id": "1-A055-R",
+    "oracleId": "1-A055",
+    "printingId": "1-A055-R",
     "vol": 1,
     "code": "A055",
     "rarity": "R",
@@ -857,7 +912,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A056-R",
+    "oracleId": "1-A056",
+    "printingId": "1-A056-R",
     "vol": 1,
     "code": "A056",
     "rarity": "R",
@@ -873,7 +929,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A057-R",
+    "oracleId": "1-A057",
+    "printingId": "1-A057-R",
     "vol": 1,
     "code": "A057",
     "rarity": "R",
@@ -889,7 +946,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A058-R",
+    "oracleId": "1-A058",
+    "printingId": "1-A058-R",
     "vol": 1,
     "code": "A058",
     "rarity": "R",
@@ -905,7 +963,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A059-R",
+    "oracleId": "1-A059",
+    "printingId": "1-A059-R",
     "vol": 1,
     "code": "A059",
     "rarity": "R",
@@ -921,7 +980,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A060-R",
+    "oracleId": "1-A060",
+    "printingId": "1-A060-R",
     "vol": 1,
     "code": "A060",
     "rarity": "R",
@@ -938,7 +998,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A061-R",
+    "oracleId": "1-A061",
+    "printingId": "1-A061-R",
     "vol": 1,
     "code": "A061",
     "rarity": "R",
@@ -955,7 +1016,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A062-R",
+    "oracleId": "1-A062",
+    "printingId": "1-A062-R",
     "vol": 1,
     "code": "A062",
     "rarity": "R",
@@ -972,7 +1034,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A063-R",
+    "oracleId": "1-A063",
+    "printingId": "1-A063-R",
     "vol": 1,
     "code": "A063",
     "rarity": "R",
@@ -989,7 +1052,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A064-R",
+    "oracleId": "1-A064",
+    "printingId": "1-A064-R",
     "vol": 1,
     "code": "A064",
     "rarity": "R",
@@ -1006,7 +1070,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A065-R",
+    "oracleId": "1-A065",
+    "printingId": "1-A065-R",
     "vol": 1,
     "code": "A065",
     "rarity": "R",
@@ -1022,7 +1087,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A066-R",
+    "oracleId": "1-A066",
+    "printingId": "1-A066-R",
     "vol": 1,
     "code": "A066",
     "rarity": "R",
@@ -1038,7 +1104,8 @@
     "valueType": "guard"
   },
   {
-    "id": "1-A067-R",
+    "oracleId": "1-A067",
+    "printingId": "1-A067-R",
     "vol": 1,
     "code": "A067",
     "rarity": "R",
@@ -1055,7 +1122,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A068-R",
+    "oracleId": "1-A068",
+    "printingId": "1-A068-R",
     "vol": 1,
     "code": "A068",
     "rarity": "R",
@@ -1072,7 +1140,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A069-R",
+    "oracleId": "1-A069",
+    "printingId": "1-A069-R",
     "vol": 1,
     "code": "A069",
     "rarity": "R",
@@ -1089,7 +1158,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A070-R",
+    "oracleId": "1-A070",
+    "printingId": "1-A070-R",
     "vol": 1,
     "code": "A070",
     "rarity": "R",
@@ -1106,7 +1176,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A071-R",
+    "oracleId": "1-A071",
+    "printingId": "1-A071-R",
     "vol": 1,
     "code": "A071",
     "rarity": "R",
@@ -1123,7 +1194,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A072-R",
+    "oracleId": "1-A072",
+    "printingId": "1-A072-R",
     "vol": 1,
     "code": "A072",
     "rarity": "R",
@@ -1139,7 +1211,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A073-R",
+    "oracleId": "1-A073",
+    "printingId": "1-A073-R",
     "vol": 1,
     "code": "A073",
     "rarity": "R",
@@ -1155,7 +1228,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A074-R",
+    "oracleId": "1-A074",
+    "printingId": "1-A074-R",
     "vol": 1,
     "code": "A074",
     "rarity": "R",
@@ -1171,7 +1245,8 @@
     "valueType": "support"
   },
   {
-    "id": "1-A075-R",
+    "oracleId": "1-A075",
+    "printingId": "1-A075-R",
     "vol": 1,
     "code": "A075",
     "rarity": "R",
@@ -1187,7 +1262,8 @@
     "valueType": "guard"
   },
   {
-    "id": "1-A076-R",
+    "oracleId": "1-A076",
+    "printingId": "1-A076-R",
     "vol": 1,
     "code": "A076",
     "rarity": "R",
@@ -1204,7 +1280,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A077-R",
+    "oracleId": "1-A077",
+    "printingId": "1-A077-R",
     "vol": 1,
     "code": "A077",
     "rarity": "R",
@@ -1221,7 +1298,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A078-R",
+    "oracleId": "1-A078",
+    "printingId": "1-A078-R",
     "vol": 1,
     "code": "A078",
     "rarity": "R",
@@ -1238,7 +1316,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A079-R",
+    "oracleId": "1-A079",
+    "printingId": "1-A079-R",
     "vol": 1,
     "code": "A079",
     "rarity": "R",
@@ -1254,7 +1333,8 @@
     "valueType": "support"
   },
   {
-    "id": "1-A080-R",
+    "oracleId": "1-A080",
+    "printingId": "1-A080-R",
     "vol": 1,
     "code": "A080",
     "rarity": "R",
@@ -1271,7 +1351,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A081-R",
+    "oracleId": "1-A081",
+    "printingId": "1-A081-R",
     "vol": 1,
     "code": "A081",
     "rarity": "R",
@@ -1287,7 +1368,8 @@
     "valueType": "support"
   },
   {
-    "id": "1-A082-R",
+    "oracleId": "1-A082",
+    "printingId": "1-A082-R",
     "vol": 1,
     "code": "A082",
     "rarity": "R",
@@ -1303,7 +1385,8 @@
     "valueType": "support"
   },
   {
-    "id": "1-A083-R",
+    "oracleId": "1-A083",
+    "printingId": "1-A083-R",
     "vol": 1,
     "code": "A083",
     "rarity": "R",
@@ -1319,7 +1402,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A084-R",
+    "oracleId": "1-A084",
+    "printingId": "1-A084-R",
     "vol": 1,
     "code": "A084",
     "rarity": "R",
@@ -1336,7 +1420,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A085-R",
+    "oracleId": "1-A085",
+    "printingId": "1-A085-R",
     "vol": 1,
     "code": "A085",
     "rarity": "R",
@@ -1353,7 +1438,8 @@
     "valueType": "support"
   },
   {
-    "id": "1-A086-UC",
+    "oracleId": "1-A086",
+    "printingId": "1-A086-UC",
     "vol": 1,
     "code": "A086",
     "rarity": "UC",
@@ -1369,7 +1455,8 @@
     "valueType": "heal"
   },
   {
-    "id": "1-A087-UC",
+    "oracleId": "1-A087",
+    "printingId": "1-A087-UC",
     "vol": 1,
     "code": "A087",
     "rarity": "UC",
@@ -1385,7 +1472,8 @@
     "valueType": "support"
   },
   {
-    "id": "1-A088-UC",
+    "oracleId": "1-A088",
+    "printingId": "1-A088-UC",
     "vol": 1,
     "code": "A088",
     "rarity": "UC",
@@ -1401,7 +1489,8 @@
     "valueType": "guard"
   },
   {
-    "id": "1-A089-UC",
+    "oracleId": "1-A089",
+    "printingId": "1-A089-UC",
     "vol": 1,
     "code": "A089",
     "rarity": "UC",
@@ -1417,7 +1506,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A090-UC",
+    "oracleId": "1-A090",
+    "printingId": "1-A090-UC",
     "vol": 1,
     "code": "A090",
     "rarity": "UC",
@@ -1433,7 +1523,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A091-UC",
+    "oracleId": "1-A091",
+    "printingId": "1-A091-UC",
     "vol": 1,
     "code": "A091",
     "rarity": "UC",
@@ -1449,7 +1540,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A092-UC",
+    "oracleId": "1-A092",
+    "printingId": "1-A092-UC",
     "vol": 1,
     "code": "A092",
     "rarity": "UC",
@@ -1465,7 +1557,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A093-UC",
+    "oracleId": "1-A093",
+    "printingId": "1-A093-UC",
     "vol": 1,
     "code": "A093",
     "rarity": "UC",
@@ -1481,7 +1574,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A094-UC",
+    "oracleId": "1-A094",
+    "printingId": "1-A094-UC",
     "vol": 1,
     "code": "A094",
     "rarity": "UC",
@@ -1497,7 +1591,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A095-UC",
+    "oracleId": "1-A095",
+    "printingId": "1-A095-UC",
     "vol": 1,
     "code": "A095",
     "rarity": "UC",
@@ -1513,7 +1608,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A096-UC",
+    "oracleId": "1-A096",
+    "printingId": "1-A096-UC",
     "vol": 1,
     "code": "A096",
     "rarity": "UC",
@@ -1530,7 +1626,8 @@
     "valueType": "support"
   },
   {
-    "id": "1-A097-UC",
+    "oracleId": "1-A097",
+    "printingId": "1-A097-UC",
     "vol": 1,
     "code": "A097",
     "rarity": "UC",
@@ -1547,7 +1644,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A098-UC",
+    "oracleId": "1-A098",
+    "printingId": "1-A098-UC",
     "vol": 1,
     "code": "A098",
     "rarity": "UC",
@@ -1564,7 +1662,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A099-UC",
+    "oracleId": "1-A099",
+    "printingId": "1-A099-UC",
     "vol": 1,
     "code": "A099",
     "rarity": "UC",
@@ -1580,7 +1679,8 @@
     "valueType": "support"
   },
   {
-    "id": "1-A100-UC",
+    "oracleId": "1-A100",
+    "printingId": "1-A100-UC",
     "vol": 1,
     "code": "A100",
     "rarity": "UC",
@@ -1596,7 +1696,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A101-UC",
+    "oracleId": "1-A101",
+    "printingId": "1-A101-UC",
     "vol": 1,
     "code": "A101",
     "rarity": "UC",
@@ -1612,7 +1713,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A102-UC",
+    "oracleId": "1-A102",
+    "printingId": "1-A102-UC",
     "vol": 1,
     "code": "A102",
     "rarity": "UC",
@@ -1628,7 +1730,8 @@
     "valueType": "support"
   },
   {
-    "id": "1-A103-UC",
+    "oracleId": "1-A103",
+    "printingId": "1-A103-UC",
     "vol": 1,
     "code": "A103",
     "rarity": "UC",
@@ -1645,7 +1748,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A104-UC",
+    "oracleId": "1-A104",
+    "printingId": "1-A104-UC",
     "vol": 1,
     "code": "A104",
     "rarity": "UC",
@@ -1661,7 +1765,8 @@
     "valueType": "guard"
   },
   {
-    "id": "1-A105-UC",
+    "oracleId": "1-A105",
+    "printingId": "1-A105-UC",
     "vol": 1,
     "code": "A105",
     "rarity": "UC",
@@ -1677,7 +1782,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A106-UC",
+    "oracleId": "1-A106",
+    "printingId": "1-A106-UC",
     "vol": 1,
     "code": "A106",
     "rarity": "UC",
@@ -1693,7 +1799,8 @@
     "valueType": "heal"
   },
   {
-    "id": "1-A107-UC",
+    "oracleId": "1-A107",
+    "printingId": "1-A107-UC",
     "vol": 1,
     "code": "A107",
     "rarity": "UC",
@@ -1709,7 +1816,8 @@
     "valueType": "support"
   },
   {
-    "id": "1-A108-UC",
+    "oracleId": "1-A108",
+    "printingId": "1-A108-UC",
     "vol": 1,
     "code": "A108",
     "rarity": "UC",
@@ -1725,7 +1833,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A109-UC",
+    "oracleId": "1-A109",
+    "printingId": "1-A109-UC",
     "vol": 1,
     "code": "A109",
     "rarity": "UC",
@@ -1741,7 +1850,8 @@
     "valueType": "support"
   },
   {
-    "id": "1-A110-UC",
+    "oracleId": "1-A110",
+    "printingId": "1-A110-UC",
     "vol": 1,
     "code": "A110",
     "rarity": "UC",
@@ -1758,7 +1868,8 @@
     "valueType": "support"
   },
   {
-    "id": "1-A111-UC",
+    "oracleId": "1-A111",
+    "printingId": "1-A111-UC",
     "vol": 1,
     "code": "A111",
     "rarity": "UC",
@@ -1774,7 +1885,8 @@
     "valueType": "support"
   },
   {
-    "id": "1-A112-C",
+    "oracleId": "1-A112",
+    "printingId": "1-A112-C",
     "vol": 1,
     "code": "A112",
     "rarity": "C",
@@ -1790,7 +1902,8 @@
     "valueType": "support"
   },
   {
-    "id": "1-A113-C",
+    "oracleId": "1-A113",
+    "printingId": "1-A113-C",
     "vol": 1,
     "code": "A113",
     "rarity": "C",
@@ -1806,7 +1919,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A114-C",
+    "oracleId": "1-A114",
+    "printingId": "1-A114-C",
     "vol": 1,
     "code": "A114",
     "rarity": "C",
@@ -1822,7 +1936,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A115-C",
+    "oracleId": "1-A115",
+    "printingId": "1-A115-C",
     "vol": 1,
     "code": "A115",
     "rarity": "C",
@@ -1838,7 +1953,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A116-C",
+    "oracleId": "1-A116",
+    "printingId": "1-A116-C",
     "vol": 1,
     "code": "A116",
     "rarity": "C",
@@ -1854,7 +1970,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A117-C",
+    "oracleId": "1-A117",
+    "printingId": "1-A117-C",
     "vol": 1,
     "code": "A117",
     "rarity": "C",
@@ -1870,7 +1987,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A118-C",
+    "oracleId": "1-A118",
+    "printingId": "1-A118-C",
     "vol": 1,
     "code": "A118",
     "rarity": "C",
@@ -1886,7 +2004,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A119-C",
+    "oracleId": "1-A119",
+    "printingId": "1-A119-C",
     "vol": 1,
     "code": "A119",
     "rarity": "C",
@@ -1903,7 +2022,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A120-C",
+    "oracleId": "1-A120",
+    "printingId": "1-A120-C",
     "vol": 1,
     "code": "A120",
     "rarity": "C",
@@ -1919,7 +2039,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A121-C",
+    "oracleId": "1-A121",
+    "printingId": "1-A121-C",
     "vol": 1,
     "code": "A121",
     "rarity": "C",
@@ -1935,7 +2056,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A122-C",
+    "oracleId": "1-A122",
+    "printingId": "1-A122-C",
     "vol": 1,
     "code": "A122",
     "rarity": "C",
@@ -1951,7 +2073,8 @@
     "valueType": "guard"
   },
   {
-    "id": "1-A123-C",
+    "oracleId": "1-A123",
+    "printingId": "1-A123-C",
     "vol": 1,
     "code": "A123",
     "rarity": "C",
@@ -1967,7 +2090,8 @@
     "valueType": "guard"
   },
   {
-    "id": "1-A124-C",
+    "oracleId": "1-A124",
+    "printingId": "1-A124-C",
     "vol": 1,
     "code": "A124",
     "rarity": "C",
@@ -1983,7 +2107,8 @@
     "valueType": "guard"
   },
   {
-    "id": "1-A125-C",
+    "oracleId": "1-A125",
+    "printingId": "1-A125-C",
     "vol": 1,
     "code": "A125",
     "rarity": "C",
@@ -2000,7 +2125,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A126-C",
+    "oracleId": "1-A126",
+    "printingId": "1-A126-C",
     "vol": 1,
     "code": "A126",
     "rarity": "C",
@@ -2017,7 +2143,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A127-C",
+    "oracleId": "1-A127",
+    "printingId": "1-A127-C",
     "vol": 1,
     "code": "A127",
     "rarity": "C",
@@ -2033,7 +2160,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A128-C",
+    "oracleId": "1-A128",
+    "printingId": "1-A128-C",
     "vol": 1,
     "code": "A128",
     "rarity": "C",
@@ -2049,7 +2177,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A129-C",
+    "oracleId": "1-A129",
+    "printingId": "1-A129-C",
     "vol": 1,
     "code": "A129",
     "rarity": "C",
@@ -2065,7 +2194,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A130-C",
+    "oracleId": "1-A130",
+    "printingId": "1-A130-C",
     "vol": 1,
     "code": "A130",
     "rarity": "C",
@@ -2081,7 +2211,8 @@
     "valueType": "heal"
   },
   {
-    "id": "1-A131-C",
+    "oracleId": "1-A131",
+    "printingId": "1-A131-C",
     "vol": 1,
     "code": "A131",
     "rarity": "C",
@@ -2097,7 +2228,8 @@
     "valueType": "support"
   },
   {
-    "id": "1-A132-C",
+    "oracleId": "1-A132",
+    "printingId": "1-A132-C",
     "vol": 1,
     "code": "A132",
     "rarity": "C",
@@ -2114,7 +2246,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A133-C",
+    "oracleId": "1-A133",
+    "printingId": "1-A133-C",
     "vol": 1,
     "code": "A133",
     "rarity": "C",
@@ -2130,7 +2263,8 @@
     "valueType": "support"
   },
   {
-    "id": "1-A134-C",
+    "oracleId": "1-A134",
+    "printingId": "1-A134-C",
     "vol": 1,
     "code": "A134",
     "rarity": "C",
@@ -2146,7 +2280,8 @@
     "valueType": "guard"
   },
   {
-    "id": "1-A135-C",
+    "oracleId": "1-A135",
+    "printingId": "1-A135-C",
     "vol": 1,
     "code": "A135",
     "rarity": "C",
@@ -2162,7 +2297,8 @@
     "valueType": "support"
   },
   {
-    "id": "1-A136-C",
+    "oracleId": "1-A136",
+    "printingId": "1-A136-C",
     "vol": 1,
     "code": "A136",
     "rarity": "C",
@@ -2179,7 +2315,8 @@
     "valueType": "support"
   },
   {
-    "id": "1-A137-C",
+    "oracleId": "1-A137",
+    "printingId": "1-A137-C",
     "vol": 1,
     "code": "A137",
     "rarity": "C",
@@ -2195,7 +2332,8 @@
     "valueType": "guard"
   },
   {
-    "id": "1-A138-C",
+    "oracleId": "1-A138",
+    "printingId": "1-A138-C",
     "vol": 1,
     "code": "A138",
     "rarity": "C",
@@ -2211,7 +2349,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A139-C",
+    "oracleId": "1-A139",
+    "printingId": "1-A139-C",
     "vol": 1,
     "code": "A139",
     "rarity": "C",
@@ -2227,7 +2366,8 @@
     "valueType": "support"
   },
   {
-    "id": "1-A140-C",
+    "oracleId": "1-A140",
+    "printingId": "1-A140-C",
     "vol": 1,
     "code": "A140",
     "rarity": "C",
@@ -2243,7 +2383,8 @@
     "valueType": "guard"
   },
   {
-    "id": "1-A141-C",
+    "oracleId": "1-A141",
+    "printingId": "1-A141-C",
     "vol": 1,
     "code": "A141",
     "rarity": "C",
@@ -2259,7 +2400,8 @@
     "valueType": "support"
   },
   {
-    "id": "1-A142-C",
+    "oracleId": "1-A142",
+    "printingId": "1-A142-C",
     "vol": 1,
     "code": "A142",
     "rarity": "C",
@@ -2275,7 +2417,8 @@
     "valueType": "attack"
   },
   {
-    "id": "1-A143-C",
+    "oracleId": "1-A143",
+    "printingId": "1-A143-C",
     "vol": 1,
     "code": "A143",
     "rarity": "C",
@@ -2291,7 +2434,8 @@
     "valueType": "support"
   },
   {
-    "id": "1-A144-C",
+    "oracleId": "1-A144",
+    "printingId": "1-A144-C",
     "vol": 1,
     "code": "A144",
     "rarity": "C",

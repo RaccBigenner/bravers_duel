@@ -13,7 +13,7 @@ if (!dir) {
 }
 const cards = JSON.parse(readFileSync('data/cards.json', 'utf8'));
 const briefs = JSON.parse(readFileSync(process.argv[3] ?? 'tools/skill_art_briefs.json', 'utf8'));
-const byId = Object.fromEntries(cards.map((c) => [c.id, c]));
+const byId = Object.fromEntries(cards.map((c) => [c.printingId, c]));
 
 const ids = readdirSync(dir)
   .filter((f) => f.endsWith('.webp') && !f.startsWith('old_'))

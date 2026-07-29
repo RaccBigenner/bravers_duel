@@ -18,10 +18,10 @@ export interface SharedLog {
   r: string;
   /** ターン数 */
   t: number;
-  /** 両者のキャラクターのカードID */
+  /** 両者のキャラクターのprinting ID（v1の既存URLとの互換性を維持する） */
   pc: string[];
   ec: string[];
-  /** 両者の使用カード [カードID, 回数] */
+  /** 両者の使用カード [printing ID, 回数] */
   pu: [string, number][];
   eu: [string, number][];
 }

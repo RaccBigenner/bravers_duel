@@ -138,7 +138,7 @@ async function compositeKira(canvas: HTMLCanvasElement, patches: KiraPatch[], sc
  * 画面には出さない場所に描いてから撮り、終わったら必ず片付ける。
  */
 export async function buildCardPngFile(card: MasterCard): Promise<File> {
-  logLine(`── PNG書き出し開始: ${card.id} ${card.name}`);
+  logLine(`── PNG書き出し開始: ${card.printingId} ${card.name}`);
   const holder = document.createElement('div');
   // 画面外に置く。display:none だと大きさが出ず撮れないので、見えない位置に置く
   holder.style.cssText = 'position:fixed; left:-99999px; top:0; z-index:-1; background:transparent;';
@@ -204,7 +204,7 @@ export async function buildCardPngFile(card: MasterCard): Promise<File> {
       if (!b) throw new Error('PNG に変換できませんでした');
       return b;
     });
-    const name = `${card.id}_${(card.name || 'card').replace(/[\\/:*?"<>|\s]/g, '')}.png`;
+  const name = `${card.printingId}_${(card.name || 'card').replace(/[\\/:*?"<>|\s]/g, '')}.png`;
     logLine(`PNG書き出し成功（${width}x${height} / ${Math.round(blob.size / 1024)}KB）`);
     return new File([blob], name, { type: 'image/png' });
   } catch (e) {

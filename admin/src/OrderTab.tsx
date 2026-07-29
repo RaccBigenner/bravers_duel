@@ -7,7 +7,7 @@
  * - 今の並びのとおりに A001 から採番し直す（公開するまでは何度でもやり直せる）
  *
  * 並びは保存を押すまでこの画面の中だけの変更。誤操作でいきなり
- * 100枚のIDが変わると取り返しがつかないので、必ず一手挟む。
+ * 100枚のprintingIdが変わると取り返しがつかないので、必ず一手挟む。
  */
 import { useMemo, useState } from 'react';
 import type { MasterCard, MasterSet } from './api';
@@ -38,7 +38,7 @@ export function OrderTab({ cards, set, images, saving, released, onSaveOrder, on
   const [overIndex, setOverIndex] = useState<number | null>(null);
 
   // 外側のカードが増減したら（別タブで追加・削除した等）作り直す
-  const signature = initial.map((c) => c.id).join(',');
+  const signature = initial.map((c) => c.printingId).join(',');
   const [seenSignature, setSeenSignature] = useState(signature);
   if (signature !== seenSignature) {
     setSeenSignature(signature);
@@ -46,7 +46,7 @@ export function OrderTab({ cards, set, images, saving, released, onSaveOrder, on
   }
 
   const locked = released;
-  const dirty = list.some((c, i) => initial[i]?.id !== c.id);
+  const dirty = list.some((c, i) => initial[i]?.printingId !== c.printingId);
   /** 保存が押せない理由。押せないのに理由が出ないと「壊れている」と見える */
   const saveBlockedBecause = locked ? '' : saving ? '保存中です。' : !dirty ? 'まだ並べ替えていません。' : '';
 
@@ -99,7 +99,7 @@ export function OrderTab({ cards, set, images, saving, released, onSaveOrder, on
           const willChange = !locked && nextCode !== c.code;
           return (
             <li
-              key={c.id}
+              key={c.printingId}
               className={[
                 'order-row',
                 dragIndex === i ? 'dragging' : '',
@@ -126,8 +126,12 @@ export function OrderTab({ cards, set, images, saving, released, onSaveOrder, on
               <span className="order-handle" aria-hidden>
                 ⠿
               </span>
-              {images[c.id] ? (
-                <img className="order-thumb" src={`/card_images/${c.id}.webp?v=${images[c.id]}`} alt="" />
+              {images[c.printingId] ? (
+                <img
+                  className="order-thumb"
+                  src={`/card_images/${c.printingId}.webp?v=${images[c.printingId]}`}
+                  alt=""
+                />
               ) : (
                 <span className="order-thumb none">画像なし</span>
               )}

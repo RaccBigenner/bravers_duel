@@ -1,4 +1,4 @@
-import { cardById } from '@bravers/engine';
+import { cardByPrintingId } from '@bravers/engine';
 import { useState } from 'react';
 import { CardFrame } from '../CardFrame';
 import { IMG } from '../cardAssets';
@@ -13,13 +13,13 @@ export function Home({ onBattle, onGallery }: { onBattle: () => void; onGallery:
         <div className="home-logo">
           <div className="home-cards">
             <div className="home-card l">
-              <CardFrame card={cardById('1-A003-USR')} width={82} upright />
+              <CardFrame card={cardByPrintingId('1-A003-USR')} width={82} upright />
             </div>
             <div className="home-card c">
               <img src={IMG('back')} alt="" />
             </div>
             <div className="home-card r">
-              <CardFrame card={cardById('1-A004-USR')} width={82} upright />
+              <CardFrame card={cardByPrintingId('1-A004-USR')} width={82} upright />
             </div>
           </div>
           <h1 className="home-title-logo">

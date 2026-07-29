@@ -1,52 +1,147 @@
 /**
- * POST /api/delete-card  body: { id, vol }
- * 該当 id のカードを、公開・非公開どちらに入っていても消す
- * （公開リポ data/cards.json と 非公開リポ cards/vol{vol}.json の両方から除去。
- *   変化がある時だけ書く）。
- * レスポンス: { ok:true }
+ * POST /api/delete-card  body: { printingId, vol }
+ *
+ * WIPカードと画像を非公開リポジトリの同一Git commitで削除する。
+ * 公開カードは拒否し、既にカードだけ削除済みなら孤立画像の後片付けとして冪等に動く。
  */
 import {
   CARDS_PATH,
+  PRIVATE_IMAGE_DIR,
   PRIVATE_REPO,
   PUBLIC_REPO,
   SETS_PATH,
+  WIP_SETS_PATH,
   assertVolEditable,
+  ghCommitFiles,
   ghGetJson,
-  ghPutJson,
+  ghListDir,
   handle,
   json,
+  normalizeMasterCards,
+  privateImagePath,
   readJsonBody,
+  requireCanonicalMasterCards,
   wipCardsPath,
   HttpError,
   type Env,
-  type MasterCard,
   type SetsFile,
 } from '../_github';
+
+const encodeJson = (value: unknown) =>
+  new TextEncoder().encode(`${JSON.stringify(value, null, 2)}\n`);
 
 export const onRequestPost: PagesFunction<Env> = (ctx) =>
   handle(async () => {
     const env = ctx.env;
-    const { id, vol } = await readJsonBody<{ id: string; vol: number }>(ctx.request);
-    if (!id || typeof vol !== 'number') {
-      throw new HttpError(400, 'id と vol が必要です');
+    const {
+      printingId: rawPrintingId,
+      id: legacyId,
+      vol,
+    } = await readJsonBody<{
+      printingId?: string;
+      id?: string;
+      vol: number;
+    }>(ctx.request);
+    const printingId = rawPrintingId ?? legacyId;
+    if (
+      !printingId ||
+      typeof vol !== 'number' ||
+      !Number.isInteger(vol) ||
+      vol < 1 ||
+      !new RegExp(
+        `^${vol}-A\\d{3}-(?:C|UC|R|SR|SSR|USR|LSR)$`,
+      ).test(printingId)
+    ) {
+      throw new HttpError(400, 'printingId と vol が不正です');
     }
 
-    const sets = (await ghGetJson<SetsFile>(env, PUBLIC_REPO, SETS_PATH)).data?.sets ?? [];
-    assertVolEditable(vol, sets);
-
-    const targets: Array<[string, string]> = [
-      [PUBLIC_REPO, CARDS_PATH],
-      [PRIVATE_REPO, wipCardsPath(vol)],
-    ];
-
-    for (const [repo, path] of targets) {
-      const file = await ghGetJson<MasterCard[]>(env, repo, path);
-      if (!file.data) continue;
-      const pruned = file.data.filter((c) => c.id !== id);
-      if (pruned.length !== file.data.length) {
-        await ghPutJson(env, repo, path, pruned, `delete card ${id}`, file.sha);
-      }
+    const path = wipCardsPath(vol);
+    const [
+      publicSetsFile,
+      wipSetsFile,
+      published,
+      file,
+      imageDirectory,
+    ] = await Promise.all([
+      ghGetJson<SetsFile>(env, PUBLIC_REPO, SETS_PATH),
+      ghGetJson<SetsFile>(env, PRIVATE_REPO, WIP_SETS_PATH),
+      ghGetJson<Record<string, unknown>[]>(
+        env,
+        PUBLIC_REPO,
+        CARDS_PATH,
+      ),
+      ghGetJson<Record<string, unknown>[]>(
+        env,
+        PRIVATE_REPO,
+        path,
+      ),
+      ghListDir(env, PRIVATE_REPO, PRIVATE_IMAGE_DIR),
+    ]);
+    assertVolEditable(vol, [
+      ...(publicSetsFile.data?.sets ?? []),
+      ...(wipSetsFile.data?.sets ?? []),
+    ]);
+    if (
+      normalizeMasterCards(published.data ?? []).some(
+        (card) => card.printingId === printingId,
+      )
+    ) {
+      throw new HttpError(
+        403,
+        `${printingId} は公開済みです。管理画面からは削除できません`,
+      );
     }
 
-    return json({ ok: true });
+    const cards = normalizeMasterCards(file.data ?? []);
+    const target = cards.find(
+      (card) => card.printingId === printingId,
+    );
+    if (target && target.vol !== vol) {
+      throw new HttpError(
+        409,
+        `${printingId} の保存volとリクエストvolが一致しません`,
+      );
+    }
+
+    const imagePath = privateImagePath(printingId);
+    const imageSha = imageDirectory[`${printingId}.webp`] ?? null;
+    if (!target && !imageSha) {
+      return json({
+        ok: true,
+        cleanupPending: false,
+        alreadyDeleted: true,
+      });
+    }
+
+    const changes = target
+      ? [
+          {
+            path,
+            bytes: encodeJson(
+              requireCanonicalMasterCards(
+                cards.filter(
+                  (card) => card.printingId !== printingId,
+                ),
+              ),
+            ),
+          },
+        ]
+      : [];
+    await ghCommitFiles(
+      env,
+      PRIVATE_REPO,
+      changes,
+      `delete card ${printingId}`,
+      {
+        [WIP_SETS_PATH]: wipSetsFile.sha,
+        ...(target ? { [path]: file.sha } : {}),
+        [imagePath]: imageSha,
+      },
+      imageSha ? [{ path: imagePath, sha: null }] : [],
+    );
+    return json({
+      ok: true,
+      cleanupPending: false,
+      alreadyDeleted: !target,
+    });
   });

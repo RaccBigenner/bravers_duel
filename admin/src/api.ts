@@ -6,11 +6,17 @@
  * - ローカル（開発）… vite.config.ts の masterApi プラグイン。data/ のファイルを直接読み書きする
  */
 import type { CardStatus, PackType } from '@bravers/engine';
+import { normalizeCardIdentity } from '../shared/cardIdentity';
 import { logLine } from './log';
 
 /** 保存形式のカード（type ごとにフィールドが違うので緩めに持つ） */
 export interface MasterCard {
-  id: string;
+  /** ゲーム上「同じカード」を表す不変ID。再録では共有する */
+  oracleId: string;
+  /** 旧idからの仮補完。Oracleを明示決定するまで公開不可 */
+  oracleIdProvisional?: true;
+  /** 収録・レアリティ・絵柄の単位。画像や管理画面の主キーに使う */
+  printingId: string;
   vol: number;
   code: string;
   rarity: string;
@@ -44,7 +50,10 @@ export interface MasterSet {
   themeName: string;
   themeSubtitle: string;
   packType: PackType;
-  status: CardStatus;
+  /** publishingは公開2リポジトリをまたぐ間だけ使う管理画面内部のロック状態 */
+  status: CardStatus | 'publishing';
+  /** 非公開Actionsの冪等公開キー。publishing中だけ存在し、公開側には出さない */
+  publishOperationId?: string;
   releasedAt: string;
   codename?: string;
 }
@@ -52,8 +61,17 @@ export interface MasterSet {
 export interface Master {
   sets: MasterSet[];
   cards: MasterCard[];
-  /** `{ カードid（拡張子なし）: 版番号 }`。画像の有無の判定と、URLの ?v= に使う */
+  /** `{ printingId（拡張子なし）: 版番号 }`。画像の有無の判定と、URLの ?v= に使う */
   images: Record<string, string>;
+  /** `{ vol文字列: private効果moduleのblob sha }`。最終実装検査はActionsで行う。 */
+  effectModules: Record<string, string>;
+  /** `{ vol文字列: private効果回帰testのblob sha }`。moduleと同じsnapshotで公開する。 */
+  effectTests: Record<string, string>;
+  /**
+   * 公開・WIPを束ねる前のデータにあったprintingId重複。
+   * cards自体は画面を壊さないよう重複排除されるため、公開前チェック用に別途返す。
+   */
+  duplicatePrintingIds?: string[];
   /** カードだけあって弾の情報が無い vol（＝迷子）。画面で警告を出す */
   orphanVols?: number[];
 }
@@ -62,18 +80,32 @@ export async function fetchMaster(): Promise<Master> {
   const res = await fetch('/api/master');
   if (!res.ok) throw new Error(`master 取得失敗: ${res.status}`);
   const data = (await res.json()) as Master;
-  return { ...data, images: data.images ?? {}, orphanVols: data.orphanVols ?? [] };
+  // 古いFunctions/ローカルAPIへ接続しても旧idを画面内部へ持ち込まない。
+  const cards = (data.cards ?? []).map((card) =>
+    normalizeCardIdentity(card as unknown as Record<string, unknown>) as unknown as MasterCard
+  );
+  return {
+    ...data,
+    cards,
+    images: data.images ?? {},
+    effectModules: data.effectModules ?? {},
+    effectTests: data.effectTests ?? {},
+    duplicatePrintingIds: data.duplicatePrintingIds ?? [],
+    orphanVols: data.orphanVols ?? [],
+  };
 }
 
 /**
  * カード画像のURL。版番号を付けると中身が変わった時だけ取り直される
  * （付けないと一覧を開くたびに全枚数を取り直すことになり、スマホで重い）。
  */
-export function imageUrl(id: string, rev?: string): string {
-  return rev ? `/card_images/${encodeURIComponent(id)}.webp?v=${rev}` : `/card_images/${encodeURIComponent(id)}.webp`;
+export function imageUrl(printingId: string, rev?: string): string {
+  return rev
+    ? `/card_images/${encodeURIComponent(printingId)}.webp?v=${rev}`
+    : `/card_images/${encodeURIComponent(printingId)}.webp`;
 }
 
-/** 種類ごとにしか使わない項目。ここに無い項目（id・名前・効果文など）は共通で常に残す */
+/** 種類ごとにしか使わない項目。ここに無い項目（両ID・名前・効果文など）は共通で常に残す */
 const TYPE_ONLY_FIELDS: Record<MasterCard['type'], string[]> = {
   character: ['hp', 'size', 'attribute'],
   skill: ['costAp', 'conditionAttribute', 'baseValue', 'valueType'],
@@ -97,11 +129,18 @@ export function stripForType(card: MasterCard): MasterCard {
   return out;
 }
 
-export async function saveCard(card: MasterCard): Promise<{ savedTo: string }> {
+export async function saveCard(
+  card: MasterCard,
+  original?: { printingId: string; vol: number },
+): Promise<{ savedTo: string; movedImage: boolean; cleanupPending: boolean }> {
   const res = await fetch('/api/save-card', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ card: stripForType(card) }),
+    body: JSON.stringify({
+      card: stripForType(card),
+      originalPrintingId: original?.printingId,
+      originalVol: original?.vol,
+    }),
   });
   if (!res.ok) throw new Error(`保存失敗: ${(await res.json()).error ?? res.status}`);
   return res.json();
@@ -109,14 +148,19 @@ export async function saveCard(card: MasterCard): Promise<{ savedTo: string }> {
 
 /**
  * その弾のカードをまとめて保存する（並び替え・採番用）。
- * renames を渡すと画像も一緒に引っ越す。id が画像のファイル名なので、
+ * renames を渡すと画像も一緒に引っ越す。printingId が画像のファイル名なので、
  * 採番し直したのに画像を動かさないと絵が全部消える。
  */
 export async function saveCards(
   vol: number,
   cards: MasterCard[],
   renames?: { from: string; to: string }[],
-): Promise<{ savedTo: string; saved: number; movedImages: number }> {
+): Promise<{
+  savedTo: string;
+  saved: number;
+  movedImages: number;
+  cleanupPending: string[];
+}> {
   const res = await fetch('/api/save-cards', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -129,33 +173,17 @@ export async function saveCards(
   return res.json();
 }
 
-/**
- * カード画像を別の id へ引っ越す。
- * id は「弾-コード-レアリティ」なので、レアリティやコードを変えると id が変わる。
- * 画像のファイル名は id そのものなので、これをやらないと絵が迷子になる。
- * 元の画像が無ければ何もしない（moved:false）。
- */
-export async function renameImage(vol: number, from: string, to: string): Promise<{ moved: boolean }> {
-  const res = await fetch('/api/save-cards', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ vol, cards: null, renames: [{ from, to }] }),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(String((body as { error?: string }).error ?? res.status));
-  }
-  const r = (await res.json()) as { movedImages: number };
-  return { moved: r.movedImages > 0 };
-}
-
-export async function deleteCard(id: string, vol: number): Promise<void> {
+export async function deleteCard(
+  printingId: string,
+  vol: number,
+): Promise<{ cleanupPending: boolean }> {
   const res = await fetch('/api/delete-card', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id, vol }),
+    body: JSON.stringify({ printingId, vol }),
   });
   if (!res.ok) throw new Error(`削除失敗: ${res.status}`);
+  return res.json();
 }
 
 export async function saveSet(set: MasterSet): Promise<void> {
@@ -167,8 +195,30 @@ export async function saveSet(set: MasterSet): Promise<void> {
   if (!res.ok) throw new Error(`弾の保存失敗: ${res.status}`);
 }
 
-/** 弾を公開する（制作中データを公開側へ移し、status を released にする） */
-export async function publishSet(vol: number): Promise<{ moved: number }> {
+export interface PublishResult {
+  status: 'complete' | 'queued';
+  cardCount: number;
+  runUrl?: string;
+}
+
+interface PublishStatusResponse {
+  status:
+    | 'queued'
+    | 'running'
+    | 'cleanup_pending'
+    | 'complete'
+    | 'failed_unlocked'
+    | 'failed_validation'
+    | 'failed_retryable';
+  retryable: boolean;
+  runUrl?: string;
+}
+
+const wait = (ms: number) =>
+  new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+
+/** 弾公開を非公開GitHub Actionsへ依頼し、ブラウザ側から完了まで追跡する。 */
+export async function publishSet(vol: number): Promise<PublishResult> {
   const res = await fetch('/api/publish-set', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -178,7 +228,66 @@ export async function publishSet(vol: number): Promise<{ moved: number }> {
     const body = await res.json().catch(() => ({}));
     throw new Error(`公開失敗: ${(body as { error?: string }).error ?? res.status}`);
   }
-  return res.json();
+  const started = (await res.json()) as {
+    status: 'complete' | 'queued';
+    requestId?: string;
+    runId?: number;
+    runUrl?: string;
+    cardCount?: number;
+  };
+  if (started.status === 'complete') {
+    return { status: 'complete', cardCount: started.cardCount ?? 0 };
+  }
+  if (!started.requestId || !started.runId) {
+    throw new Error('公開処理の追跡IDを取得できませんでした');
+  }
+
+  logLine(`公開処理を開始: vol${vol} / Actions run ${started.runId}`);
+  for (let attempt = 0; attempt < 60; attempt++) {
+    await wait(attempt < 4 ? 3_000 : 5_000);
+    const query = new URLSearchParams({
+      vol: String(vol),
+      runId: String(started.runId),
+      requestId: started.requestId,
+    });
+    const statusRes = await fetch(`/api/publish-status?${query}`);
+    if (!statusRes.ok) {
+      if (statusRes.status === 409) {
+        throw new Error(
+          '別の公開処理へ状態が進みました。管理画面を再読み込みして確認してください',
+        );
+      }
+      logLine(`公開状態の確認を再試行: HTTP ${statusRes.status}`);
+      continue;
+    }
+    const current = (await statusRes.json()) as PublishStatusResponse;
+    if (current.status === 'complete') {
+      return {
+        status: 'complete',
+        cardCount: started.cardCount ?? 0,
+        runUrl: current.runUrl,
+      };
+    }
+    if (
+      current.status === 'cleanup_pending' ||
+      current.status === 'failed_unlocked' ||
+      current.status === 'failed_validation' ||
+      current.status === 'failed_retryable'
+    ) {
+      const details = current.runUrl ? `\nActions: ${current.runUrl}` : '';
+      throw new Error(
+        current.status === 'failed_unlocked' ||
+        current.status === 'failed_validation'
+          ? `公開前処理が中断し、編集ロックを解除しました。内容とActions結果を確認して再実行してください${details}`
+          : `公開処理の続きが必要です。同じボタンから安全に再実行できます${details}`,
+      );
+    }
+  }
+  return {
+    status: 'queued',
+    cardCount: started.cardCount ?? 0,
+    runUrl: started.runUrl,
+  };
 }
 
 // ---- 画像の変換（iPhone 対応） ------------------------------------------------
@@ -309,9 +418,20 @@ function blobToDataUrl(blob: Blob): Promise<string> {
 /** サーバー側の一時的な失敗（502等）は自動でやり直す回数 */
 const SAVE_IMAGE_RETRIES = 2;
 
-export async function saveImage(card: Pick<MasterCard, 'id' | 'vol' | 'status'>, dataUrl: string): Promise<{ savedTo: string }> {
-  const body = JSON.stringify({ id: card.id, vol: card.vol, status: card.status, dataUrl });
-  logLine(`サーバーへ送信: id=${card.id} vol=${card.vol} status=${card.status ?? '（弾に従う）'} ${Math.round(dataUrl.length / 1024)}KB`);
+export async function saveImage(
+  card: Pick<MasterCard, 'printingId' | 'vol' | 'status'>,
+  dataUrl: string,
+): Promise<{ savedTo: string }> {
+  const body = JSON.stringify({
+    printingId: card.printingId,
+    vol: card.vol,
+    status: card.status,
+    dataUrl,
+  });
+  logLine(
+    `サーバーへ送信: printingId=${card.printingId} vol=${card.vol} ` +
+      `status=${card.status ?? '（弾に従う）'} ${Math.round(dataUrl.length / 1024)}KB`,
+  );
 
   let lastMessage = '';
   for (let attempt = 0; attempt <= SAVE_IMAGE_RETRIES; attempt++) {

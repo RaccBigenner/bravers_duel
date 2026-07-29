@@ -30,6 +30,18 @@ export type PackType = (typeof PACK_TYPES)[number];
 export const CARD_STATUSES = ['draft', 'released'] as const;
 export type CardStatus = (typeof CARD_STATUSES)[number];
 
+/**
+ * ゲーム上「同じカード」と判定する不変ID。
+ * 再録・別レアリティ・別イラストでも、同じルール定義なら同じ値を使う。
+ */
+export type OracleId = string;
+
+/**
+ * 収録弾・カード番号・レアリティ・イラストを含む印刷単位のID。
+ * 現行の `1-A001-LSR` 形式はこの値として維持する。
+ */
+export type PrintingId = string;
+
 /** 弾（セット）のメタ情報。data/sets.json の1件。 */
 export interface SetMeta {
   /** 弾数（製品としての通し番号）。カードの vol と対応する */
@@ -48,7 +60,8 @@ export interface SetMeta {
 }
 
 interface CardBase {
-  id: string;
+  oracleId: OracleId;
+  printingId: PrintingId;
   vol: number;
   code: string;
   rarity: Rarity;

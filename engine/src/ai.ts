@@ -24,7 +24,7 @@ import {
   type BattleState,
   type PlayerIndex,
 } from './battle';
-import { cardById } from './cards';
+import { cardByPrintingId } from './cards';
 import { containsAll } from './decks';
 import { skillEffectOf } from './effects';
 import { mulberry32, pickOne, type Rng } from './rng';
@@ -76,7 +76,7 @@ export function simpleAi(options: SimpleAiOptions = {}): BattleAi {
         let best: { action: BattleAction; value: number; cost: number } | null = null;
         for (const action of actions) {
           if (action.type !== 'playGuard') continue;
-          const card = cardById(p.hand[action.handIndex]);
+          const card = cardByPrintingId(p.hand[action.handIndex]);
           if (card.type !== 'skill') continue;
           const cut = Math.min(card.baseValue, pending.value);
           if (!best || cut > best.value) best = { action, value: cut, cost: card.costAp };
@@ -111,7 +111,7 @@ export function simpleAi(options: SimpleAiOptions = {}): BattleAi {
         let best: { action: BattleAction; score: number } | null = null;
         for (const action of actions) {
           if (action.type !== 'playSkill') continue;
-          const card = cardById(p.hand[action.handIndex]);
+          const card = cardByPrintingId(p.hand[action.handIndex]);
           if (card.type !== 'skill') continue;
           const pred = predictSkill(state, me, card, action.usingIndex);
           if (!pred) continue;
@@ -135,7 +135,7 @@ export function simpleAi(options: SimpleAiOptions = {}): BattleAi {
               }
             }
           } else if (pred.kind === 'heal') {
-            const eff = skillEffectOf(card.id);
+            const eff = skillEffectOf(card.oracleId);
             if (eff?.healTargeting === 'ko') {
               score = 55 - pred.cost * 3; // 復活はほぼ常に強い
             } else {
@@ -145,7 +145,8 @@ export function simpleAi(options: SimpleAiOptions = {}): BattleAi {
             }
           } else if (pred.kind === 'support') {
             // 軽い補助（ドロー・チャージ等）はテンポを崩さない範囲で使う
-            if (card.effectText !== '') score = 8 - pred.cost * 4;
+            // 表示文は言語・再録で変わり得るため、挙動の有無は Oracle の効果定義で判定する
+            if (skillEffectOf(card.oracleId)) score = 8 - pred.cost * 4;
           }
 
           if (score > (best?.score ?? 0)) best = { action, score };
@@ -155,8 +156,8 @@ export function simpleAi(options: SimpleAiOptions = {}): BattleAi {
         // ダメージを受けた味方がいればキャラクターカードで回復
         const characterPlay = actions.find((a) => {
           if (a.type !== 'playCharacter') return false;
-          const card = cardById(p.hand[a.handIndex]);
-          return p.characters.some((c) => c.name === card.name && c.damage > 0);
+          const card = cardByPrintingId(p.hand[a.handIndex]);
+          return p.characters.some((c) => c.oracleId === card.oracleId && c.damage > 0);
         });
         if (characterPlay) return characterPlay;
 
@@ -170,19 +171,19 @@ export function simpleAi(options: SimpleAiOptions = {}): BattleAi {
       // - 目標APは「アクターで撃てる攻撃の高い方から2発ぶん」= 毎ターン撃ち切る
       const attrsByChar = p.characters.map((_, i) => effectiveAttributes(state, me, i));
       const isUsable = (id: string): boolean => {
-        const card = cardById(id);
+        const card = cardByPrintingId(id);
         if (card.type === 'equipment' || card.type === 'field') return false; // 2枚目以降は死に札扱い
         if (card.type === 'skill') {
           return attrsByChar.some((attrs) => containsAll(attrs, card.conditionAttribute));
         }
         // キャラカード: 同名キャラが場にいれば回復札として温存
-        return p.characters.some((c) => c.name === card.name);
+        return p.characters.some((c) => c.oracleId === card.oracleId);
       };
       // 「今のアクターで実際に撃てる」攻撃だけを基準にする
       // （アクターが使えない札のためにAPを貯めても手詰まりのままなので）
       const actorAttrs = attrsByChar[p.actorIndex] ?? [];
       const actorAttackCosts = p.hand
-        .map((id) => cardById(id))
+        .map((id) => cardByPrintingId(id))
         .filter(
           (c): c is Extract<typeof c, { type: 'skill' }> =>
             c.type === 'skill' && c.valueType !== 'guard' && c.valueType !== 'heal' &&
@@ -366,11 +367,11 @@ function isPointless(state: BattleState, me: PlayerIndex, action: BattleAction):
   const p = state.players[me];
   const id = p.hand[action.handIndex];
   if (!id) return false;
-  const card = cardById(id);
+  const card = cardByPrintingId(id);
   // エンジンと同じ「一番傷ついた同名キャラ」が回復先になる
   let best = -1;
   p.characters.forEach((c, i) => {
-    if (c.name === card.name && isCharAlive(state, me, i)) {
+    if (c.oracleId === card.oracleId && isCharAlive(state, me, i)) {
       if (best === -1 || c.damage > p.characters[best].damage) best = i;
     }
   });
@@ -406,7 +407,7 @@ export function searchAi(options: SimpleAiOptions = {}): BattleAi {
 /** チャージに回すカードを選ぶ: 使えないカード → それ以外、の順 */
 function chooseChargeIndex(hand: string[], characterAttributes: string[][]): number {
   for (let i = 0; i < hand.length; i++) {
-    const card = cardById(hand[i]);
+    const card = cardByPrintingId(hand[i]);
     if (card.type === 'equipment' || card.type === 'field') return i; // 今はプレイ不可
     if (card.type === 'skill') {
       const usable = characterAttributes.some((attrs) => containsAll(attrs, card.conditionAttribute));

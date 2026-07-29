@@ -118,13 +118,42 @@ P5のコミュニティガイドライン、通報画面、管理設計は早く
 
 ### OLG-003 `oracle_id`と`printing_id`を分離
 
-状態: OLG-002待ち
+状態: 完了（2026-07-29、この作業ツリー）
 
-- 第1弾144枚へ不変`oracle_id`を付与
-- 現行IDを`printing_id`として維持
-- 名前比較を`oracle_id`比較へ変更
-- 再録を混ぜても同名上限を回避できない検証
-- data/admin/web/engineの移行
+- 第1弾144枚へ不変`oracleId`を付与
+- 現行IDを`printingId`として維持。既存デッキJSON・共有ログv1は値を変えない
+- 名前比較を`oracleId`比較へ変更し、効果レジストリもOracle単位に移行
+- 再録を混ぜても4枚上限を回避できず、別printingでも効果を継承する検証
+- data/admin/web/engine/画像生成ツールを移行
+- 管理画面の旧WIP読み取り互換、仮Oracle公開ゲート、安全なPrinting ID変更・一括採番
+- Cloud管理APIのカード・画像変更を同一Git commit化し、公開中ロックとCAS競合防止を追加
+- 弾公開は非公開GitHub Actionsへ委譲。SHA snapshot、request ID、公開1commit、
+  cleanup 1commit、失敗後の冪等再開でCloudflare Free/GitHub RESTの大量画像制限を回避
+- 効果moduleと弾固有回帰testもmanifest SHAへ固定し、カード・画像と同じ公開commitへ含める。
+  効果の存在/カード種別、stray Oracle、弾module間重複を公開ゲートで拒否
+- 外部取得をprivate checkout前に完了。Actions/Node base imageをcommit/digest固定し、
+  公開候補test/buildとWebP decoderをnetworkなしcontainerへ隔離
+- 画像一覧をContents APIからGit Trees APIへ変更し、1ディレクトリ1,000件上限を解消
+- ローカルAPIも保存・採番・削除・公開後処理を同一リクエストで再試行可能にした
+- Cloud/ローカル変更APIへsame-origin JSONのCSRF境界、WIPレスポンスへ`no-store`を追加
+- GitHub資格情報をprivate write/Actions・public read・Actions public writeの3権限へ分離
+- bootstrap限定の移行スクリプトと複数入力横断の衝突検査
+
+検証:
+
+- engine 114 tests + migration 5 tests + Actions公開CLI 21 tests
+- admin 47 tests + web 1 test
+- engine/admin/Functions typecheck
+- Web/Admin production build、未公開データ漏洩検査
+
+本番有効化前の外部設定:
+
+- 非公開リポへ`ops/bravers_duel_wip/.github/`のworkflowとtrusted scripts 2本を同期
+- 対象弾の非公開`effects/volN.ts`と`effects/volN.test.ts`を用意
+- 非公開Actions secret `PUBLIC_PUBLISH_TOKEN`を設定
+- Cloudflareへprivate Contents write/Actions用`GITHUB_PRIVATE_TOKEN`と、
+  public Contents read-only用`GITHUB_PUBLIC_TOKEN`を設定して本番再デプロイ
+- Access application-domain cookieをSameSite=Laxにし、公開smoke testを実施
 
 ### OLG-004 version付きformatとデッキ合法性
 

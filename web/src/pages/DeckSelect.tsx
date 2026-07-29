@@ -1,5 +1,5 @@
 import {
-  cardById,
+  cardByPrintingId,
   deckProblems,
   sampleArchetypeDecks,
   type CharacterCard,
@@ -24,18 +24,18 @@ function DeckTile({ name, concept, deck, selected, onClick, onView, extra }: {
   onView?: () => void;
   extra?: React.ReactNode;
 }) {
-  const main = deck.characterIds[0] ? (cardById(deck.characterIds[0]) as CharacterCard) : null;
+  const main = deck.characterIds[0] ? (cardByPrintingId(deck.characterIds[0]) as CharacterCard) : null;
   return (
     <button className={`deck-tile ${selected ? 'on' : ''}`} onClick={onClick}>
       {main && (
-        <div className="deck-tile-art" style={{ backgroundImage: `url(${IMG(main.id)})` }} />
+        <div className="deck-tile-art" style={{ backgroundImage: `url(${IMG(main.printingId)})` }} />
       )}
       <div className="deck-tile-info">
         <b>{name}</b>
         <span className="deck-tile-concept">{concept}</span>
         <div className="deck-tile-chars">
           {deck.characterIds.map((id) => {
-            const c = cardById(id) as CharacterCard;
+            const c = cardByPrintingId(id) as CharacterCard;
             return (
               <span key={id} className="deck-tile-char" title={c.name}>
                 <img src={IMG(id)} alt={c.name} />
@@ -84,6 +84,7 @@ export function DeckSelect({ onStart, onBack, custom, onBuild }: {
   function tryImport(text: string) {
     try {
       const json = JSON.parse(text);
+      // 公開βで配布済みの旧形式。配列中の値は現行値を保った printing ID として読む。
       const deck: DeckList = { characterIds: json.characterIds ?? [], cardIds: json.cardIds ?? [] };
       const problems = deckProblems(deck);
       if (problems.length > 0) {
@@ -251,7 +252,7 @@ export function DeckSelect({ onStart, onBack, custom, onBuild }: {
               <div className="deck-view-grid">
                 {viewDeck.deck.characterIds.map((id, i) => (
                   <div key={`c${i}`} className="deck-view-card" onClick={() => setZoomCard(id)}>
-                    <CardFrame card={cardById(id)} width={74} upright />
+                    <CardFrame card={cardByPrintingId(id)} width={74} upright />
                   </div>
                 ))}
               </div>
@@ -261,7 +262,7 @@ export function DeckSelect({ onStart, onBack, custom, onBuild }: {
                   .sort(([a], [b]) => a.localeCompare(b))
                   .map(([id, n]) => (
                     <div key={id} className="deck-view-card" onClick={() => setZoomCard(id)}>
-                      <CardFrame card={cardById(id)} width={74} upright />
+                      <CardFrame card={cardByPrintingId(id)} width={74} upright />
                       <span className="deck-view-count">×{n}</span>
                     </div>
                   ))}
@@ -276,7 +277,7 @@ export function DeckSelect({ onStart, onBack, custom, onBuild }: {
       {zoomCard && (
         <div className="overlay preview" onClick={() => setZoomCard(null)}>
           <div className="preview-inner" onClick={(e) => e.stopPropagation()}>
-            <CardFrame card={cardById(zoomCard)} width={Math.min(300, Math.max(230, window.innerWidth * 0.72))} upright />
+            <CardFrame card={cardByPrintingId(zoomCard)} width={Math.min(300, Math.max(230, window.innerWidth * 0.72))} upright />
             <button className="chip" onClick={() => setZoomCard(null)}>とじる</button>
           </div>
         </div>

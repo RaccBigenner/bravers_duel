@@ -15,7 +15,7 @@
  * 構成は決定的（ランダム無し）なので、テスト・シミュレーションの再現ができる。
  * 各デッキの「撃てる率」は 60% 前後を下回らないこと。下回ったら組み直しのサイン。
  */
-import { cardById } from './cards';
+import { cardByPrintingId } from './cards';
 import { deckProblems, DEFAULT_DECK_RULES, type DeckList, type DeckRules } from './decks';
 
 export interface NamedDeck {
@@ -197,7 +197,7 @@ const SPECS: DeckSpec[] = [
 function buildDeck(spec: DeckSpec): DeckList {
   const cardIds: string[] = [];
   for (const [id, count] of spec.cards) {
-    cardById(id); // 存在チェック（誤IDは即座に例外）
+    cardByPrintingId(id); // 存在チェック（誤printing IDは即座に例外）
     for (let i = 0; i < count; i++) cardIds.push(id);
   }
   return { characterIds: spec.characterIds.slice(), cardIds };

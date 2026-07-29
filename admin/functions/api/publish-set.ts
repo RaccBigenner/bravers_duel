@@ -1,127 +1,363 @@
 /**
  * POST /api/publish-set  body: { vol }
- * 指定の弾を「公開」する。処理は冪等（再実行しても壊れない）に組み、
- * 「公開側を全部書いてから最後に sets を released に」して、部分失敗でも
- * 公開状態が中途半端にならないようにしている。
  *
- * 手順（この順序が重要）:
- *   1. 非公開リポ cards/vol{vol}.json を読み、status:'draft' を外す（＝弾に従わせる）。
- *   2. 公開リポ data/cards.json に追記（同 id は差し替え）→ 書き込み。
- *   3. 非公開リポ images/{id}.webp を 公開リポ assets/card_images/{id}.webp にコピー。
- *   4. 弾メタを 非公開リポ sets.wip.json → 公開リポ data/sets.json へ status:'released' で移す
- *      （＝ここで初めて公開状態が確定。制作中のテーマ名・サブタイトルはこの瞬間まで公開側に無い）。
- *   5. 最後に 非公開リポ cards/vol{vol}.json を空配列にし、sets.wip.json から当該 vol を消す。
+ * Cloudflare Free上では画像を読み書きしない。カード・弾・効果・test・画像SHAを検査して
+ * 非公開リポをpublishingへロックし、重い検証・画像コピー・公開commitは
+ * 非公開リポのGitHub Actionsへ委譲する。
  *
- * 途中で失敗した場合: 4 が終わるまで弾は released にならず、GET /api/master は
- * 非公開リポの wip カードを正とみなし続ける。再実行すれば同じ id を上書きして
- * 続きから完了できる（重複カードは一時的に出得るが、再実行で解消する）。
- * レスポンス: { ok:true, moved }
+ * active manifestとrequestIdが公開処理の冪等キーになる。同じ弾を再実行した時は
+ * 新しいスナップショットを作らず、同じoperationを再dispatchする。
  */
 import {
   CARDS_PATH,
+  PRIVATE_IMAGE_DIR,
   PRIVATE_REPO,
+  PUBLIC_IMAGE_DIR,
   PUBLIC_REPO,
+  PUBLISH_ACTIVE_PATH,
+  PUBLISH_WORKFLOW,
   SETS_PATH,
   WIP_SETS_PATH,
-  bytesToBase64,
+  ghCommitFiles,
+  ghDispatchWorkflow,
+  ghFindWorkflowRun,
   ghGetJson,
-  ghGetRaw,
-  ghPutBase64,
-  ghPutJson,
+  ghGetSha,
+  ghListDir,
   handle,
   json,
+  normalizeMasterCards,
   privateImagePath,
-  publicImagePath,
   readJsonBody,
+  requireCanonicalMasterCards,
+  requireNoOracleGameplayDrifts,
+  requireResolvedOracleIds,
   wipCardsPath,
+  wipEffectTestsPath,
+  wipEffectsPath,
   HttpError,
   type Env,
   type MasterCard,
+  type PublishManifest,
   type SetsFile,
 } from '../_github';
+
+const REQUEST_ID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SHA1_RE = /^[0-9a-f]{40}$/;
+
+const encodeJson = (value: unknown) =>
+  new TextEncoder().encode(`${JSON.stringify(value, null, 2)}\n`);
+
+export function isPublishManifest(value: unknown): value is PublishManifest {
+  if (!value || typeof value !== 'object') return false;
+  const manifest = value as Partial<PublishManifest>;
+  const set =
+    manifest.set && typeof manifest.set === 'object'
+      ? manifest.set
+      : null;
+  const imageEntries =
+    manifest.imageShas &&
+    typeof manifest.imageShas === 'object' &&
+    !Array.isArray(manifest.imageShas)
+      ? Object.entries(manifest.imageShas)
+      : [];
+  return (
+    manifest.schemaVersion === 3 &&
+    Number.isInteger(manifest.vol) &&
+    manifest.vol! > 0 &&
+    typeof manifest.requestId === 'string' &&
+    REQUEST_ID_RE.test(manifest.requestId) &&
+    !!set &&
+    set.vol === manifest.vol &&
+    set.status === 'publishing' &&
+    set.publishOperationId === manifest.requestId &&
+    typeof manifest.cardsSha === 'string' &&
+    SHA1_RE.test(manifest.cardsSha) &&
+    typeof manifest.effectsSha === 'string' &&
+    SHA1_RE.test(manifest.effectsSha) &&
+    typeof manifest.effectTestsSha === 'string' &&
+    SHA1_RE.test(manifest.effectTestsSha) &&
+    Number.isInteger(manifest.cardCount) &&
+    manifest.cardCount! > 0 &&
+    imageEntries.length === manifest.cardCount &&
+    imageEntries.every(
+      ([printingId, sha]) =>
+        printingId.trim() !== '' &&
+        typeof sha === 'string' &&
+        SHA1_RE.test(sha),
+    ) &&
+    typeof manifest.createdAt === 'string' &&
+    Number.isFinite(Date.parse(manifest.createdAt))
+  );
+}
 
 export const onRequestPost: PagesFunction<Env> = (ctx) =>
   handle(async () => {
     const env = ctx.env;
     const { vol } = await readJsonBody<{ vol: number }>(ctx.request);
-    if (typeof vol !== 'number') {
-      throw new HttpError(400, 'vol が必要です');
+    if (
+      typeof vol !== 'number' ||
+      !Number.isInteger(vol) ||
+      vol < 1
+    ) {
+      throw new HttpError(400, 'volが不正です');
     }
 
-    // ここだけは assertVolEditable を通さない。公開済みの弾でも再実行できないと、
-    // 手順4まで進んで5で失敗した時（released にはなったが後片付けが残っている状態）に
-    // 直す手段が無くなるため。公開済みの弾に新しい制作中カードを作る経路は
-    // save-card 側で塞いであるので、再実行しても移すものは残っていない。
+    const wipPath = wipCardsPath(vol);
+    const [
+      activeFile,
+      wipSetsFile,
+      publicSetsFile,
+      wipFile,
+      publicCardsFile,
+    ] = await Promise.all([
+      ghGetJson<unknown>(env, PRIVATE_REPO, PUBLISH_ACTIVE_PATH),
+      ghGetJson<SetsFile>(env, PRIVATE_REPO, WIP_SETS_PATH),
+      ghGetJson<SetsFile>(env, PUBLIC_REPO, SETS_PATH),
+      ghGetJson<Record<string, unknown>[]>(env, PRIVATE_REPO, wipPath),
+      ghGetJson<Record<string, unknown>[]>(env, PUBLIC_REPO, CARDS_PATH),
+    ]);
 
-    // 1. 非公開リポの制作中カードを読み、status:'draft' を外す
-    const wip = await ghGetJson<MasterCard[]>(env, PRIVATE_REPO, wipCardsPath(vol));
-    const wipCards = wip.data ?? [];
-    const promoted: MasterCard[] = wipCards.map((c) => {
-      if (c.status === 'draft') {
-        const { status: _drop, ...rest } = c;
-        return rest as MasterCard;
-      }
-      return c;
-    });
-
-    // 2. 公開 data/cards.json に追記（同 id は差し替え）→ 変化がある時だけ書く
-    const pub = await ghGetJson<MasterCard[]>(env, PUBLIC_REPO, CARDS_PATH);
-    const list = pub.data ?? [];
-    const before = JSON.stringify(list);
-    const indexById = new Map(list.map((c, i) => [c.id, i]));
-    for (const c of promoted) {
-      const i = indexById.get(c.id);
-      if (i !== undefined) list[i] = c;
-      else {
-        indexById.set(c.id, list.length);
-        list.push(c);
-      }
-    }
-    if (JSON.stringify(list) !== before) {
-      await ghPutJson(env, PUBLIC_REPO, CARDS_PATH, list, `publish vol${vol}: cards`, pub.sha);
-    }
-
-    // 3. 画像コピー（非公開 images/{id}.webp → 公開 assets/card_images/{id}.webp）
-    for (const c of promoted) {
-      const raw = await ghGetRaw(env, PRIVATE_REPO, privateImagePath(c.id));
-      if (!raw) continue; // 画像が無いカードはスキップ
-      await ghPutBase64(env, PUBLIC_REPO, publicImagePath(c.id), bytesToBase64(raw), `publish vol${vol}: image ${c.id}`);
-    }
-
-    // 4. 弾メタを非公開リポ → 公開リポへ released で移す（＝公開の確定点）
-    const wipSetsFile = await ghGetJson<SetsFile>(env, PRIVATE_REPO, WIP_SETS_PATH);
+    const publicSets = publicSetsFile.data?.sets ?? [];
+    const alreadyReleased =
+      publicSets.find((set) => set.vol === vol)?.status === 'released';
     const wipSets = wipSetsFile.data?.sets ?? [];
-    const setsFile = await ghGetJson<SetsFile>(env, PUBLIC_REPO, SETS_PATH);
-    const base: SetsFile = setsFile.data ?? { sets: [] };
-    const sets = base.sets ?? [];
-    // 元になる弾メタは「制作中側 → 既に公開側にあるならそれ」の順で探す（再実行しても壊れない）
-    const source = wipSets.find((s) => s.vol === vol) ?? sets.find((s) => s.vol === vol);
-    if (!source) {
-      throw new HttpError(404, `vol${vol} の弾が見つかりません`);
-    }
-    const si = sets.findIndex((s) => s.vol === vol);
-    if (si < 0 || sets[si].status !== 'released') {
-      const released = { ...source, status: 'released' };
-      if (si >= 0) sets[si] = released;
-      else sets.push(released);
-      sets.sort((a, b) => a.vol - b.vol);
-      await ghPutJson(env, PUBLIC_REPO, SETS_PATH, { ...base, sets }, `publish vol${vol}: mark released`, setsFile.sha);
-    }
+    const sourceSet = wipSets.find((set) => set.vol === vol);
 
-    // 5. 最後に非公開リポの制作中カードを空配列にし、制作中の弾メタからも消す（変化がある時だけ）
-    if (wipCards.length > 0) {
-      await ghPutJson(env, PRIVATE_REPO, wipCardsPath(vol), [], `publish vol${vol}: clear wip`, wip.sha);
-    }
-    if (wipSets.some((s) => s.vol === vol)) {
-      await ghPutJson(
+    let manifest: PublishManifest;
+    if (activeFile.data != null) {
+      if (!isPublishManifest(activeFile.data)) {
+        throw new HttpError(
+          409,
+          '公開処理の管理ファイルが不正です。リポジトリを確認してください',
+        );
+      }
+      manifest = activeFile.data;
+      if (manifest.vol !== vol) {
+        throw new HttpError(
+          409,
+          `第${manifest.vol}弾の公開処理が進行中です。完了してから第${vol}弾を公開してください`,
+        );
+      }
+      if (
+        !sourceSet ||
+        sourceSet.status !== 'publishing' ||
+        sourceSet.publishOperationId !== manifest.requestId
+      ) {
+        throw new HttpError(
+          409,
+          '公開処理のロックと管理ファイルが一致しません。リポジトリを確認してください',
+        );
+      }
+    } else {
+      if (alreadyReleased && !sourceSet) {
+        return json({
+          ok: true,
+          status: 'complete',
+          alreadyReleased: true,
+          cardCount: 0,
+        });
+      }
+      if (!sourceSet) {
+        throw new HttpError(404, `vol${vol} の制作中弾が見つかりません`);
+      }
+      if (sourceSet.status === 'publishing') {
+        throw new HttpError(
+          409,
+          '公開中ロックだけが残っています。active manifestを確認してください',
+        );
+      }
+      if (alreadyReleased) {
+        throw new HttpError(
+          409,
+          `vol${vol} は公開済みですが制作中データが残っています。自動削除せず停止しました`,
+        );
+      }
+
+      const wipCards = normalizeMasterCards(wipFile.data ?? []);
+      if (wipCards.length === 0) {
+        throw new HttpError(409, `vol${vol} に公開するWIPカードがありません`);
+      }
+      const promoted: MasterCard[] = wipCards.map((card) => {
+        if (card.status !== 'draft') return card;
+        const { status: _drop, ...rest } = card;
+        return rest as MasterCard;
+      });
+      const canonicalPromoted = requireCanonicalMasterCards(promoted);
+      if (canonicalPromoted.some((card) => card.vol !== vol)) {
+        throw new HttpError(
+          409,
+          `cards/vol${vol}.json に別volのカードがあります。公開前に修正してください`,
+        );
+      }
+
+      const canonicalPublic = requireCanonicalMasterCards(
+        normalizeMasterCards(publicCardsFile.data ?? []),
+      );
+      const publicByPrintingId = new Map(
+        canonicalPublic.map((card) => [card.printingId, card]),
+      );
+      const collisions = canonicalPromoted
+        .filter((card) => publicByPrintingId.has(card.printingId))
+        .map((card) => card.printingId);
+      if (collisions.length > 0) {
+        throw new HttpError(
+          409,
+          `公開側とPrinting IDが衝突しています: ${collisions.join('、')}`,
+        );
+      }
+      const combined = requireCanonicalMasterCards([
+        ...canonicalPublic,
+        ...canonicalPromoted,
+      ]);
+      requireResolvedOracleIds(combined);
+      requireNoOracleGameplayDrifts(combined);
+
+      const effectsPath = wipEffectsPath(vol);
+      const effectTestsPath = wipEffectTestsPath(vol);
+      const [
+        wipImages,
+        publicImages,
+        effectsSha,
+        effectTestsSha,
+      ] = await Promise.all([
+        ghListDir(env, PRIVATE_REPO, PRIVATE_IMAGE_DIR),
+        ghListDir(env, PUBLIC_REPO, PUBLIC_IMAGE_DIR),
+        ghGetSha(env, PRIVATE_REPO, effectsPath),
+        ghGetSha(env, PRIVATE_REPO, effectTestsPath),
+      ]);
+      if (!effectsSha) {
+        throw new HttpError(
+          409,
+          `effects/vol${vol}.ts がありません。効果なしの弾でも空のVOL${vol}_EFFECTSを用意してください`,
+        );
+      }
+      if (!effectTestsSha) {
+        throw new HttpError(
+          409,
+          `effects/vol${vol}.test.ts がありません。弾固有の効果回帰テストを用意してください`,
+        );
+      }
+      const missingImages = canonicalPromoted
+        .filter((card) => !wipImages[`${card.printingId}.webp`])
+        .map((card) => card.printingId);
+      if (missingImages.length > 0) {
+        throw new HttpError(
+          409,
+          `画像が無いため公開できません: ${missingImages.join('、')}`,
+        );
+      }
+      const publicImageCollisions = canonicalPromoted
+        .filter((card) => publicImages[`${card.printingId}.webp`])
+        .map((card) => card.printingId);
+      if (publicImageCollisions.length > 0) {
+        throw new HttpError(
+          409,
+          `公開側に同名画像があります: ${publicImageCollisions.join('、')}`,
+        );
+      }
+      if (!wipFile.sha) {
+        throw new HttpError(409, 'WIPカードのGit SHAを取得できませんでした');
+      }
+
+      const requestId = crypto.randomUUID();
+      const lockedSet = {
+        ...sourceSet,
+        status: 'publishing',
+        publishOperationId: requestId,
+      };
+      const lockedSets: SetsFile = {
+        ...(wipSetsFile.data ?? { sets: [] }),
+        sets: wipSets.map((set) =>
+          set.vol === vol ? lockedSet : set,
+        ),
+      };
+      const imageShas = Object.fromEntries(
+        canonicalPromoted.map((card) => [
+          card.printingId,
+          wipImages[`${card.printingId}.webp`],
+        ]),
+      );
+      manifest = {
+        schemaVersion: 3,
+        vol,
+        requestId,
+        set: lockedSet,
+        cardsSha: wipFile.sha,
+        effectsSha,
+        effectTestsSha,
+        imageShas,
+        cardCount: canonicalPromoted.length,
+        createdAt: new Date().toISOString(),
+      };
+
+      await ghCommitFiles(
         env,
         PRIVATE_REPO,
-        WIP_SETS_PATH,
-        { ...(wipSetsFile.data ?? { sets: [] }), sets: wipSets.filter((s) => s.vol !== vol) },
-        `publish vol${vol}: clear wip set`,
-        wipSetsFile.sha,
+        [
+          { path: WIP_SETS_PATH, bytes: encodeJson(lockedSets) },
+          { path: PUBLISH_ACTIVE_PATH, bytes: encodeJson(manifest) },
+        ],
+        `lock vol${vol} for publish ${requestId}`,
+        {
+          [WIP_SETS_PATH]: wipSetsFile.sha,
+          [wipPath]: wipFile.sha,
+          [effectsPath]: effectsSha,
+          [effectTestsPath]: effectTestsSha,
+          [PUBLISH_ACTIVE_PATH]: null,
+          ...Object.fromEntries(
+            canonicalPromoted.map((card) => [
+              privateImagePath(card.printingId),
+              wipImages[`${card.printingId}.webp`],
+            ]),
+          ),
+        },
       );
     }
 
-    return json({ ok: true, moved: promoted.length });
+    const displayTitle =
+      `Publish card set vol${vol} (${manifest.requestId})`;
+    const currentRun = await ghFindWorkflowRun(
+      env,
+      PRIVATE_REPO,
+      PUBLISH_WORKFLOW,
+      displayTitle,
+    );
+    if (currentRun && currentRun.status !== 'completed') {
+      return json(
+        {
+          ok: true,
+          status: 'queued',
+          requestId: manifest.requestId,
+          runId: currentRun.id,
+          runUrl: currentRun.htmlUrl,
+          cardCount: manifest.cardCount,
+          alreadyReleased,
+        },
+        202,
+      );
+    }
+
+    const run = await ghDispatchWorkflow(
+      env,
+      PRIVATE_REPO,
+      PUBLISH_WORKFLOW,
+      {
+        vol: String(vol),
+        request_id: manifest.requestId,
+      },
+    );
+    return json(
+      {
+        ok: true,
+        status: 'queued',
+        requestId: manifest.requestId,
+        runId: run.workflowRunId,
+        runUrl: run.htmlUrl,
+        cardCount: manifest.cardCount,
+        alreadyReleased,
+      },
+      202,
+    );
   });

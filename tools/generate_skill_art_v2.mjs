@@ -292,11 +292,13 @@ function kitOf(card) {
 }
 
 function buildPrompt(card, style = STYLE) {
-  const entry = briefs[card.id];
+  const entry = briefs[card.printingId];
   const brief = entry?.brief;
-  if (!brief) throw new Error(`指示書がありません: ${BRIEF_FILE} の ${card.id}`);
+  if (!brief) throw new Error(`指示書がありません: ${BRIEF_FILE} の ${card.printingId}`);
   const cast = (entry.cast ?? []).map((name) => {
-    if (!looks[name]) throw new Error(`character_looks.json に ${name} がいません（${card.id}）`);
+    if (!looks[name]) {
+      throw new Error(`character_looks.json に ${name} がいません（${card.printingId}）`);
+    }
     return looks[name];
   });
   const castLine = cast.length
@@ -383,9 +385,11 @@ async function generateOne(card) {
   // 縮小しすぎ・圧縮しすぎだと線画が眠くなるので、原寸に近いまま残す
   const width = isUsr ? 896 : 1344;
   const webp = await sharp(png).resize({ width }).webp({ quality: 90 }).toBuffer();
-  writeFileSync(`${OUT_DIR}/${card.id}${SUFFIX}.webp`, webp);
+  writeFileSync(`${OUT_DIR}/${card.printingId}${SUFFIX}.webp`, webp);
   // 確認用に別フォルダへ出した時は「生成済み」印を付けない（--skip-existing が飛ばしてしまうため）
-  if (OUT_DIR === 'assets/card_images') writeFileSync(`${MARK_DIR}/${card.id}`, new Date().toISOString());
+  if (OUT_DIR === 'assets/card_images') {
+    writeFileSync(`${MARK_DIR}/${card.printingId}`, new Date().toISOString());
+  }
   return webp.length;
 }
 
@@ -395,17 +399,19 @@ mkdirSync(MARK_DIR, { recursive: true });
 const skills = JSON.parse(readFileSync('data/cards.json', 'utf8')).filter((c) => c.type === 'skill');
 
 let queue = skills;
-if (ONLY_IDS) queue = queue.filter((c) => ONLY_IDS.includes(c.id));
+if (ONLY_IDS) queue = queue.filter((c) => ONLY_IDS.includes(c.printingId));
 else if (!ALL) {
   console.error('--ids か --all を指定してください');
   process.exit(1);
 }
-if (SKIP_EXISTING) queue = queue.filter((c) => !existsSync(`${MARK_DIR}/${c.id}`));
+if (SKIP_EXISTING) {
+  queue = queue.filter((c) => !existsSync(`${MARK_DIR}/${c.printingId}`));
+}
 
 // 何を送っているのか目で確かめるための出力（生成はしない）
 if (args.includes('--print-prompt')) {
   for (const card of queue) {
-    console.log(`===== ${card.id} ${card.name} =====\n${buildPrompt(card)}\n`);
+    console.log(`===== ${card.printingId} ${card.name} =====\n${buildPrompt(card)}\n`);
   }
   process.exit(0);
 }
@@ -421,10 +427,12 @@ async function worker() {
     try {
       const bytes = await generateOne(card);
       done++;
-      console.log(`OK ${card.id} ${card.name} (${Math.round(bytes / 1024)}KB) [${done}/${total}]`);
+      console.log(
+        `OK ${card.printingId} ${card.name} (${Math.round(bytes / 1024)}KB) [${done}/${total}]`,
+      );
     } catch (e) {
-      failed.push(card.id);
-      console.error(`NG ${card.id} ${card.name}: ${e.message}`);
+      failed.push(card.printingId);
+      console.error(`NG ${card.printingId} ${card.name}: ${e.message}`);
     }
   }
 }

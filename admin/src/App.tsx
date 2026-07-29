@@ -1,6 +1,5 @@
 import {
   ATTRIBUTES,
-  CARD_STATUSES,
   CHARACTER_SIZES,
   PACK_TYPES,
   RARITIES,
@@ -9,11 +8,16 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { setImageRevisions } from '../../web/src/cardAssets';
 import {
+  cardIdentityProblems,
+  duplicateOracleGameplayDrifts,
+  duplicatePrintingIds,
+  provisionalOraclePrintingIds,
+} from '../shared/cardIdentity';
+import {
   deleteCard,
   fetchMaster,
   fileToWebp,
   publishSet,
-  renameImage,
   saveCard,
   saveCards,
   saveImage,
@@ -23,6 +27,7 @@ import {
   type MasterCard,
   type MasterSet,
 } from './api';
+import { canStartOrResumePublish } from './publishUi';
 import { isBaseValueGoverned, theoreticalBaseValue } from './balance';
 import { buildCardPngFile, canShareImage, downloadFile, shareImageFile } from './exportCard';
 import { clearLog, getLog, subscribeLog } from './log';
@@ -33,6 +38,7 @@ import {
   IMPL_LABEL,
   cardAttributes,
   cardValue,
+  displayedImplState,
   implState,
   toRenderCard,
   type ViewMode,
@@ -49,9 +55,9 @@ const TYPE_LABEL: Record<string, string> = {
   field: 'フィールド',
 };
 
-type SortKey = 'id' | 'cost' | 'value' | 'rarity' | 'name' | 'type';
+type SortKey = 'printingId' | 'cost' | 'value' | 'rarity' | 'name' | 'type';
 const SORT_LABEL: Record<SortKey, string> = {
-  id: '番号',
+  printingId: '番号',
   cost: 'コスト',
   value: '数値',
   rarity: 'レアリティ',
@@ -77,33 +83,86 @@ interface Preflight {
   allGreen: boolean;
 }
 
-function computePreflight(cards: MasterCard[], images: Record<string, string>): Preflight {
-  const noImage = cards.filter((c) => !images[c.id]);
+function computePreflight(
+  vol: number,
+  cards: MasterCard[],
+  images: Record<string, string>,
+  allCards: MasterCard[],
+  sourceDuplicatePrintingIds: string[],
+  effectModules: Record<string, string>,
+  effectTests: Record<string, string>,
+): Preflight {
+  const noImage = cards.filter((c) => !images[c.printingId]);
   const badBaseValue = cards.filter((c) => {
     if (c.type !== 'skill' || (c.effectText ?? '').trim() !== '') return false;
     if (!isBaseValueGoverned(c as never)) return false;
     return c.baseValue !== theoreticalBaseValue(c as never);
   });
-  const missing = cards.filter((c) => implState(c) === 'missing');
-  const dupId = (() => {
-    const seen = new Set<string>();
-    const dups: string[] = [];
-    for (const c of cards) {
-      if (seen.has(c.id)) dups.push(c.id);
-      seen.add(c.id);
-    }
-    return dups;
-  })();
+  const duplicatePrintings = [...new Set([
+    ...duplicatePrintingIds(cards),
+    ...sourceDuplicatePrintingIds.filter((printingId) => printingId.startsWith(`${vol}-`)),
+  ])].sort();
+  const currentOracleIds = new Set(cards.map((card) => card.oracleId));
+  const oracleDrifts = duplicateOracleGameplayDrifts(allCards)
+    .filter((drift) => currentOracleIds.has(drift.oracleId));
+  const provisionalPrintingIds = new Set(provisionalOraclePrintingIds(cards));
+  const provisionalOracles = cards.filter((card) => provisionalPrintingIds.has(card.printingId));
+  const badIdentities = cards
+    .map((card) => ({ card, problems: cardIdentityProblems(card) }))
+    .filter((entry) => entry.problems.length > 0);
 
   const checks = [
+    {
+      label: '公開カードが1枚以上ある',
+      ok: cards.length > 0,
+      detail: cards.length > 0 ? '' : 'カードを追加して保存してください',
+    },
     { label: '画像が揃っている', ok: noImage.length === 0, detail: noImage.map((c) => c.name).join('、') },
-    { label: '効果テキストの実装が揃っている', ok: missing.length === 0, detail: missing.map((c) => c.name).join('、') },
+    {
+      label: `非公開の効果module（effects/vol${vol}.ts）がある`,
+      ok: Boolean(effectModules[String(vol)]),
+      detail: effectModules[String(vol)]
+        ? ''
+        : '効果なしの弾でも空の効果moduleが必要です。実装の完全性は非公開Actionsで最終検査します',
+    },
+    {
+      label: `非公開の効果回帰test（effects/vol${vol}.test.ts）がある`,
+      ok: Boolean(effectTests[String(vol)]),
+      detail: effectTests[String(vol)]
+        ? ''
+        : '弾固有の効果挙動を検証するtestが必要です。moduleと同じsnapshot・commitで公開されます',
+    },
     {
       label: '効果なしスキルの基本値が理論値どおり',
       ok: badBaseValue.length === 0,
       detail: badBaseValue.map((c) => `${c.name}(${c.baseValue}→${theoreticalBaseValue(c as never)})`).join('、'),
     },
-    { label: 'IDの重複なし', ok: dupId.length === 0, detail: dupId.join('、') },
+    {
+      label: 'printingIdの重複なし',
+      ok: duplicatePrintings.length === 0,
+      detail: duplicatePrintings.join('、'),
+    },
+    {
+      label: 'oracleId・printingIdが正しい',
+      ok: badIdentities.length === 0,
+      detail: badIdentities
+        .map(({ card, problems }) => `${card.name || card.printingId || '無題'}: ${problems.join(' / ')}`)
+        .join('、'),
+    },
+    {
+      label: '旧形式の仮Oracleを確認済み',
+      ok: provisionalOracles.length === 0,
+      detail: provisionalOracles
+        .map((card) => `${card.name || card.printingId} (${card.printingId})`)
+        .join('、'),
+    },
+    {
+      label: '同じOracle IDのゲーム定義が一致',
+      ok: oracleDrifts.length === 0,
+      detail: oracleDrifts
+        .map((drift) => `${drift.oracleId} (${drift.printingIds.join(' / ')})`)
+        .join('、'),
+    },
   ];
   return { checks, allGreen: checks.every((c) => c.ok) };
 }
@@ -134,7 +193,7 @@ export function App() {
   const [attrFilter, setAttrFilter] = useState('');
   const [costFilter, setCostFilter] = useState('');
   const [flags, setFlags] = useState({ unimpl: false, noImage: false, draft: false, hasEffect: false });
-  const [sortKey, setSortKey] = useState<SortKey>('id');
+  const [sortKey, setSortKey] = useState<SortKey>('printingId');
   const [sortAsc, setSortAsc] = useState(true);
   const [filterOpen, setFilterOpen] = useState(false);
 
@@ -168,8 +227,12 @@ export function App() {
    * ローカルの vite.config.ts の volLockError）。画面だけで守ると、
    * 古いタブが開きっぱなしの時などに素通りする。
    */
-  const locked = currentSet?.status === 'released';
+  const locked =
+    currentSet?.status === 'released' ||
+    currentSet?.status === 'publishing';
   const volCards = useMemo(() => (master?.cards ?? []).filter((c) => c.vol === vol), [master, vol]);
+  const draftEffectModulePresent =
+    currentSet?.status !== 'released' && Boolean(master?.effectModules[String(vol)]);
 
   const filtered = useMemo(() => {
     const list = volCards.filter((c) => {
@@ -177,13 +240,15 @@ export function App() {
       if (rarityFilter && c.rarity !== rarityFilter) return false;
       if (attrFilter && !cardAttributes(c).includes(attrFilter)) return false;
       if (costFilter && String(c.costAp ?? '') !== costFilter) return false;
-      if (flags.unimpl && implState(c) !== 'missing') return false;
-      if (flags.noImage && images[c.id]) return false;
+      if (flags.unimpl && displayedImplState(c, draftEffectModulePresent) !== 'missing') return false;
+      if (flags.noImage && images[c.printingId]) return false;
       if (flags.draft && c.status !== 'draft') return false;
       if (flags.hasEffect && (c.effectText ?? '').trim() === '') return false;
       if (query) {
         const q = query.toLowerCase();
-        const hay = `${c.name}\n${c.id}\n${c.effectText ?? ''}\n${c.flavorText ?? ''}`.toLowerCase();
+        const hay =
+          `${c.name}\n${c.printingId}\n${c.oracleId}\n${c.effectText ?? ''}\n${c.flavorText ?? ''}`
+            .toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
@@ -194,24 +259,50 @@ export function App() {
     return list.sort((a, b) => {
       switch (sortKey) {
         case 'cost':
-          return ((a.costAp ?? -1) - (b.costAp ?? -1)) * dir || a.id.localeCompare(b.id);
+          return ((a.costAp ?? -1) - (b.costAp ?? -1)) * dir ||
+            a.printingId.localeCompare(b.printingId);
         case 'value':
-          return ((cardValue(a) ?? -1) - (cardValue(b) ?? -1)) * dir || a.id.localeCompare(b.id);
+          return ((cardValue(a) ?? -1) - (cardValue(b) ?? -1)) * dir ||
+            a.printingId.localeCompare(b.printingId);
         case 'rarity':
-          return (rank(a) - rank(b)) * dir || a.id.localeCompare(b.id);
+          return (rank(a) - rank(b)) * dir || a.printingId.localeCompare(b.printingId);
         case 'name':
           return a.name.localeCompare(b.name, 'ja') * dir;
         case 'type':
-          return (TYPES.indexOf(a.type) - TYPES.indexOf(b.type)) * dir || a.id.localeCompare(b.id);
+          return (TYPES.indexOf(a.type) - TYPES.indexOf(b.type)) * dir ||
+            a.printingId.localeCompare(b.printingId);
         default:
-          return a.id.localeCompare(b.id) * dir;
+          return a.printingId.localeCompare(b.printingId) * dir;
       }
     });
-  }, [volCards, typeFilter, rarityFilter, attrFilter, costFilter, flags, query, sortKey, sortAsc, images]);
+  }, [
+    volCards,
+    typeFilter,
+    rarityFilter,
+    attrFilter,
+    costFilter,
+    flags,
+    query,
+    sortKey,
+    sortAsc,
+    images,
+    draftEffectModulePresent,
+  ]);
 
   // 下書きがあればそれを優先して編集フォームに出す（未保存の新規カード）
-  const selected = draftCard ?? volCards.find((c) => c.id === selectedId) ?? null;
-  const preflight = useMemo(() => computePreflight(volCards, images), [volCards, images]);
+  const selected = draftCard ?? volCards.find((c) => c.printingId === selectedId) ?? null;
+  const preflight = useMemo(
+    () => computePreflight(
+      vol,
+      volCards,
+      images,
+      master?.cards ?? [],
+      master?.duplicatePrintingIds ?? [],
+      master?.effectModules ?? {},
+      master?.effectTests ?? {},
+    ),
+    [vol, volCards, images, master],
+  );
 
   const costOptions = useMemo(
     () => [...new Set(volCards.map((c) => c.costAp).filter((v): v is number => typeof v === 'number'))].sort((a, b) => a - b),
@@ -256,32 +347,46 @@ export function App() {
   function applyCardLocally(saved: MasterCard, removeId?: string) {
     setMaster((m) => {
       if (!m) return m;
-      const cards = m.cards.filter((c) => c.id !== saved.id && c.id !== removeId);
+      const cards = m.cards.filter(
+        (c) => c.printingId !== saved.printingId && c.printingId !== removeId,
+      );
       return { ...m, cards: [...cards, saved] };
     });
   }
 
-  async function onSaveCard(card: MasterCard, originalId?: string) {
+  async function onSaveCard(
+    card: MasterCard,
+    originalPrintingId?: string,
+    originalVol?: number,
+  ) {
     userClosedRef.current = false;
     setSaving(true);
     try {
-      // 編集で id（弾/コード/レア）が変わったら、古いレコードを消してから保存
-      // （これをしないと元の id のカードが「空カード」として残る）
-      if (originalId && originalId !== card.id) {
-        await deleteCard(originalId, card.vol);
+      // ID変更は、旧カード・新カード・画像をサーバー側の1操作として扱う。
+      // 保存先衝突を検査してからコピーし、旧データは最後に消すため、失敗時も元を失わない。
+      const original =
+        originalPrintingId && originalVol != null
+          ? { printingId: originalPrintingId, vol: originalVol }
+          : undefined;
+      const res = await saveCard(card, original);
+      applyCardLocally(stripForType(card), originalPrintingId);
+      if (res.movedImage && originalPrintingId) {
+        setMaster((m) => {
+          if (!m) return m;
+          const images = { ...m.images };
+          delete images[originalPrintingId];
+          images[card.printingId] = String(Date.now());
+          return { ...m, images };
+        });
       }
-      const res = await saveCard(card);
-      // id は「弾-コード-レアリティ」なので、レアリティを変えると id が変わる。
-      // 画像のファイル名は id そのものなので、一緒に引っ越さないと絵が迷子になる
-      // （実際に第2弾で8枚が「画像なし」になっていた）。
-      if (originalId && originalId !== card.id) {
-        await renameImage(card.vol, originalId, card.id).catch((e) => flash(`画像の引っ越しに失敗: ${e}`));
-      }
-      applyCardLocally(stripForType(card), originalId);
       setDraftCard(null); // 下書きを確定
       // 保存を待っている間に「← 一覧へ」を押していたら、勝手に開き直さない
-      if (!userClosedRef.current) setSelectedId(card.id);
-      flash(`保存しました → ${res.savedTo}`);
+      if (!userClosedRef.current) setSelectedId(card.printingId);
+      flash(
+        res.cleanupPending
+          ? `保存しました。旧画像の後片付けだけ再試行が必要です → ${res.savedTo}`
+          : `保存しました → ${res.savedTo}`,
+      );
     } catch (e) {
       flash(String(e));
     } finally {
@@ -302,7 +407,8 @@ export function App() {
     const rarity = 'C';
     // 保存はしない。下書きとして編集フォームに出し、「保存」を押して初めて data に入る
     setDraftCard({
-      id: `${vol}-${code}-${rarity}`,
+      oracleId: crypto.randomUUID(),
+      printingId: `${vol}-${code}-${rarity}`,
       vol,
       code,
       rarity,
@@ -329,14 +435,23 @@ export function App() {
   }
   if (!master) return <div className="admin-loading">読み込み中…</div>;
 
-  const listProps = { cards: filtered, images, selectedId, onSelect: (id: string) => { setDraftCard(null); setSelectedId(id); } };
+  const listProps = {
+    cards: filtered,
+    images,
+    draftEffectModulePresent,
+    selectedId,
+    onSelect: (printingId: string) => {
+      setDraftCard(null);
+      setSelectedId(printingId);
+    },
+  };
 
   const cardsPane = (
     <main className="admin-main">
       <div className="filter-bar">
         <input
           className="a-search"
-          placeholder="名前・ID・効果で検索"
+          placeholder="名前・Printing / Oracle ID・効果で検索"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
@@ -453,7 +568,7 @@ export function App() {
   }
 
   /**
-   * 採番。カードのIDと画像を同時に動かす。
+   * 採番。カードのprintingIdと画像を同時に動かす。
    * 公開するまでは何度でもやり直せる（公開後はサーバ側が変更を拒否する）。
    */
   async function onConfirmCodes(renumbered: MasterCard[], renames: { from: string; to: string }[]) {
@@ -465,7 +580,11 @@ export function App() {
       setSelectedId(null);
       // 画像の版番号（?v=）は GitHub 側の sha なので、引っ越し後は読み直さないと合わない
       await reload();
-      flash(`採番を確定しました（${r.saved}枚・画像${r.movedImages}枚を移動）`);
+      flash(
+        r.cleanupPending?.length
+          ? `採番を確定しました。旧画像の後片付け待ち: ${r.cleanupPending.join('、')}`
+          : `採番を確定しました（${r.saved}枚・画像${r.movedImages}枚を移動）`,
+      );
     } catch (e) {
       flash(String(e));
     } finally {
@@ -523,6 +642,7 @@ export function App() {
     <>
       <AuditPanel
         cards={volCards}
+        draftEffectModulePresent={draftEffectModulePresent}
         onPick={(id) => { setDraftCard(null); setSelectedId(id); if (narrow) setTab('cards'); }}
       />
       <PreflightPanel preflight={preflight} />
@@ -530,9 +650,19 @@ export function App() {
         set={currentSet}
         preflight={preflight}
         onPublish={async () => {
-          const r = await publishSet(vol);
-          await reload();
-          flash(`第${vol}弾を公開しました（${r.moved}枚）`);
+          let r: Awaited<ReturnType<typeof publishSet>> | null = null;
+          try {
+            r = await publishSet(vol);
+          } finally {
+            // validation失敗でActionsがdraftへ戻した場合も、編集ロックを即座に反映する。
+            await reload();
+          }
+          if (!r) return;
+          flash(
+            r.status === 'complete'
+              ? `第${vol}弾を公開しました（${r.cardCount}枚）`
+              : `第${vol}弾の公開処理は続いています。処理中表示のままなら同じボタンから再開できます`,
+          );
         }}
         onFlash={flash}
       />
@@ -542,20 +672,27 @@ export function App() {
 
   const editorPane = selected ? (
     <CardEditor
-      key={draftCard ? 'draft' : selected.id}
+      key={draftCard ? 'draft' : selected.printingId}
       card={selected}
       isDraft={!!draftCard}
+      draftEffectModulePresent={draftEffectModulePresent}
       locked={locked}
       saving={saving}
-      imageRev={images[selected.id]}
+      imageRev={images[selected.printingId]}
       onSave={onSaveCard}
       onCancel={closeEditor}
       onDelete={async () => {
-        const { id, vol } = selected;
-        await deleteCard(id, vol);
-        setMaster((m) => (m ? { ...m, cards: m.cards.filter((c) => c.id !== id) } : m));
+        const { printingId, vol } = selected;
+        const result = await deleteCard(printingId, vol);
+        setMaster((m) =>
+          m ? { ...m, cards: m.cards.filter((c) => c.printingId !== printingId) } : m
+        );
         closeEditor();
-        flash('削除しました');
+        flash(
+          result.cleanupPending
+            ? 'カードは削除しました。孤立画像の後片付けだけ再試行が必要です'
+            : 'カードと画像を削除しました',
+        );
       }}
       onImageSaved={reload}
     />
@@ -585,7 +722,13 @@ export function App() {
             {orphanVols.includes(s.vol) ? (
               <em className="set-status orphan">要設定</em>
             ) : (
-              <em className={`set-status ${s.status}`}>{s.status === 'released' ? '公開中' : '制作中'}</em>
+              <em className={`set-status ${s.status}`}>
+                {s.status === 'released'
+                  ? '公開中'
+                  : s.status === 'publishing'
+                    ? '公開処理中'
+                    : '制作中'}
+              </em>
             )}
           </button>
         ))}
@@ -674,10 +817,15 @@ function SetEditor({ vol, set, locked, onSave }: {
   // 公開済みの弾は中身を見せるだけにする。編集できると、公開後の弾に
   // 手を入れて公開データを壊す事故が起きる（実際に起きた）
   if (locked && set) {
+    const publishing = set.status === 'publishing';
     return (
       <section className="panel set-editor">
         <h3>第{vol}弾のメタ情報</h3>
-        <p className="audit-line good">この弾は公開済みです。管理画面からは変更できません。</p>
+        <p className={`audit-line ${publishing ? 'warn' : 'good'}`}>
+          {publishing
+            ? 'この弾は公開処理中です。完了または再試行まで変更できません。'
+            : 'この弾は公開済みです。管理画面からは変更できません。'}
+        </p>
         <dl className="set-readonly">
           <dt>テーマ名</dt><dd>{set.themeName || '(未設定)'}</dd>
           <dt>サブタイトル</dt><dd>{set.themeSubtitle || '(未設定)'}</dd>
@@ -686,8 +834,9 @@ function SetEditor({ vol, set, locked, onSave }: {
           <dt>公開日</dt><dd>{set.releasedAt || '-'}</dd>
         </dl>
         <p className="hint-small">
-          直す必要がある場合は、リポジトリを直接編集して push してください
-          （テストと CI が通ることを必ず確認してください）。
+          {publishing
+            ? '「チェックと公開」から公開処理を再開してください。'
+            : '直す必要がある場合は、リポジトリを直接編集して push してください（テストと CI が通ることを必ず確認してください）。'}
         </p>
       </section>
     );
@@ -697,7 +846,10 @@ function SetEditor({ vol, set, locked, onSave }: {
     <section className="panel set-editor">
       <h3>第{vol}弾のメタ情報</h3>
       <div className="row2">
-        <label>弾数<input type="number" inputMode="numeric" value={draft.vol} onChange={(e) => up({ vol: +e.target.value })} /></label>
+        <label>
+          弾数
+          <input type="number" inputMode="numeric" value={vol} readOnly aria-readonly="true" />
+        </label>
         <label>テーマNo.<input type="number" inputMode="numeric" value={draft.themeNo} onChange={(e) => up({ themeNo: +e.target.value })} /></label>
       </div>
       <label>テーマ名<input value={draft.themeName} onChange={(e) => up({ themeName: e.target.value })} placeholder="聖戦残火" /></label>
@@ -711,33 +863,46 @@ function SetEditor({ vol, set, locked, onSave }: {
         <label>公開日<input value={draft.releasedAt} onChange={(e) => up({ releasedAt: e.target.value })} placeholder="2026-07-01" /></label>
       </div>
       <label>コードネーム（制作中の仮名）<input value={draft.codename ?? ''} onChange={(e) => up({ codename: e.target.value })} placeholder="公開前のテーマ名漏れ防止" /></label>
-      <label className="status-row">状態
-        <select value={draft.status} onChange={(e) => up({ status: e.target.value as MasterSet['status'] })}>
-          {CARD_STATUSES.map((s) => <option key={s} value={s}>{s === 'released' ? 'released（公開）' : 'draft（制作中）'}</option>)}
-        </select>
-      </label>
-      {draft.status === 'released' && (
-        <p className="warn">⚠ released にすると、この弾のカードが公開ビルドに載ります。公開前チェックが全て緑か確認してください。</p>
-      )}
-      <button className="a-primary" onClick={() => onSave(draft)}>弾を保存</button>
-      <p className="hint-small">保存を押すと、その場で GitHub に記録されます（PCは関係ありません）。</p>
+      <p className="status-row">状態 <b>draft（制作中）</b></p>
+      <button className="a-primary" onClick={() => onSave({ ...draft, vol, status: 'draft' })}>
+        弾を保存
+      </button>
+      <p className="hint-small">
+        保存を押すと、その場で GitHub に記録されます。公開は「チェックと公開」から行います。
+      </p>
     </section>
   );
 }
 
 // ---------- 実装状況パネル ----------
-function AuditPanel({ cards, onPick }: { cards: MasterCard[]; onPick: (id: string) => void }) {
+function AuditPanel({
+  cards,
+  draftEffectModulePresent,
+  onPick,
+}: {
+  cards: MasterCard[];
+  draftEffectModulePresent: boolean;
+  onPick: (printingId: string) => void;
+}) {
   const withText = cards.filter((c) => (c.effectText ?? '').trim() !== '');
   const missing = withText.filter((c) => implState(c) === 'missing');
   const orphan = cards.filter((c) => implState(c) === 'orphan');
+  const waitingForActions = draftEffectModulePresent && missing.length > 0;
   return (
     <section className="panel">
       <h3>効果の実装状況</h3>
       <p className="audit-line">効果ありカード <b>{withText.length}</b> / 全 {cards.length} 枚</p>
-      <p className={`audit-line ${missing.length ? 'bad' : 'good'}`}>未実装 <b>{missing.length}</b> 枚</p>
+      <p className={`audit-line ${waitingForActions ? 'warn' : missing.length ? 'bad' : 'good'}`}>
+        {waitingForActions ? '公開版に未登録' : '未実装'} <b>{missing.length}</b> 枚
+        {waitingForActions && ' — 非公開moduleの中身は公開Actionsで最終検査します'}
+      </p>
       {missing.length > 0 && (
         <ul className="audit-list">
-          {missing.map((c) => <li key={c.id}><button onClick={() => onPick(c.id)}>{c.name}</button></li>)}
+          {missing.map((c) => (
+            <li key={c.printingId}>
+              <button onClick={() => onPick(c.printingId)}>{c.name}</button>
+            </li>
+          ))}
         </ul>
       )}
       {orphan.length > 0 && (
@@ -796,6 +961,12 @@ function PublishPanel({ set, preflight, onPublish, onFlash }: {
     );
   }
 
+  const resuming = set.status === 'publishing';
+  const publishAllowed = canStartOrResumePublish(
+    set.status,
+    preflight.allGreen,
+  );
+
   async function publish() {
     if (!confirm(`第${set!.vol}弾を公開します。\nカードと画像が公開リポジトリへ移り、数分後にゲームに出ます。\nよろしいですか？`)) return;
     setBusy(true);
@@ -812,32 +983,61 @@ function PublishPanel({ set, preflight, onPublish, onFlash }: {
     <section className="panel">
       <h3>弾を公開</h3>
       <p className="hint-small">
-        制作中のカードと画像を公開側へ移し、ゲームに出るようにします。公開前チェックが全部緑になると押せます。
+        {resuming
+          ? '非公開の公開ジョブを再開します。カード編集は完了までロックされています。'
+          : '非公開GitHub Actionsで全検査を通し、カード・弾・画像・効果コードを1コミットで公開します。公開前チェックが全部緑になると押せます。'}
       </p>
-      <button className="a-primary" disabled={busy || !preflight.allGreen} onClick={publish}>
-        {busy ? '公開中…' : `第${set.vol}弾を公開する`}
+      <button className="a-primary" disabled={busy || !publishAllowed} onClick={publish}>
+        {busy
+          ? '公開処理を確認中…'
+          : resuming
+            ? `第${set.vol}弾の公開を再開する`
+            : `第${set.vol}弾を公開する`}
       </button>
-      {!preflight.allGreen && <p className="hint-small">※ 公開前チェックに未解決の項目があります。</p>}
+      {!preflight.allGreen && (
+        <p className="hint-small">
+          {resuming
+            ? '※ 後片付け途中でWIPファイルが消えていても、公開済みの完成形をサーバーが再検証して再開します。'
+            : '※ 公開前チェックに未解決の項目があります。'}
+        </p>
+      )}
     </section>
   );
 }
 
 // ---------- カードエディタ ----------
-function CardEditor({ card, isDraft, locked, saving, imageRev, onSave, onCancel, onDelete, onImageSaved }: {
+function CardEditor({
+  card,
+  isDraft,
+  draftEffectModulePresent,
+  locked,
+  saving,
+  imageRev,
+  onSave,
+  onCancel,
+  onDelete,
+  onImageSaved,
+}: {
   card: MasterCard;
   isDraft: boolean;
+  draftEffectModulePresent: boolean;
   /** 公開済みの弾のカード。閲覧と画像の書き出しだけできる */
   locked: boolean;
   saving: boolean;
   imageRev?: string;
-  onSave: (c: MasterCard, originalId?: string) => void;
+  onSave: (c: MasterCard, originalPrintingId?: string, originalVol?: number) => void;
   onCancel: () => void;
   onDelete: () => void;
   onImageSaved: () => void;
 }) {
   const [d, setD] = useState<MasterCard>(card);
-  // 編集開始時の id。保存時にこれと変わっていたら古いレコードを消す（key で再マウントされるので固定）
-  const originalId = card.id;
+  // 編集開始時のprintingId。保存時に変わっていたら古いレコードを消す
+  // （keyで再マウントされるので固定）。
+  const originalPrintingId = card.printingId;
+  const originalVol = card.vol;
+  // Oracle変更は再録紐付け・旧WIP救済では必要だが、既存カードでは意味が大きいので
+  // 保存前確認に使う（keyで再マウントされるため固定）。
+  const originalOracleId = card.oracleId;
   const [uploading, setUploading] = useState(false);
   const [exporting, setExporting] = useState(false);
   /** 書き出し済みで、まだ保存していないカード画像（スマホは押し直しで共有シートを開く） */
@@ -845,14 +1045,36 @@ function CardEditor({ card, isDraft, locked, saving, imageRev, onSave, onCancel,
   const fileRef = useRef<HTMLInputElement>(null);
   const up = (patch: Partial<MasterCard>) => setD((prev) => ({ ...prev, ...patch }));
 
-  // id は vol-code-rarity から自動生成
+  // printingIdはvol-code-rarityから自動生成。oracleIdは再録・旧WIP救済時だけ明示変更する。
   useEffect(() => {
-    up({ id: `${d.vol}-${d.code}-${d.rarity}` });
+    up({ printingId: `${d.vol}-${d.code}-${d.rarity}` });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [d.vol, d.code, d.rarity]);
 
   const theo = d.type === 'skill' ? theoreticalBaseValue(d as never) : null;
-  const st = implState(d);
+  const st = displayedImplState(d, draftEffectModulePresent);
+  const printingIdentityDirty =
+    d.printingId !== originalPrintingId || d.vol !== originalVol;
+  const imageUploadRequiresCardSave = isDraft || printingIdentityDirty;
+
+  function requestSave() {
+    const oracleId = d.oracleId.trim();
+    if (
+      !isDraft &&
+      oracleId !== originalOracleId &&
+      !confirm(
+        `Oracle IDを変更します。\n\n変更前: ${originalOracleId}\n変更後: ${oracleId}\n\n` +
+        '同じOracle IDのカードは、再録を含めて同じゲーム上のカードとして扱われます。よろしいですか？',
+      )
+    ) {
+      return;
+    }
+    onSave(
+      { ...d, oracleId },
+      isDraft ? undefined : originalPrintingId,
+      isDraft ? undefined : originalVol,
+    );
+  }
 
   async function onPickImage(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -891,12 +1113,25 @@ function CardEditor({ card, isDraft, locked, saving, imageRev, onSave, onCancel,
         <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={onPickImage} />
         <button
           className="a-btn wide"
-          disabled={uploading || locked}
-          title={locked ? '公開済みの弾の画像は差し替えられません' : ''}
+          disabled={uploading || locked || imageUploadRequiresCardSave}
+          title={
+            locked
+              ? '公開済みの弾の画像は差し替えられません'
+              : imageUploadRequiresCardSave
+                ? '先にカード本体を保存してPrinting IDを確定してください'
+                : ''
+          }
           onClick={() => fileRef.current?.click()}
         >
           {uploading ? '変換・保存中…' : '画像を選ぶ / 撮影'}
         </button>
+        {imageUploadRequiresCardSave && (
+          <p className="hint-small">
+            {isDraft
+              ? '先にカード本体を保存すると、確定したPrinting IDへ画像を登録できます。'
+              : 'Printing IDを変更中です。先にカードを保存すると、元画像も安全に引っ越します。'}
+          </p>
+        )}
         <button
           className="a-btn wide"
           disabled={exporting}
@@ -960,7 +1195,31 @@ function CardEditor({ card, isDraft, locked, saving, imageRev, onSave, onCancel,
             </select>
           </label>
         </div>
-        <p className="id-line">ID: <code>{d.id}</code></p>
+        <p className="id-line">Printing ID: <code>{d.printingId}</code></p>
+        <label>Oracle ID
+          <input
+            value={d.oracleId}
+            disabled={locked}
+            onChange={(e) =>
+              up({ oracleId: e.target.value, oracleIdProvisional: undefined })
+            }
+          />
+        </label>
+        <button
+          className="a-btn wide"
+          type="button"
+          disabled={locked}
+          onClick={() =>
+            up({ oracleId: crypto.randomUUID(), oracleIdProvisional: undefined })
+          }
+        >
+          新規Oracleを発行
+        </button>
+        <p className="hint-small">
+          通常は変更しません。再録カードは元カードのOracle IDを指定してください。
+          新しいゲーム上のカード、または旧形式の仮Oracleを独立カードとして確定する時だけ
+          「新規Oracleを発行」を使います。
+        </p>
 
         <label>名前<input value={d.name} onChange={(e) => up({ name: e.target.value })} /></label>
         <label>種類
@@ -1020,16 +1279,28 @@ function CardEditor({ card, isDraft, locked, saving, imageRev, onSave, onCancel,
         </label>
 
         {st === 'missing' && (
-          <p className="warn">このカードは効果テキストがありますが、engine/src/effects/ に実装がありません（id: {d.id}）。</p>
+          <p className="warn">
+            このカードは効果テキストがありますが、engine/src/effects/ に実装がありません
+            （oracleId: {d.oracleId}）。制作中弾のprivate効果moduleはこの画面のbundleへ
+            読み込まれないため、最終判定は公開Actionsで行います。
+          </p>
         )}
       </div>
 
       <div className="editor-actions">
         <button
           className="a-primary"
-          disabled={saving || locked || d.name.trim() === ''}
-          title={locked ? '公開済みの弾は変更できません' : d.name.trim() === '' ? '名前を入れてください' : ''}
-          onClick={() => onSave(d, originalId)}
+          disabled={saving || locked || d.name.trim() === '' || d.oracleId.trim() === ''}
+          title={
+            locked
+              ? '公開済みの弾は変更できません'
+              : d.name.trim() === ''
+                ? '名前を入れてください'
+                : d.oracleId.trim() === ''
+                  ? 'Oracle IDを指定してください'
+                  : ''
+          }
+          onClick={requestSave}
         >
           {saving ? '保存中…' : isDraft ? 'この内容で作成' : '保存'}
         </button>

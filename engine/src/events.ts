@@ -12,6 +12,7 @@
 import type { PlayerIndex } from './battle';
 
 export type BattleEvent =
+  // cardId/sourceCardIdは、使用された印刷と絵を再現するためprinting IDを保持する
   // 進行
   | { t: 'battleStart'; first: PlayerIndex }
   | { t: 'bonusCharge'; player: PlayerIndex; n: number } // 後攻補償

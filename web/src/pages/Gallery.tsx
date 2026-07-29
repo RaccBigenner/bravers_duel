@@ -61,7 +61,13 @@ export function Gallery({ onBack }: { onBack?: () => void }) {
       if (rarities.size > 0 && !rarities.has(c.rarity)) return false;
       if (attrs.size > 0 && !cardAttrs(c).some((a) => attrs.has(a))) return false;
       if (valueTypes.size > 0 && (c.type !== 'skill' || !valueTypes.has(c.valueType))) return false;
-      if (query !== '' && !c.name.includes(query) && !c.effectText.includes(query) && !c.id.includes(query)) return false;
+      if (
+        query !== '' &&
+        !c.name.includes(query) &&
+        !c.effectText.includes(query) &&
+        !c.printingId.includes(query) &&
+        !c.oracleId.includes(query)
+      ) return false;
       return true;
     });
     list = [...list].sort((a, b) => {
@@ -173,9 +179,9 @@ export function Gallery({ onBack }: { onBack?: () => void }) {
 
       <main className="gallery">
         {cards.map((card) => (
-          <div key={card.id} className="cell">
+          <div key={card.printingId} className="cell">
             <CardFrame card={card} width={cardWidth} />
-            <div className="cell-caption">{card.id}</div>
+            <div className="cell-caption">{card.printingId}</div>
           </div>
         ))}
       </main>

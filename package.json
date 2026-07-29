@@ -8,7 +8,9 @@
     "admin"
   ],
   "scripts": {
-    "test": "npm --workspace engine run test",
+    "test": "npm run test:migration && npm run test:publish && npm --workspace engine run test && npm --workspace web run test && npm --workspace admin run test",
+    "test:migration": "node --test scripts/migrate-card-identities.test.mjs",
+    "test:publish": "node --test scripts/publish-card-set.test.mjs",
     "sim": "npm --workspace engine run sim --",
     "dev": "npm --workspace web run dev",
     "build": "npm --workspace web run build",

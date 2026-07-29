@@ -7,14 +7,24 @@ import {
   canPlaySkill,
   createBattle,
   legalActions,
+  canPlayCharacterCard,
   type BattleState,
   type PlayerIndex,
 } from '../src/battle';
-import { cardById } from '../src/cards';
-import { containsAll, deckProblems, sampleDeck, type DeckList } from '../src/decks';
+import {
+  ALL_CARDS,
+  cardByPrintingId,
+  createCardCatalog,
+} from '../src/cards';
+import {
+  containsAll,
+  deckProblems,
+  sampleDeck,
+  type DeckList,
+} from '../src/decks';
 import { runBattle } from '../src/runner';
 import { sampleArchetypeDecks } from '../src/sampleDecks';
-import type { SkillCard } from '../src/types';
+import type { Card, CharacterCard, SkillCard } from '../src/types';
 
 // 基本ルールの検証には「効果を持たないバニラカード」を固定で使う（結果が読めるように）
 const ATK = '1-A129-C'; // ファストスタブ: attack cost1 base4 条件[突]
@@ -43,8 +53,22 @@ function giveAp(state: BattleState, player: PlayerIndex, count: number, cardId: 
   state.players[player].ap.push(...Array(count).fill(cardId));
 }
 
-const atkCard = cardById(ATK) as SkillCard;
-const guardCard = cardById(GUARD) as SkillCard;
+const atkCard = cardByPrintingId(ATK) as SkillCard;
+const guardCard = cardByPrintingId(GUARD) as SkillCard;
+
+function fakeReprint<T extends Card>(card: T, printingId: string, name = card.name): T {
+  const match = printingId.match(/^(\d+)-([A-Z]\d+)-([A-Z]+)$/);
+  if (!match) throw new Error(`テスト用printingIdが不正です: ${printingId}`);
+  return {
+    ...card,
+    printingId,
+    id: printingId,
+    vol: Number(match[1]),
+    code: match[2],
+    rarity: match[3] as T['rarity'],
+    name,
+  };
+}
 
 /** ルール「手札5枚以上なら1枚以上チャージ必須」を満たしつつターンを終える */
 function endTurnCharging(state: BattleState) {
@@ -73,6 +97,63 @@ describe('デッキのルール', () => {
     const deck = sampleDeck(1);
     const duplicateCharacters = { ...deck, characterIds: [CHAR_A, CHAR_A, CHAR_A] };
     expect(deckProblems(duplicateCharacters).join('')).toContain('同名カードは1枚まで');
+  });
+
+  it('再録を3枚＋2枚に分けても、oracle合計5枚なら不合格', () => {
+    const base = sampleDeck(1);
+    const originalPrintingId = base.cardIds[0];
+    const original = cardByPrintingId(originalPrintingId);
+    const reprint = fakeReprint(original, '99-Z999-C');
+    const catalog = createCardCatalog([...ALL_CARDS, reprint]);
+    const rest = base.cardIds.filter(
+      (printingId) => cardByPrintingId(printingId).oracleId !== original.oracleId,
+    );
+    const mixed = {
+      ...base,
+      cardIds: [
+        ...rest.slice(0, 35),
+        ...Array(3).fill(originalPrintingId),
+        ...Array(2).fill(reprint.printingId),
+      ],
+    };
+
+    expect(mixed.cardIds).toHaveLength(40);
+    expect(deckProblems(mixed, undefined, catalog).join('')).toContain('4枚まで');
+  });
+
+  it('再録を2枚＋2枚に分けたoracle合計4枚は合格', () => {
+    const base = sampleDeck(1);
+    const originalPrintingId = base.cardIds[0];
+    const original = cardByPrintingId(originalPrintingId);
+    const reprint = fakeReprint(original, '99-Z999-C');
+    const catalog = createCardCatalog([...ALL_CARDS, reprint]);
+    const rest = base.cardIds.filter(
+      (printingId) => cardByPrintingId(printingId).oracleId !== original.oracleId,
+    );
+    const mixed = {
+      ...base,
+      cardIds: [
+        ...rest.slice(0, 36),
+        ...Array(2).fill(originalPrintingId),
+        ...Array(2).fill(reprint.printingId),
+      ],
+    };
+
+    expect(mixed.cardIds).toHaveLength(40);
+    expect(deckProblems(mixed, undefined, catalog)).toEqual([]);
+  });
+
+  it('キャラクター枠は別printingでも同じoracleを重複できない', () => {
+    const base = sampleDeck(1);
+    const original = cardByPrintingId(CHAR_A) as CharacterCard;
+    const reprint = fakeReprint(original, '99-Z998-C');
+    const catalog = createCardCatalog([...ALL_CARDS, reprint]);
+    const mixed = {
+      ...base,
+      characterIds: [original.printingId, reprint.printingId, CHAR_B],
+    };
+
+    expect(deckProblems(mixed, undefined, catalog).join('')).toContain('同名カードは1枚まで');
   });
 
   it('属性の多重集合チェック', () => {
@@ -187,7 +268,7 @@ describe('スキルのプレイ', () => {
   });
 
   it('heal: 選んだ味方のダメージが回復する', () => {
-    const healCard = cardById(HEAL) as SkillCard;
+    const healCard = cardByPrintingId(HEAL) as SkillCard;
     const state = makeBattle({ chars: [CHAR_C], deckCard: HEAL }, { chars: [CHAR_D, CHAR_E], deckCard: ATK });
     const target = state.players[0].characters[0];
     target.damage = 3;
@@ -199,14 +280,34 @@ describe('スキルのプレイ', () => {
 });
 
 describe('キャラクターカードのプレイ', () => {
-  it('同名の味方を2回復する', () => {
+  it('表示名が変わっても同じoracleの味方を2回復する', () => {
     const state = makeBattle({ chars: [CHAR_A], deckCard: CHAR_A }, { chars: [CHAR_D], deckCard: CHAR_D });
     const target = state.players[0].characters[0];
+    target.name = '翻訳後の表示名';
     target.damage = 3;
 
     applyAction(state, { type: 'playCharacter', handIndex: 0 });
     expect(target.damage).toBe(1);
     expect(state.players[0].trash).toContain(CHAR_A);
+  });
+
+  it('別printingでも同じoracleなら回復対象として扱う', () => {
+    const state = makeBattle({ chars: [CHAR_A], deckCard: CHAR_A }, { chars: [CHAR_D], deckCard: CHAR_D });
+    const original = cardByPrintingId(CHAR_A) as CharacterCard;
+    const reprint = fakeReprint(original, '99-Z998-C', '翻訳後の別表示名');
+
+    expect(canPlayCharacterCard(state, 0, reprint)).toBe(true);
+  });
+
+  it('表示名が同じでもoracleが違えば回復対象にしない', () => {
+    const state = makeBattle({ chars: [CHAR_A], deckCard: CHAR_D }, { chars: [CHAR_D], deckCard: CHAR_A });
+    const differentOracle = fakeReprint(
+      cardByPrintingId(CHAR_D) as CharacterCard,
+      '99-Z997-C',
+      state.players[0].characters[0].name,
+    );
+
+    expect(canPlayCharacterCard(state, 0, differentOracle)).toBe(false);
   });
 
   it('同名の味方がいないと使えない', () => {

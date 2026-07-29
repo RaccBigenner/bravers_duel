@@ -15,7 +15,7 @@
  * 移動中はその間を補間するので、「山札から起き上がって手札に来る」
  * 「手札から卓へ寝かされる」という紙の動きが出る。
  */
-import { cardById } from '@bravers/engine';
+import { cardByPrintingId } from '@bravers/engine';
 import { useEffect, useRef } from 'react';
 import { CardFrame } from '../CardFrame';
 import { IMG } from '../cardAssets';
@@ -160,7 +160,7 @@ function FlyingCard({ move, onDone }: { move: CardMove; onDone: (key: number) =>
 
 function safeCard(id: string) {
   try {
-    return cardById(id);
+    return cardByPrintingId(id);
   } catch {
     return null;
   }

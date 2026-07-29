@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite --port 5273 --open",
     "serve": "vite build && vite preview --port 5273 --host 127.0.0.1",
-    "build": "echo 'admin はローカル専用のため公開ビルドしません' && exit 0"
+    "build": "vite build",
+    "test": "vitest run test"
   },
   "dependencies": {
     "@bravers/engine": "*",
@@ -22,6 +23,7 @@
     "@types/react": "^18.3.1",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.1",
-    "vite": "^5.4.0"
+    "vite": "^5.4.0",
+    "vitest": "^2.1.0"
   }
 }

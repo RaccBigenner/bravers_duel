@@ -2,7 +2,7 @@
  * シェアされたバトルログのプレビューページ。
  * URLの #log=… から復元した要約を表示する（Xのシェアリンクの飛び先）。
  */
-import { cardById, type Card } from '@bravers/engine';
+import { cardByPrintingId, type Card } from '@bravers/engine';
 import { useState } from 'react';
 import { CardFrame } from '../CardFrame';
 import type { SharedLog } from '../shareLog';
@@ -15,7 +15,8 @@ const REASON_LABEL: Record<string, string> = {
 
 function safeCard(id: string): Card | null {
   try {
-    return cardById(id);
+    // SharedLog v1 のカードIDは、移行前から変わらず printing ID。
+    return cardByPrintingId(id);
   } catch {
     return null;
   }

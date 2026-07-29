@@ -6,7 +6,7 @@
  * 取り違いバグの温床だったため廃止した。位置・数値はすべてイベントが持っている。
  * ここの仕事は「表示する文とテンポ（duration）を決める」ことだけ。
  */
-import { cardById, type BattleEvent, type BattleState, type Card } from '@bravers/engine';
+import { cardByPrintingId, type BattleEvent, type BattleState, type Card } from '@bravers/engine';
 
 export type FxKind =
   | 'coin' | 'turn' | 'draw' | 'charge' | 'chargeDeck' | 'chargeTrash' | 'chargeAll'
@@ -23,7 +23,10 @@ export interface NarrEvent {
   side?: 0 | 1; // 対象キャラの側
   charIndex?: number;
   amount?: number;
-  cardName?: string; // 表示状態の更新（リデューサ）用
+  /** 表示状態の更新用。名前やoracleではなく、実際に動いた収録カードを指定する。 */
+  printingId?: string;
+  /** カード使用演出の移動元。省略時は通常どおり手札。 */
+  source?: 'hand' | 'deck';
   charName?: string;
   attr?: string;
   /** ダメージ演出で使う属性。エンジンが伝えた「出どころのスキル」から取る
@@ -45,7 +48,7 @@ function sideName(side: 0 | 1, name: string): string {
 
 function safeCard(id: string): Card | undefined {
   try {
-    return cardById(id);
+    return cardByPrintingId(id);
   } catch {
     return undefined;
   }
@@ -83,7 +86,7 @@ export function narrate(state: BattleState, e: BattleEvent): NarrEvent | null {
       return ev({
         kind: 'charge',
         text: e.player === 0 ? `「${name}」をチャージ（AP ${e.ap}）` : `相手がチャージ（AP ${e.ap}）`,
-        side: e.player, cardName: name, duration: 550,
+        side: e.player, printingId: e.cardId, duration: 550,
       });
     }
     case 'chargeDeck':
@@ -102,7 +105,13 @@ export function narrate(state: BattleState, e: BattleEvent): NarrEvent | null {
       return ev({ kind: 'trashToDeck', text: e.player === 0 ? `トラッシュから${e.n}枚をデッキへ` : `相手がトラッシュから${e.n}枚をデッキへ`, side: e.player, amount: e.n, duration: 850 });
     case 'searchToHand': {
       const name = safeCard(e.cardId)?.name ?? '';
-      return ev({ kind: 'search', text: `デッキから「${name}」を手札に！`, side: e.player, cardName: name, duration: 1275 });
+      return ev({
+        kind: 'search',
+        text: `デッキから「${name}」を手札に！`,
+        side: e.player,
+        printingId: e.cardId,
+        duration: 1275,
+      });
     }
 
     case 'skillUsed': {
@@ -115,7 +124,15 @@ export function narrate(state: BattleState, e: BattleEvent): NarrEvent | null {
     }
     case 'castFromDeck': {
       const card = safeCard(e.cardId);
-      return ev({ kind: 'play', text: `デッキから「${card?.name}」が発動！`, card, side: e.player, charIndex: e.charIndex, duration: 1600 });
+      return ev({
+        kind: 'play',
+        text: `デッキから「${card?.name}」が発動！`,
+        card,
+        side: e.player,
+        charIndex: e.charIndex,
+        source: 'deck',
+        duration: 1600,
+      });
     }
     case 'attackDeclared': {
       const name = safeCard(e.cardId)?.name ?? '';

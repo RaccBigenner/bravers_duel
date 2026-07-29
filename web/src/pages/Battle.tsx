@@ -1,5 +1,5 @@
 import {
-  cardById,
+  cardByPrintingId,
   effectiveAttributes,
   eligibleUsingChars,
   isCharAlive,
@@ -202,28 +202,28 @@ let fieldBackKey = 1;
  * 濃く出すと絵が2枚けんかして、盤面のカードも沈むので、あくまで「薄く」。
  * 動きはゆっくりした流れ（drift）と、斜めに通り抜ける光（sheen）の2つだけ。
  */
-function FieldBackdrop({ cardId }: { cardId: string | null }) {
-  const [layers, setLayers] = useState<{ key: number; id: string | null }[]>([]);
+function FieldBackdrop({ printingId }: { printingId: string | null }) {
+  const [layers, setLayers] = useState<{ key: number; printingId: string | null }[]>([]);
   useEffect(() => {
     const key = fieldBackKey++;
     // 直前の1枚だけ残す。古いほうが 'out' になって消えていく
-    setLayers((prev) => [...prev.slice(-1), { key, id: cardId }]);
+    setLayers((prev) => [...prev.slice(-1), { key, printingId }]);
     const timer = window.setTimeout(() => setLayers((prev) => prev.filter((l) => l.key === key)), 1800);
     return () => window.clearTimeout(timer);
-  }, [cardId]);
+  }, [printingId]);
 
   return (
     <>
       {layers.map((l, i) =>
-        l.id ? (
+        l.printingId ? (
           <div
             key={l.key}
             className={`field-back ${i === layers.length - 1 ? 'in' : 'out'}`}
-            style={{ backgroundImage: `url(${IMG(l.id)})` }}
+            style={{ backgroundImage: `url(${IMG(l.printingId)})` }}
           />
         ) : null,
       )}
-      {cardId && <div className="field-sheen" />}
+      {printingId && <div className="field-sheen" />}
     </>
   );
 }
@@ -231,7 +231,7 @@ function FieldBackdrop({ cardId }: { cardId: string | null }) {
 /** 表示状態には仮ID（'charged'）が混ざることがあるので安全に引く */
 function safeCard(id: string) {
   try {
-    return cardById(id);
+    return cardByPrintingId(id);
   } catch {
     return null;
   }
@@ -624,9 +624,12 @@ function BattleInner({ setup, onExit, onRematch }: {
         // 使ったカードは「手札から浮いて → 盤の中央で見せて → トラッシュへ滑る」の一続き。
         // 以前はここが3つの別物（消える手札／中央のreveal／小さいゴースト）に分かれていた。
         flyCard({
-          cardId: current.card?.id,
-          // ドラッグで置いたときは、指を離した場所から続けて飛ぶ（手札へ戻ってから飛び直さない）
-          from: (s === PLAYER && playOriginRef.current) || spot.hand(s),
+          cardId: current.card?.printingId,
+          // デッキ発動は山札から、通常使用は手札（ドラッグ時は指を離した位置）から飛ばす。
+          from:
+            current.source === 'deck'
+              ? spot.deck(s)
+              : (s === PLAYER && playOriginRef.current) || spot.hand(s),
           via: spot.center(),
           to: spot.trash(s),
           hold: Math.max(300, current.duration - 900),
@@ -642,7 +645,7 @@ function BattleInner({ setup, onExit, onRematch }: {
       case 'field':
         // フィールドは情報帯の枠へ置かれて、そのまま残る
         flyCard({
-          cardId: current.card?.id,
+          cardId: current.card?.printingId,
           from: spot.hand(s),
           via: spot.center(),
           to: spot.el('.strip-field'),
@@ -658,7 +661,7 @@ function BattleInner({ setup, onExit, onRematch }: {
         // 装備は対象キャラの足元へ滑り込む
         if (current.card && current.charIndex !== undefined && current.side !== undefined) {
           flyCard({
-            cardId: current.card.id,
+            cardId: current.card.printingId,
             from: spot.hand(s),
             via: spot.center(),
             to: spot.el(`[data-slot="${current.side}-${current.charIndex}"]`),
@@ -822,7 +825,9 @@ function BattleInner({ setup, onExit, onRematch }: {
     const charAct = acts.find((a) => a.type === 'playCharacter');
     if (charAct && card.type === 'character') {
       me.characters.forEach((c, i) => {
-        if (c.name === card.name && isCharAlive(view, PLAYER, i)) pushChar(PLAYER, i, { action: charAct });
+        if (c.oracleId === card.oracleId && isCharAlive(view, PLAYER, i)) {
+          pushChar(PLAYER, i, { action: charAct });
+        }
       });
     }
 
@@ -877,7 +882,7 @@ function BattleInner({ setup, onExit, onRematch }: {
     const aliveOf = (side: 0 | 1) =>
       view.players[side].characters.map((_, i) => i).filter((i) => isCharAlive(view, side, i));
     if (card.valueType === 'attack') {
-      const t = skillEffectOf(card.id)?.targeting ?? 'actor';
+      const t = skillEffectOf(card.oracleId)?.targeting ?? 'actor';
       const indexes =
         t === 'all'
           ? aliveOf(ENEMY)
@@ -1143,7 +1148,7 @@ function BattleInner({ setup, onExit, onRematch }: {
   /** プレビュー中のカードを使う（必要なら対象選択モードへ）。
    * 選べる対象は合法手（legalActions）から導出するので、選択肢の抜けが起きない */
   function playFromPreview(handIndex: number) {
-    const card = cardById(me.hand[handIndex]);
+    const card = cardByPrintingId(me.hand[handIndex]);
     setPreviewHand(null);
 
     // このカードに対応する合法手を集める
@@ -1250,7 +1255,7 @@ function BattleInner({ setup, onExit, onRematch }: {
    * 対象の決まり方はエンジンの効果定義（targeting）が唯一の正。UIで推測しない。
    */
   function attackOutcome(card: SkillCard, value: number) {
-    const targeting = skillEffectOf(card.id)?.targeting ?? 'actor';
+    const targeting = skillEffectOf(card.oracleId)?.targeting ?? 'actor';
     if (targeting === 'choose') return null; // 選ぶカードは対象選択モードで出す
     const indexes =
       targeting === 'all'
@@ -1281,7 +1286,7 @@ function BattleInner({ setup, onExit, onRematch }: {
     );
   }
 
-  const fieldCard = view.field ? cardById(view.field.cardId) : null;
+  const fieldCard = view.field ? cardByPrintingId(view.field.cardId) : null;
 
   const choicePhase = state.phase === 'choice' && isMyTurn && !busy;
 
@@ -1316,7 +1321,7 @@ function BattleInner({ setup, onExit, onRematch }: {
       {/* 卓（プレイマット）。カメラワークで盤と一緒に動く面。
        * フィールドの絵もこの面の上に乗せるので、卓ごと動く */}
       <div className="table-plane">
-        <FieldBackdrop cardId={fieldCard?.id ?? null} />
+        <FieldBackdrop printingId={fieldCard?.printingId ?? null} />
       </div>
 
       {/* ターンバッジ（常時表示） */}
@@ -1401,7 +1406,7 @@ function BattleInner({ setup, onExit, onRematch }: {
           <div className="field-strip">
             <div
               className={`strip-field ${fieldCard ? 'has' : ''}`}
-              onClick={() => fieldCard && setZoomCard(fieldCard.id)}
+              onClick={() => fieldCard && setZoomCard(fieldCard.printingId)}
             >
               {fieldCard ? (
                 <>
@@ -1604,7 +1609,7 @@ function BattleInner({ setup, onExit, onRematch }: {
               const hi = (a as { handIndex: number }).handIndex;
               return (
                 <div key={hi} className="hand-card playable" onClick={() => setPreviewGuard(hi)}>
-                  <CardFrame card={cardById(me.hand[hi])} width={handW} />
+                  <CardFrame card={cardByPrintingId(me.hand[hi])} width={handW} />
                 </div>
               );
             })}
@@ -1635,10 +1640,10 @@ function BattleInner({ setup, onExit, onRematch }: {
       {previewHand !== null && previewHand < me.hand.length && (
         <div className="overlay preview" onClick={() => setPreviewHand(null)}>
           <div className="preview-inner" onClick={(e) => e.stopPropagation()}>
-            <CardFrame card={cardById(me.hand[previewHand])} width={Math.min(300, Math.max(230, window.innerWidth * 0.72))} upright />
+            <CardFrame card={cardByPrintingId(me.hand[previewHand])} width={Math.min(300, Math.max(230, window.innerWidth * 0.72))} upright />
             {(() => {
               // 今使ったらどうなるか（状況で変わるスキルの予想値）
-              const card = cardById(me.hand[previewHand]);
+              const card = cardByPrintingId(me.hand[previewHand]);
               if (card.type !== 'skill' || !isMyTurn) return null;
               const p = predictSkill(state, PLAYER, card);
               if (!p) return null;
@@ -1680,9 +1685,9 @@ function BattleInner({ setup, onExit, onRematch }: {
       {previewGuard !== null && previewGuard < me.hand.length && (
         <div className="overlay preview" onClick={() => setPreviewGuard(null)}>
           <div className="preview-inner" onClick={(e) => e.stopPropagation()}>
-            <CardFrame card={cardById(me.hand[previewGuard])} width={Math.min(300, Math.max(230, window.innerWidth * 0.72))} upright />
+            <CardFrame card={cardByPrintingId(me.hand[previewGuard])} width={Math.min(300, Math.max(230, window.innerWidth * 0.72))} upright />
             {(() => {
-              const card = cardById(me.hand[previewGuard]);
+              const card = cardByPrintingId(me.hand[previewGuard]);
               if (card.type !== 'skill' || !state.pendingAttack) return null;
               const after = Math.max(0, state.pendingAttack.value - card.baseValue);
               return (
@@ -1729,11 +1734,18 @@ function BattleInner({ setup, onExit, onRematch }: {
             {pileList.note && <p className="hint pile-note">{pileList.note}</p>}
             <div className="pile-grid">
               {pileList.cards.length === 0 && <p className="hint">まだカードがありません</p>}
-              {(pileList.grouped ? groupPile(pileList.cards) : [...pileList.cards].reverse().map((id) => ({ id, count: 1 }))).map(
-                ({ id, count }, i) =>
-                  safeCard(id) ? (
-                    <div key={`${id}-${i}`} className="pile-grid-card" onClick={() => setZoomCard(id)}>
-                      <CardFrame card={safeCard(id)!} width={72} upright />
+              {(pileList.grouped
+                ? groupPile(pileList.cards)
+                : [...pileList.cards].reverse().map((printingId) => ({ printingId, count: 1 }))
+              ).map(
+                ({ printingId, count }, i) =>
+                  safeCard(printingId) ? (
+                    <div
+                      key={`${printingId}-${i}`}
+                      className="pile-grid-card"
+                      onClick={() => setZoomCard(printingId)}
+                    >
+                      <CardFrame card={safeCard(printingId)!} width={72} upright />
                       {count > 1 && <span className="pile-x">×{count}</span>}
                     </div>
                   ) : null,
@@ -1790,21 +1802,28 @@ function BattleInner({ setup, onExit, onRematch }: {
  * 山札の本当の並び（次に引く順）は絶対に出さない。並べ替えることで
  * 「何が残っているか」だけが分かり、「次に何を引くか」は分からないようにしている。
  */
-function groupPile(cards: string[]): { id: string; count: number }[] {
+function groupPile(cards: string[]): { printingId: string; count: number }[] {
   const counts = new Map<string, number>();
-  for (const id of cards) counts.set(id, (counts.get(id) ?? 0) + 1);
-  const typeRank = (id: string) => {
-    const c = safeCard(id);
+  for (const printingId of cards) {
+    counts.set(printingId, (counts.get(printingId) ?? 0) + 1);
+  }
+  const typeRank = (printingId: string) => {
+    const c = safeCard(printingId);
     if (!c) return 9;
     return c.type === 'character' ? 0 : c.type === 'equipment' ? 1 : c.type === 'field' ? 2 : 3;
   };
-  const cost = (id: string) => {
-    const c = safeCard(id);
+  const cost = (printingId: string) => {
+    const c = safeCard(printingId);
     return c && c.type === 'skill' ? c.costAp : -1;
   };
   return [...counts.entries()]
-    .map(([id, count]) => ({ id, count }))
-    .sort((a, b) => typeRank(a.id) - typeRank(b.id) || cost(a.id) - cost(b.id) || a.id.localeCompare(b.id));
+    .map(([printingId, count]) => ({ printingId, count }))
+    .sort(
+      (a, b) =>
+        typeRank(a.printingId) - typeRank(b.printingId) ||
+        cost(a.printingId) - cost(b.printingId) ||
+        a.printingId.localeCompare(b.printingId),
+    );
 }
 
 /** バトル内容の要約（ログ用）: 使われたカード・チャージ回数などをイベントから集計 */

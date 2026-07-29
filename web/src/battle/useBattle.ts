@@ -11,7 +11,6 @@
 import {
   actingPlayer,
   applyAction,
-  cardById,
   createBattle,
   isCharAlive,
   legalActions,
@@ -42,23 +41,15 @@ let uniq = 1;
 let savedSpeed = 1;
 
 /** 表示用ステートに演出イベント1件ぶんの変化を適用する */
-function applyEventToView(view: BattleState, ev: NarrEvent): void {
+export function applyEventToView(view: BattleState, ev: NarrEvent): void {
   const s = (ev.side ?? 0) as 0 | 1;
   const p = view.players[s];
 
-  const removeFromHandById = (side: 0 | 1, cardId: string) => {
+  const removeFromHandByPrintingId = (side: 0 | 1, printingId: string) => {
     const hand = view.players[side].hand;
-    const i = hand.indexOf(cardId);
+    const i = hand.indexOf(printingId);
     if (i >= 0) hand.splice(i, 1);
-    else hand.pop(); // 見つからなければ枚数だけ合わせる
   };
-  const removeFromHandByName = (side: 0 | 1, name: string) => {
-    const hand = view.players[side].hand;
-    const i = hand.findIndex((id) => cardById(id).name === name);
-    if (i >= 0) hand.splice(i, 1);
-    else hand.pop();
-  };
-
   switch (ev.kind) {
     case 'turn':
       if (ev.side !== undefined) view.active = ev.side;
@@ -69,7 +60,7 @@ function applyEventToView(view: BattleState, ev: NarrEvent): void {
       break;
     }
     case 'charge': {
-      if (ev.cardName) removeFromHandByName(s, ev.cardName);
+      if (ev.printingId) removeFromHandByPrintingId(s, ev.printingId);
       else p.hand.pop();
       p.ap.push('charged');
       break;
@@ -116,9 +107,9 @@ function applyEventToView(view: BattleState, ev: NarrEvent): void {
       break;
     }
     case 'search': {
-      // デッキから名前で探して手札へ（見つからなくても枚数だけ合わせる）
-      if (ev.cardName) {
-        const i = p.deck.findIndex((id) => cardById(id).name === ev.cardName);
+      // 実際に動いた収録カードを指定する。再録や翻訳があっても名前から推測しない。
+      if (ev.printingId) {
+        const i = p.deck.indexOf(ev.printingId);
         if (i >= 0) p.hand.push(...p.deck.splice(i, 1));
         else if (p.deck.length > 0) p.hand.push(p.deck.pop()!);
       }
@@ -126,7 +117,12 @@ function applyEventToView(view: BattleState, ev: NarrEvent): void {
     }
     case 'play':
     case 'guard': {
-      if (ev.card) removeFromHandById(s, ev.card.id);
+      if (ev.card && ev.source === 'deck') {
+        const i = p.deck.indexOf(ev.card.printingId);
+        if (i >= 0) p.deck.splice(i, 1);
+      } else if (ev.card) {
+        removeFromHandByPrintingId(s, ev.card.printingId);
+      }
       // トラッシュへの移動はカットイン後（呼び出し側が遅延で積む）
       break;
     }
@@ -159,15 +155,15 @@ function applyEventToView(view: BattleState, ev: NarrEvent): void {
     }
     case 'equip': {
       if (ev.side !== undefined && ev.charIndex !== undefined && ev.card) {
-        removeFromHandById(ev.side, ev.card.id);
-        view.players[ev.side].characters[ev.charIndex].equipmentCardId = ev.card.id;
+        removeFromHandByPrintingId(ev.side, ev.card.printingId);
+        view.players[ev.side].characters[ev.charIndex].equipmentCardId = ev.card.printingId;
       }
       break;
     }
     case 'field': {
       if (ev.card && ev.side !== undefined) {
-        removeFromHandById(ev.side, ev.card.id);
-        view.field = { cardId: ev.card.id, owner: ev.side };
+        removeFromHandByPrintingId(ev.side, ev.card.printingId);
+        view.field = { cardId: ev.card.printingId, owner: ev.side };
       }
       break;
     }
@@ -276,7 +272,7 @@ export function useBattle(playerDeck: DeckList, enemyDeck: DeckList) {
       applyEventToView(viewRef.current, ev);
       // 使用カードはカットインの後にトラッシュへ落ちる
       if ((ev.kind === 'play' || ev.kind === 'guard') && ev.card && ev.side !== undefined) {
-        const cardId = ev.card.id;
+        const cardId = ev.card.printingId;
         const side = ev.side;
         later(() => {
           viewRef.current?.players[side].trash.push(cardId);

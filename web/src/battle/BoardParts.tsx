@@ -2,7 +2,7 @@
  * バトル画面の盤面部品（表示専用コンポーネント）。
  * 状態を持つのは親（Battle）で、ここは描画とタップの通知だけを行う。
  */
-import { actorOrder, cardById, effectiveAttributes, isActorLocked, isCharAlive, maxHpOf, type BattleAction, type BattleState, type CharacterCard } from '@bravers/engine';
+import { actorOrder, cardByPrintingId, effectiveAttributes, isActorLocked, isCharAlive, maxHpOf, type BattleAction, type BattleState, type CharacterCard } from '@bravers/engine';
 import { useEffect, useRef, useState } from 'react';
 import { CardFrame } from '../CardFrame';
 import { IMG } from '../cardAssets';
@@ -231,12 +231,12 @@ export function Formation({ side, state, pops, targeting, onTap, koShown, cardW,
               <div className="char-card">
                 {/* 最大HPは装備や効果で変わる（ドッソはトラッシュ枚数で最大20まで伸びる）。
                  * カードに書かれた素のHPを出すと盤面のHPバーと食い違うので、実効値を渡す */}
-                <CardFrame card={cardById(c.cardId)} width={frontW} live={{ hp: maxHp }} />
+                <CardFrame card={cardByPrintingId(c.cardId)} width={frontW} live={{ hp: maxHp }} />
               </div>
               {koVisible && (
                 <img
                   src={IMG('back')}
-                  className={`ko-back ${(cardById(c.cardId) as CharacterCard).size === 'legendaryLarge' ? 'landscape' : ''}`}
+                  className={`ko-back ${(cardByPrintingId(c.cardId) as CharacterCard).size === 'legendaryLarge' ? 'landscape' : ''}`}
                 />
               )}
               {/* 出番の目印は「次に前へ出る1人」だけに付ける。
@@ -289,7 +289,7 @@ export function Formation({ side, state, pops, targeting, onTap, koShown, cardW,
                   <div className="status-row">
                     <span className="hp-num">{hp}/{maxHp}</span>
                     <span className="attr-icons">
-                      {(cardById(c.cardId) as CharacterCard).attribute.slice(0, 5).map((a, k) => (
+                      {(cardByPrintingId(c.cardId) as CharacterCard).attribute.slice(0, 5).map((a, k) => (
                         <img key={`b${k}`} src={IMG(a)} alt={a} title={`属性: ${a}`} />
                       ))}
                       {extras.slice(0, 3).map((a, k) => (

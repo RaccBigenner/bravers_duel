@@ -191,6 +191,7 @@ textarea { resize: vertical; }
 
 .cc-badge { font-size: 10px; padding: 2px 6px; border-radius: 6px; font-weight: 700; line-height: 1.4; }
 .cc-badge.missing { background: var(--bad); color: #fff; }
+.cc-badge.pending { background: #4a72a8; color: #fff; }
 .cc-badge.orphan { background: #b8912d; color: #1a1200; }
 .cc-badge.draft { background: var(--draft); color: #1a002a; }
 .cc-badge.noimg { background: #444b5e; color: #fff; }
@@ -251,6 +252,7 @@ textarea { resize: vertical; }
 .impl-badge { position: absolute; top: 6px; right: 6px; font-size: 11px; padding: 3px 9px; border-radius: 8px; font-weight: 700; }
 .impl-badge.ok { background: rgba(95,208,138,0.2); color: var(--good); }
 .impl-badge.missing { background: var(--bad); color: #fff; }
+.impl-badge.pending { background: #4a72a8; color: #fff; }
 .impl-badge.orphan { background: #b8912d; color: #1a1200; }
 .impl-badge.na { background: var(--panel2); color: var(--muted); }
 

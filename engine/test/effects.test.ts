@@ -10,9 +10,14 @@ import {
   type BattleState,
   type PlayerIndex,
 } from '../src/battle';
-import { ALL_CARDS, cardById } from '../src/cards';
+import {
+  ALL_CARDS,
+  cardByPrintingId,
+  createCardCatalog,
+} from '../src/cards';
 import { containsAll, deckProblems, type DeckList } from '../src/decks';
-import { implementedEffectCount } from '../src/effects';
+import { implementedEffectCount, skillEffectOf } from '../src/effects';
+import { VOL1_EFFECTS } from '../src/effects/vol1';
 import { sampleArchetypeDecks } from '../src/sampleDecks';
 import { DECK_SIZE, type CharacterCard, type SkillCard } from '../src/types';
 
@@ -36,10 +41,10 @@ function giveAp(state: BattleState, player: PlayerIndex, count: number) {
 
 /** そのスキルの条件を満たすバニラ寄りのキャラを探す（クラウディアは攻撃修正があるので除外） */
 function charForSkill(skillId: string): CharacterCard {
-  const skill = cardById(skillId) as SkillCard;
+  const skill = cardByPrintingId(skillId) as SkillCard;
   const chars = ALL_CARDS.filter((c): c is CharacterCard => c.type === 'character');
   const found = chars.find(
-    (ch) => ch.id !== '1-A003-USR' && containsAll(ch.attribute, skill.conditionAttribute),
+    (ch) => ch.printingId !== '1-A003-USR' && containsAll(ch.attribute, skill.conditionAttribute),
   );
   if (!found) throw new Error(`条件を満たすキャラがいない: ${skillId}`);
   return found;
@@ -64,7 +69,7 @@ describe('キャラクターの常時能力', () => {
   // 2026-07-25 社長判断で「攻撃時、APが4以下ならダメージ+2」を削除。
   // アイ（ドロー+1）と組むとβで9戦9勝の壊れコンボになったため。復活防止のテスト。
   it('クラウディア: 攻撃時のダメージ増加はもう無い', () => {
-    const atk = cardById('1-A062-R') as SkillCard; // 神の捌き: 聖雷 cost4 base10（効果なし）
+    const atk = cardByPrintingId('1-A062-R') as SkillCard; // 神の捌き: 聖雷 cost4 base10（効果なし）
     const state = battleWith(['1-A003-USR'], '1-A062-R', [ORUS, OWU], VANILLA_ATK); // 敵はHP13のオルス（ダメージが上限で切れないように）
     state.players[0].ap = [];
     giveAp(state, 0, atk.costAp); // 支払い後 AP0 → 以前はここでダメージ+2だった
@@ -92,7 +97,7 @@ describe('キャラクターの常時能力', () => {
 
   it('ミルオン: アクター時に被ダメージを反射し、自分のデッキを2枚トラッシュ', () => {
     const state = battleWith([ORUS, STOMY], VANILLA_ATK, ['1-A018-R', DADA], VANILLA_ATK);
-    const atk = cardById(VANILLA_ATK) as SkillCard;
+    const atk = cardByPrintingId(VANILLA_ATK) as SkillCard;
     giveAp(state, 0, atk.costAp);
     const defenderDeckBefore = state.players[1].deck.length;
 
@@ -106,9 +111,9 @@ describe('キャラクターの常時能力', () => {
 
 describe('スキルの効果', () => {
   it('属性スケーリング: 大裂斬は斬の数×2を追加', () => {
-    const skill = cardById('1-A059-R') as SkillCard;
+    const skill = cardByPrintingId('1-A059-R') as SkillCard;
     const ch = charForSkill('1-A059-R');
-    const state = battleWith([ch.id], '1-A059-R', [DADA, OWU], VANILLA_ATK);
+    const state = battleWith([ch.printingId], '1-A059-R', [DADA, OWU], VANILLA_ATK);
     giveAp(state, 0, skill.costAp);
     const zan = ch.attribute.filter((a) => a === '斬').length;
 
@@ -117,9 +122,9 @@ describe('スキルの効果', () => {
   });
 
   it('全体攻撃: エンシェントブレスは敵全員に当たる', () => {
-    const skill = cardById('1-A056-R') as SkillCard;
+    const skill = cardByPrintingId('1-A056-R') as SkillCard;
     const ch = charForSkill('1-A056-R');
-    const state = battleWith([ch.id], '1-A056-R', [DADA, OWU], VANILLA_ATK);
+    const state = battleWith([ch.printingId], '1-A056-R', [DADA, OWU], VANILLA_ATK);
     giveAp(state, 0, skill.costAp);
 
     applyAction(state, { type: 'playSkill', handIndex: 0 });
@@ -128,10 +133,10 @@ describe('スキルの効果', () => {
   });
 
   it('防御不可: スチールスキュアーはguardの割り込みが発生しない', () => {
-    const skill = cardById('1-A103-UC') as SkillCard;
+    const skill = cardByPrintingId('1-A103-UC') as SkillCard;
     const ch = charForSkill('1-A103-UC');
     // 相手はguardを持ちAPもあるが、割り込めずそのまま解決される
-    const state = battleWith([ch.id], '1-A103-UC', [DADA, OWU], '1-A124-C');
+    const state = battleWith([ch.printingId], '1-A103-UC', [DADA, OWU], '1-A124-C');
     giveAp(state, 0, skill.costAp);
     giveAp(state, 1, 5);
 
@@ -141,9 +146,9 @@ describe('スキルの効果', () => {
   });
 
   it('AP破壊: スタンショックで敵のAPが1枚減る', () => {
-    const skill = cardById('1-A115-C') as SkillCard;
+    const skill = cardByPrintingId('1-A115-C') as SkillCard;
     const ch = charForSkill('1-A115-C');
-    const state = battleWith([ch.id], '1-A115-C', [DADA, OWU], VANILLA_ATK);
+    const state = battleWith([ch.printingId], '1-A115-C', [DADA, OWU], VANILLA_ATK);
     giveAp(state, 0, skill.costAp);
     const enemyApBefore = state.players[1].ap.length; // 後攻補償の2枚
 
@@ -152,9 +157,9 @@ describe('スキルの効果', () => {
   });
 
   it('チャージ支援: 全力補給でデッキから4枚APになる', () => {
-    const skill = cardById('1-A102-UC') as SkillCard;
+    const skill = cardByPrintingId('1-A102-UC') as SkillCard;
     const ch = charForSkill('1-A102-UC');
-    const state = battleWith([ch.id], '1-A102-UC', [DADA, OWU], VANILLA_ATK);
+    const state = battleWith([ch.printingId], '1-A102-UC', [DADA, OWU], VANILLA_ATK);
     giveAp(state, 0, skill.costAp);
     const apBefore = state.players[0].ap.length;
     const deckBefore = state.players[0].deck.length;
@@ -166,7 +171,7 @@ describe('スキルの効果', () => {
   });
 
   it('復活: ティアグレイスは戦闘不能の味方だけを対象に選んで復活させる', () => {
-    const skill = cardById('1-A040-USR') as SkillCard;
+    const skill = cardByPrintingId('1-A040-USR') as SkillCard;
     const state = battleWith(['1-A019-R', ORUS], '1-A040-USR', [DADA, OWU], VANILLA_ATK);
     const fallen = state.players[0].characters[1]; // オルスを戦闘不能に
     fallen.damage = fallen.maxHp;
@@ -183,9 +188,9 @@ describe('スキルの効果', () => {
   });
 
   it('選択攻撃: コメットスナイプは控えを狙える', () => {
-    const skill = cardById('1-A043-SR') as SkillCard;
+    const skill = cardByPrintingId('1-A043-SR') as SkillCard;
     const ch = charForSkill('1-A043-SR');
-    const state = battleWith([ch.id], '1-A043-SR', [DADA, OWU], VANILLA_ATK);
+    const state = battleWith([ch.printingId], '1-A043-SR', [DADA, OWU], VANILLA_ATK);
     giveAp(state, 0, skill.costAp);
 
     applyAction(state, { type: 'playSkill', handIndex: 0, targetIndex: 1 }); // 控え(1)を指定
@@ -198,7 +203,7 @@ describe('装備カード', () => {
   it('装備すると属性が増えてスキル条件を満たせる・付け替えで古い装備はトラッシュ', () => {
     // 崩れかけの宝剣(斬斬) をダダ(雷氷土)に付けると斬スキルが使える
     const state = battleWith([DADA, OWU], '1-A025-SR', [ORUS, STOMY], VANILLA_ATK);
-    const zanSkill = cardById('1-A123-C') as SkillCard; // パリィ(斬)は使えないはず→装備後に判定が変わることを大裂斬で確認
+    const zanSkill = cardByPrintingId('1-A123-C') as SkillCard; // パリィ(斬)は使えないはず→装備後に判定が変わることを大裂斬で確認
     applyAction(state, { type: 'playEquipment', handIndex: 0, targetIndex: 0 });
     expect(state.players[0].characters[0].equipmentCardId).toBe('1-A025-SR');
 
@@ -291,9 +296,9 @@ describe('サイズ・雷雲召喚・デッキから使用', () => {
   });
 
   it('雷雲召喚: ダメージを与えたキャラの数だけ敵APが減る', () => {
-    const skill = cardById('1-A067-R') as SkillCard;
+    const skill = cardByPrintingId('1-A067-R') as SkillCard;
     const ch = charForSkill('1-A067-R');
-    const state = battleWith([ch.id], '1-A067-R', [DADA, OWU], VANILLA_ATK);
+    const state = battleWith([ch.printingId], '1-A067-R', [DADA, OWU], VANILLA_ATK);
     giveAp(state, 0, skill.costAp);
     const apBefore = state.players[1].ap.length; // 後攻補償2枚
 
@@ -303,11 +308,11 @@ describe('サイズ・雷雲召喚・デッキから使用', () => {
   });
 
   it('炎霊召喚: デッキから炎スキルを本当に使用する（効果込み）', () => {
-    const skill = cardById('1-A054-R') as SkillCard;
+    const skill = cardByPrintingId('1-A054-R') as SkillCard;
     const ch = charForSkill('1-A054-R');
     // デッキを業火斬（斬炎 cost3 base8 バニラ攻撃）で満たしておく
     const decks: [DeckList, DeckList] = [
-      { characterIds: [ch.id], cardIds: ['1-A054-R', ...Array(19).fill('1-A068-R')] },
+      { characterIds: [ch.printingId], cardIds: ['1-A054-R', ...Array(19).fill('1-A068-R')] },
       { characterIds: [ORUS, STOMY], cardIds: Array(20).fill(VANILLA_ATK) },
     ];
     const state = createBattle(decks, 7, { firstPlayer: 0, validate: false });
@@ -315,7 +320,7 @@ describe('サイズ・雷雲召喚・デッキから使用', () => {
     const idx = state.players[0].hand.indexOf('1-A054-R');
     if (idx === -1) return; // シャッフルで手札に来なければスキップ（シード7では来る想定）
 
-    const kagou = cardById('1-A068-R') as SkillCard;
+    const kagou = cardByPrintingId('1-A068-R') as SkillCard;
     applyAction(state, { type: 'playSkill', handIndex: idx });
     // 業火斬がコストなしで発動し、敵アクターに基本値ダメージ
     expect(state.players[1].characters[0].damage).toBe(kagou.baseValue);
@@ -325,10 +330,10 @@ describe('サイズ・雷雲召喚・デッキから使用', () => {
 
 describe('アクター判定のタイミング（全体攻撃の途中で強制交代が起きた場合）', () => {
   it('控えのミルオンは、直前にアクターが倒れても反射しない', () => {
-    const skill = cardById('1-A056-R') as SkillCard; // エンシェントブレス（全体攻撃）
+    const skill = cardByPrintingId('1-A056-R') as SkillCard; // エンシェントブレス（全体攻撃）
     const ch = charForSkill('1-A056-R');
     // 敵: ダダ（アクター・あと1で戦闘不能）、ミルオン（控え）
-    const state = battleWith([ch.id, ORUS], '1-A056-R', [DADA, '1-A018-R'], VANILLA_ATK);
+    const state = battleWith([ch.printingId, ORUS], '1-A056-R', [DADA, '1-A018-R'], VANILLA_ATK);
     const dada = state.players[1].characters[0];
     dada.damage = dada.maxHp - 1;
     giveAp(state, 0, skill.costAp);
@@ -344,10 +349,10 @@ describe('アクター判定のタイミング（全体攻撃の途中で強制�
   });
 
   it('ビコウの控え無敵も攻撃開始時点で判定される（アクターが倒れても後続の全体ダメージを受けない）', () => {
-    const skill = cardById('1-A056-R') as SkillCard;
+    const skill = cardByPrintingId('1-A056-R') as SkillCard;
     const ch = charForSkill('1-A056-R');
     // 敵: ダダ（アクター・あと1）、ビコウ（控え）
-    const state = battleWith([ch.id, ORUS], '1-A056-R', [DADA, '1-A017-R'], VANILLA_ATK);
+    const state = battleWith([ch.printingId, ORUS], '1-A056-R', [DADA, '1-A017-R'], VANILLA_ATK);
     const dada = state.players[1].characters[0];
     dada.damage = dada.maxHp - 1;
     giveAp(state, 0, skill.costAp);
@@ -363,7 +368,7 @@ describe('アクターを動かす効果（飛翔・飛び出る・縦横無尽�
   it('飛翔: 割り込みでアクターを変えると、攻撃は新しいアクターに当たる（回避）', () => {
     // 攻撃側: オルス&ストミー（ファストスタブ）/ 防御側: オウー(アクター)&ストミー、手札は飛翔
     const state = battleWith([ORUS, STOMY], VANILLA_ATK, [OWU, STOMY], '1-A137-C');
-    const atk = cardById(VANILLA_ATK) as SkillCard;
+    const atk = cardByPrintingId(VANILLA_ATK) as SkillCard;
     giveAp(state, 0, atk.costAp);
 
     applyAction(state, { type: 'playSkill', handIndex: 0 });
@@ -412,7 +417,7 @@ describe('全キャラクターパッシブの検証', () => {
   });
 
   it('トランザード: 使うスキルの消費APが+2される', () => {
-    const atk = cardById(VANILLA_ATK) as SkillCard; // cost1
+    const atk = cardByPrintingId(VANILLA_ATK) as SkillCard; // cost1
     const state = battleWith(['1-A004-USR'], VANILLA_ATK, [DADA, OWU], VANILLA_ATK);
     expect(effectiveSkillCost(state, 0, atk)).toBe(atk.costAp + 2);
   });
@@ -422,7 +427,7 @@ describe('全キャラクターパッシブの検証', () => {
     const state = battleWith([ORUS, STOMY], VANILLA_ATK, [DADA, '1-A007-SSR'], VANILLA_ATK);
     const dada = state.players[1].characters[0];
     dada.damage = dada.maxHp - 1;
-    const atk = cardById(VANILLA_ATK) as SkillCard;
+    const atk = cardByPrintingId(VANILLA_ATK) as SkillCard;
     giveAp(state, 0, atk.costAp);
     applyAction(state, { type: 'playSkill', handIndex: 0 });
     expect(isCharAlive(state, 1, 0)).toBe(false);
@@ -442,7 +447,7 @@ describe('全キャラクターパッシブの検証', () => {
     const p = state.players[0];
     p.trash.push(VANILLA_ATK, VANILLA_ATK, VANILLA_ATK);
     p.characters[0].damage = 3;
-    const heal = cardById('1-A130-C') as SkillCard;
+    const heal = cardByPrintingId('1-A130-C') as SkillCard;
     giveAp(state, 0, heal.costAp);
     const deckBefore = p.deck.length;
     applyAction(state, { type: 'playSkill', handIndex: 0, healTargetIndex: 0 });
@@ -455,7 +460,7 @@ describe('全キャラクターパッシブの検証', () => {
     const foe = state.players[1];
     foe.trash.push(VANILLA_ATK, VANILLA_ATK, VANILLA_ATK, VANILLA_ATK, VANILLA_ATK);
     const apBefore = foe.ap.length;
-    const atk = cardById(VANILLA_ATK) as SkillCard; // base4
+    const atk = cardByPrintingId(VANILLA_ATK) as SkillCard; // base4
     giveAp(state, 0, atk.costAp);
     applyAction(state, { type: 'playSkill', handIndex: 0 });
     expect(foe.ap.length).toBe(apBefore + atk.baseValue); // 4枚チャージ
@@ -483,7 +488,7 @@ describe('全キャラクターパッシブの検証', () => {
     const foe = state.players[1];
     foe.characters[0].damage = foe.characters[0].maxHp - 1; // ダダ瀕死
     foe.characters[1].damage = 4; // ソーベルトも傷あり
-    const atk = cardById(VANILLA_ATK) as SkillCard;
+    const atk = cardByPrintingId(VANILLA_ATK) as SkillCard;
     giveAp(state, 0, atk.costAp);
     applyAction(state, { type: 'playSkill', handIndex: 0 });
     expect(isCharAlive(state, 1, 0)).toBe(false);
@@ -492,13 +497,13 @@ describe('全キャラクターパッシブの検証', () => {
 
   it('ミルオン: 反射は「攻撃してきた使用キャラ本人」に返る（控えからの攻撃でも）', () => {
     // ショットインフォレスト(1-A076-R)は控えから使える。使用者=控えのオウー(獣飛風…条件は森=木? 条件確認済みで使えるキャラを動的に)
-    const skill = cardById('1-A076-R') as SkillCard;
+    const skill = cardByPrintingId('1-A076-R') as SkillCard;
     const users = ALL_CARDS.filter(
-      (c): c is CharacterCard => c.type === 'character' && containsAll(c.attribute, skill.conditionAttribute) && c.id !== '1-A003-USR',
+      (c): c is CharacterCard => c.type === 'character' && containsAll(c.attribute, skill.conditionAttribute) && c.printingId !== '1-A003-USR',
     );
     const user = users[0];
     // 攻撃側: アクター=ダダ(条件外)、控え=user。防御側アクター=ミルオン
-    const state = battleWith([DADA, user.id], '1-A076-R', ['1-A018-R', ORUS], VANILLA_ATK);
+    const state = battleWith([DADA, user.printingId], '1-A076-R', ['1-A018-R', ORUS], VANILLA_ATK);
     const eligible = state.players[0].characters[1];
     giveAp(state, 0, skill.costAp);
     const usingIndex = 1;
@@ -529,7 +534,7 @@ describe('アニマの手動発動と使用キャラ選択', () => {
   });
 
   it('控えから使えるスキルは、使用キャラごとに行動が列挙される', () => {
-    const skill = cardById('1-A141-C') as SkillCard; // 飛び出る [飛]
+    const skill = cardByPrintingId('1-A141-C') as SkillCard; // 飛び出る [飛]
     // 飛を持つキャラ2人が控え（アクターは飛なし）
     const state = battleWith([DADA, OWU, STOMY], '1-A141-C', [ORUS], VANILLA_ATK);
     giveAp(state, 0, skill.costAp);
@@ -543,8 +548,32 @@ describe('アニマの手動発動と使用キャラ選択', () => {
 });
 
 describe('効果レジストリとサンプルデッキ', () => {
+  it('効果表はprintingIdではなく安定したoracleIdだけをキーにする', () => {
+    expect(Object.keys(VOL1_EFFECTS)).not.toHaveLength(0);
+    for (const oracleId of Object.keys(VOL1_EFFECTS)) {
+      expect(oracleId).toMatch(/^1-A\d{3}$/);
+    }
+  });
+
   it('効果の実装数が想定どおり（新カード追加時はここを更新）', () => {
     expect(implementedEffectCount()).toBeGreaterThanOrEqual(99);
+  });
+
+  it('架空の再録printingも同じoracleの効果を継承する', () => {
+    const original = cardByPrintingId('1-A037-USR') as SkillCard;
+    const reprint: SkillCard = {
+      ...original,
+      printingId: '99-Z996-C',
+      vol: 99,
+      code: 'Z996',
+      rarity: 'C',
+      name: '別イラスト再録',
+    };
+    const catalog = createCardCatalog([...ALL_CARDS, reprint]);
+    const resolvedReprint = catalog.cardByPrintingId(reprint.printingId) as SkillCard;
+
+    expect(skillEffectOf(resolvedReprint.oracleId)).not.toBeNull();
+    expect(skillEffectOf(resolvedReprint.oracleId)).toBe(skillEffectOf(original.oracleId));
   });
 
   it('アーキタイプデッキは8種あり、全てルールに合格する', () => {
@@ -558,11 +587,11 @@ describe('効果レジストリとサンプルデッキ', () => {
 
 describe('ガードとローテーションの仕様（2026-07-23 社長指摘）', () => {
   it('ガードの軽減はガード使用者本人のみ（全体攻撃の他対象はフルダメージ）', () => {
-    const atk = cardById('1-A053-R') as SkillCard; // トルネード（敵全体）
-    const guard = cardById('1-A122-C') as SkillCard; // ラージシールド
+    const atk = cardByPrintingId('1-A053-R') as SkillCard; // トルネード（敵全体）
+    const guard = cardByPrintingId('1-A122-C') as SkillCard; // ラージシールド
     const atkChar = charForSkill('1-A053-R');
     const guardChar = charForSkill('1-A122-C');
-    const state = battleWith([atkChar.id], '1-A053-R', [guardChar.id, DADA], '1-A122-C');
+    const state = battleWith([atkChar.printingId], '1-A053-R', [guardChar.printingId, DADA], '1-A122-C');
     giveAp(state, 0, atk.costAp);
     giveAp(state, 1, guard.costAp);
 
@@ -577,7 +606,7 @@ describe('ガードとローテーションの仕様（2026-07-23 社長指摘�
   it('ガードはアクターしか使えない（控えだけが条件を満たしても選べない）', () => {
     // P1のアクターDADA(雷氷土)は守を持たず、控えだけが守を持つ
     const guardChar = charForSkill('1-A122-C');
-    const state = battleWith([ORUS], VANILLA_ATK, [DADA, guardChar.id], '1-A122-C');
+    const state = battleWith([ORUS], VANILLA_ATK, [DADA, guardChar.printingId], '1-A122-C');
     giveAp(state, 0, 1);
     giveAp(state, 1, 2);
 
@@ -587,13 +616,13 @@ describe('ガードとローテーションの仕様（2026-07-23 社長指摘�
       expect(guards).toHaveLength(0); // 控えの守ではガードできない
       applyAction(state, { type: 'pass' });
     }
-    const vanilla = cardById(VANILLA_ATK) as SkillCard;
+    const vanilla = cardByPrintingId(VANILLA_ATK) as SkillCard;
     expect(state.players[1].characters[0].damage).toBe(vanilla.baseValue); // 素通しダメージ
   });
 
   it('控えがスキルを使ってもアクターはローテーションしない', () => {
     const benchChar = charForSkill('1-A076-R'); // ショットインフォレスト（控えから使える攻撃）
-    const state = battleWith([ORUS, benchChar.id], '1-A076-R', [DADA, OWU], VANILLA_ATK);
+    const state = battleWith([ORUS, benchChar.printingId], '1-A076-R', [DADA, OWU], VANILLA_ATK);
     giveAp(state, 0, 2);
     expect(state.players[0].actorIndex).toBe(0);
 
@@ -626,7 +655,7 @@ describe('型付きイベントストリーム（UI演出の唯一の情報源�
   it('ガード・ダメージ・交代イベントが正しい位置情報つきで発行される', () => {
     const atkChar = charForSkill('1-A053-R'); // トルネード（敵全体4）
     const guardChar = charForSkill('1-A122-C');
-    const state = battleWith([atkChar.id], '1-A053-R', [guardChar.id, DADA], '1-A122-C');
+    const state = battleWith([atkChar.printingId], '1-A053-R', [guardChar.printingId, DADA], '1-A122-C');
     giveAp(state, 0, 6);
     giveAp(state, 1, 2);
     const seqBefore = state.eventSeq;
@@ -635,8 +664,8 @@ describe('型付きイベントストリーム（UI演出の唯一の情報源�
     applyAction(state, { type: 'playGuard', handIndex: 0 });
 
     const events = state.events.slice(-(state.eventSeq - seqBefore));
-    const atk = cardById('1-A053-R') as SkillCard;
-    const guardCard = cardById('1-A122-C') as SkillCard;
+    const atk = cardByPrintingId('1-A053-R') as SkillCard;
+    const guardCard = cardByPrintingId('1-A122-C') as SkillCard;
     const guard = events.find((e) => e.t === 'guardPlayed');
     expect(guard).toMatchObject({
       t: 'guardPlayed', player: 1, charIndex: 0,
@@ -664,7 +693,7 @@ describe('型付きイベントストリーム（UI演出の唯一の情報源�
 describe('ロックと二重スイッチの修正（2026-07-23 社長指摘）', () => {
   it('ロック中は飛び出る（控えから使える）を控えから使えない', () => {
     const benchChar = charForSkill('1-A141-C'); // 飛
-    const state = battleWith([ORUS, benchChar.id], '1-A141-C', [DADA, OWU], VANILLA_ATK);
+    const state = battleWith([ORUS, benchChar.printingId], '1-A141-C', [DADA, OWU], VANILLA_ATK);
     state.players[0].actorLockUntilTurn = state.turn; // ロック中にする
     const opts = legalActions(state).filter(
       (a) => a.type === 'playSkill' && a.usingIndex !== undefined && a.usingIndex !== 0,
@@ -675,7 +704,7 @@ describe('ロックと二重スイッチの修正（2026-07-23 社長指摘）',
   it('反射で攻撃側アクターが強制交代したら、追加の自動ローテーションはしない', () => {
     // ミルオン(HP十分)に、瀕死のオルスで攻撃 → 反射でオルス戦闘不能 → 強制交代1回だけ
     const state = battleWith([ORUS, STOMY, DADA], VANILLA_ATK, ['1-A018-R', OWU], VANILLA_ATK);
-    const atk = cardById(VANILLA_ATK) as SkillCard;
+    const atk = cardByPrintingId(VANILLA_ATK) as SkillCard;
     const orus = state.players[0].characters[0];
     orus.damage = orus.maxHp - 1; // 反射(4)で確実に落ちる
     giveAp(state, 0, atk.costAp);
@@ -689,9 +718,9 @@ describe('ロックと二重スイッチの修正（2026-07-23 社長指摘）',
 
 describe('飛び込み攻撃のローテーション（2026-07-23 社長決定）', () => {
   it('フォールキック: 控えが飛び込んで攻撃した後、アクターは次へローテーションする', () => {
-    const skill = cardById('1-A126-C') as SkillCard;
+    const skill = cardByPrintingId('1-A126-C') as SkillCard;
     const benchChar = charForSkill('1-A126-C');
-    const state = battleWith([ORUS, benchChar.id, DADA], '1-A126-C', [OWU, DADA], VANILLA_ATK);
+    const state = battleWith([ORUS, benchChar.printingId, DADA], '1-A126-C', [OWU, DADA], VANILLA_ATK);
     giveAp(state, 0, skill.costAp);
     const acts = legalActions(state).filter(
       (a) => a.type === 'playSkill' && a.usingIndex === 1,
@@ -708,11 +737,11 @@ describe('飛び込み攻撃のローテーション（2026-07-23 社長決定�
 
 describe('控えだけを狙う攻撃とガード（2026-07-23 社長決定）', () => {
   it('コメットスナイプで控えを指定した時、相手はガードで割り込めない', () => {
-    const skill = cardById('1-A043-SR') as SkillCard;
+    const skill = cardByPrintingId('1-A043-SR') as SkillCard;
     const ch = charForSkill('1-A043-SR');
     // 相手はguardを潤沢に持っている（ラージシールド+守キャラ）
     const guardChar = charForSkill('1-A122-C');
-    const state = battleWith([ch.id], '1-A043-SR', [guardChar.id, DADA], '1-A122-C');
+    const state = battleWith([ch.printingId], '1-A043-SR', [guardChar.printingId, DADA], '1-A122-C');
     giveAp(state, 0, skill.costAp);
     giveAp(state, 1, 4);
 
@@ -725,9 +754,9 @@ describe('控えだけを狙う攻撃とガード（2026-07-23 社長決定）',
 describe('スタンダードデッキの健全性（ゼロから再設計版）', () => {
   it('全デッキのスキルは、チームの誰かが素の属性で使える', () => {
     for (const d of sampleArchetypeDecks()) {
-      const teams = d.deck.characterIds.map((id) => (cardById(id) as CharacterCard).attribute);
+      const teams = d.deck.characterIds.map((id) => (cardByPrintingId(id) as CharacterCard).attribute);
       for (const cid of new Set(d.deck.cardIds)) {
-        const card = cardById(cid);
+        const card = cardByPrintingId(cid);
         if (card.type !== 'skill') continue;
         const usable = teams.some((attrs) => containsAll(attrs, card.conditionAttribute));
         expect(usable, `${d.name}: ${card.name}(${card.conditionAttribute.join('/')}) が誰にも使えない`).toBe(true);
@@ -753,7 +782,7 @@ describe('強制チャージルール（2026-07-23 社長決定）', () => {
   });
 
   it('手札4枚以下ならチャージなしでターンを終えられる', () => {
-    const skill = cardById(VANILLA_ATK) as SkillCard;
+    const skill = cardByPrintingId(VANILLA_ATK) as SkillCard;
     const state = battleWith([ORUS], VANILLA_ATK, [DADA, OWU], VANILLA_ATK);
     giveAp(state, 0, skill.costAp);
     applyAction(state, { type: 'playSkill', handIndex: 0 }); // 手札4枚に
