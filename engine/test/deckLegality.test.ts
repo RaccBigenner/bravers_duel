@@ -268,7 +268,7 @@ describe('フォーマット版の違いで判定が変わる', () => {
     expect(checkDeckLegality(deck(THREE_NORMAL), v3).formatVersion).toBe(3);
   });
 
-  it('境界値: v3（同名3枚まで）は3枚合格・4枚不合格', () => {
+  it('境界値: v3（同名3枚まで）は3枚合格・4枚不合格', () => { // stale-ok: 公式ルールではなく架空フォーマットv3の上限
     const three = deck(THREE_NORMAL, mainDeck(40, 3));
     expect(checkDeckLegality(three, v3).legal).toBe(true);
     expect(codes(oneCardAtFour, v3)).toEqual(['MAX_COPIES']);
