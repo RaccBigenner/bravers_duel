@@ -103,12 +103,12 @@ P5のコミュニティガイドライン、通報画面、管理設計は早く
 
 ### OLG-002 基準ブランチを統合
 
-状態: Ready
+状態: 完了（`feat/online-foundation`）
 
-- `feat/ingame-fx`と`main`双方の固有commitを確認
-- 統合順とonline作業ブランチを決める
-- current changesを安全にcommitしてから統合
-- test/build/leak check
+- `feat/ingame-fx`を土台にonline作業ブランチを作成
+- Phase 0変更を`03229ce`として安全に分離
+- `main`を`6d8f21a`で統合し、双方の既存変更を維持
+- engine/web test、web/admin build、leak check、admin/Functions型検査を通過
 
 受入:
 
@@ -267,5 +267,5 @@ P8 format:
 5. OLG-005 version/replay
 6. OLG-101 server/protocol/supabase scaffold
 
-OLG-002が済むまでは、大規模なserver scaffoldを始めない。現在のPhase 0変更は小さく分離して
-commitできる状態を保つ。
+OLG-002は完了済み。OLG-003、OLG-004、OLG-005でカード同一性、format、再現性の土台を
+固めてから、大規模なserver scaffoldへ進む。
