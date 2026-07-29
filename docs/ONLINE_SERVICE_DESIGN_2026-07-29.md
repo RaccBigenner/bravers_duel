@@ -1,8 +1,8 @@
 # BRAVER'S DUEL オンライン常設版 基本設計
 
-- 版: v0.2
+- 版: v0.3
 - 作成日: 2026-07-29
-- 状態: 実装前の設計案
+- 状態: P0実装中（OLG-003完了、以降は設計）
 - 対象: 無料のブラウザゲームとして常設公開する次フェーズ
 - ルールの正本: `docs/GAME_RULES.md`
 - この文書の役割: プロダクト、オンライン機能、永続化、運用の基本設計
@@ -45,7 +45,7 @@ Phase 2として分けるが、一般公開前には上の一連を通して検�
 - random/simple/searchのAIと自動対戦シミュレーターがある
 - モバイル縦画面のバトルUI、カード物理演出、ドラッグ/タップ操作がある
 - カード制作管理画面、未公開データ分離、公開漏れ検査がある
-- 2026-07-29時点で`npm test`の99件と本番ビルドが通る
+- 2026-07-29時点で`npm test`の188件と本番ビルドが通る
 
 特に、以下はオンライン化後もそのまま中核として使える。
 
@@ -69,7 +69,7 @@ Phase 2として分けるが、一般公開前には上の一連を通して検�
 - PWA manifest、Service Worker、IndexedDB
 - フォーマット、禁止制限、ルール/カード版の固定
 - プレイヤー別の秘匿情報投影
-- Web UIの自動テスト、再接続テスト、同時取引テスト
+- Web UIのE2Eテスト、再接続テスト、同時取引テスト
 
 今回の構想は「PvPを少し足す」規模ではなく、既存ゲームの外側へ**ライブサービス基盤を新設するフェーズ**として扱う。
 
@@ -87,7 +87,7 @@ Phase 2として分けるが、一般公開前には上の一連を通して検�
 10. キャラクター枠へ同じキャラクターを複数枚選ぶことはできない
 
 大型2枠と同名キャラクターの2回復は、既存エンジンにも実装済みだった。今回、正本の
-`GAME_RULES.md`をv0.10へ更新し、デッキ検証も「3枠必須」「場は同名不可」
+`GAME_RULES.md`をv0.11へ更新し、デッキ検証も「3枠必須」「場は同名不可」
 「40枚側は同名4枚」へ同期した。
 LSRキャラクターが必ず`legendaryLarge`になっていることもカードデータテストで固定する。
 
@@ -194,7 +194,8 @@ duel_space_actor
 - 対戦中の人物から、許可された試合の観戦へ入れる
 - クイック対戦、ルーム、大会、ショップは店内の常設ボタンとして置く
 
-PCでは店内の右側へCHチャットを常設し、スマホでは下から開くシートにする。
+CHチャットを開放するG5 Community Release以降は、PCでは店内の右側へ常設し、
+スマホでは下から開くシートにする。G4 Public Online Betaまではチャット領域自体を表示しない。
 
 ### 3.4 CHオープンチャット
 
@@ -335,8 +336,8 @@ npc_node
 
 `QueueDO`は、自分、確保済み、heartbeat切れを除いた有効な待機者から表示を作る。
 表示は5秒程度キャッシュし、「参加直前に別の対戦が成立する場合があります」と添える。
-待機中もデュエルスペースとCHチャットを閲覧でき、成立時は画面内通知、設定に応じた音と
-振動で知らせる。
+待機中もデュエルスペースを閲覧でき、G5 Community Release以降はCHチャットも閲覧できる。
+成立時は画面内通知、設定に応じた音と振動で知らせる。
 
 レートは**Glicko-2**を採用する。
 
@@ -645,7 +646,8 @@ BattleCardInstance
   1試合の中だけ存在する秘匿可能なカード
 ```
 
-現行の`1-A001-LSR`は`printing_id`として扱う。再録やエラッタを安全に扱うため、第2弾公開前に`oracle_id`を導入する。
+現行の`1-A001-LSR`は`printing_id`として扱う。2026-07-29のOLG-003で第1弾144枚へ
+`oracle_id`を導入済みで、再録やエラッタでもゲーム上の同一性を維持する。
 
 コピー上限は`printing_id`ではなく`oracle_id`で数え、再録カードを混ぜて上限を回避できないようにする。
 
@@ -672,9 +674,12 @@ card_instance
 - `AVAILABLE`
 - `TRADE_ESCROW`
 - `MATCH_LOCKED`
-- `SOLD_TO_SYSTEM`
+- `SYSTEM_STOCK`
 - `FROZEN`
 - `REVOKED`
+
+`SYSTEM_STOCK`では`current_owner_account_id = null`とし、対応する`single_market_inventory`行だけが
+NPC店の保管先とbucketを表す。プレイヤーアカウントをシステム所有者として流用しない。
 
 画面には長いUUIDではなく、`#000123`のような公開シリアルを見せる。
 
@@ -686,7 +691,9 @@ card_instance
 ownership_event
   event_id
   instance_id
+  from_owner_type: ACCOUNT | SYSTEM_SHOP | NONE
   from_account_id
+  to_owner_type: ACCOUNT | SYSTEM_SHOP | NONE
   to_account_id
   reason
   reference_type
@@ -699,6 +706,10 @@ ownership_event
 
 原則:
 
+- `from/to_account_id`は対応するowner typeが`ACCOUNT`の時だけ必須にし、
+  `SYSTEM_SHOP`と未発行をnullだけで区別しない
+- seedは`NONE → SYSTEM_SHOP`、売却は`ACCOUNT → SYSTEM_SHOP`、購入は
+  `SYSTEM_SHOP → ACCOUNT`として記録する
 - 過去行を更新/削除しない
 - 誤発行の訂正は補償イベントで行う
 - 現在所有者は`card_instance`へ投影して高速参照する
@@ -876,6 +887,252 @@ bp_ledger
 - 「重複だけ選ぶ」機能
 
 売値は、150 BPパックの期待売却総額が45〜60 BP以下になるよう設定し、購入→即売却でBPが増えないことを自動テストする。
+
+### 6.6 NPCシングルカード店
+
+リアルショップのバラ売りに相当する機能をPhase 2へ入れる。プレイヤーが欲しいカードを
+確実に入手できる導線を作る一方、初期版は**NPCが有限在庫を持つ固定価格店**とする。
+
+初期版の境界:
+
+- プレイヤーが価格を決める出品、買い注文、オークションは置かない
+- プレイヤー間のBP売買は行わない
+- ユーザー別価格、行動履歴に基づく個別値引き、リアルタイム価格変更は行わない
+- 全プレイヤーへ、同じ`price_version`の同じ価格を提示する
+- 同じ`printing_id`はまとめて表示し、購入する具体的な個体はサーバーが自動選択する
+- 購入後は割り当てられた`instance_id`と公開シリアルを取得履歴で確認できる
+- 特殊加工、プロモ、配布限定、`onboarding_bound`は、個別に許可するまで売買対象外
+
+Steam Community Marketのcommodity itemは、同一アイテムをまとめて表示し購入時に具体的な
+個体を自動選択するUIの参考になる。ただし、本作ではプレイヤー注文板とユーザー価格を採用せず、
+取引相手は常に運営NPCとする。
+
+#### 在庫と個体移転
+
+在庫は実在する`card_instance`だけで構成し、在庫切れ時に購入要求を契機として発行しない。
+
+- プレイヤーの売却: `account → SYSTEM_SHOP`へ個体を移転し、BPを付与
+- プレイヤーの購入: `SYSTEM_SHOP → account`へ在庫個体を移転し、BPを差し引く
+- どちらも`ownership_event`と`bp_ledger`へ同じ`single_market_order_id`を残す
+- 個体は削除せず、`SYSTEM_STOCK`の個体を`SELLABLE`と`ARCHIVE`に分ける
+- プレイヤー売却とseedを混同せず、取得理由を`PLAYER_SALE`/`SYSTEM_SEED`として所有イベントに残す
+- `SELLABLE`だけを販売可能在庫として表示する
+- 同じ`printing_id`の割当ては原則として`entered_stock_at`が古い個体から行う
+- 個体番号を指定した購入、低いシリアル番号への追加価格はMVP外
+
+`SYSTEM_SEED`は、サービス開始時、新弾追加時、または運営レビューで承認した安全在庫補充時に、
+版付きの`single_market_seed_batch`から作る。弾、Printing、枚数、理由、承認者を監査ログへ残し、
+在庫切れへの購入要求を契機として自動実行しない。通常の補充元はプレイヤーの売却とし、
+安全在庫補充には期間/弾ごとの発行hard capを設ける。
+
+`SELLABLE`が目標在庫の2倍を超える場合、超過分は`ARCHIVE`へ移す。毎日04:00 JSTの更新時に、
+`SELLABLE`が目標未満なら`ARCHIVE`の古い個体から目標数まで戻す。アーカイブは削除ではなく
+システム保管であり、発行数・所有履歴・在庫総数の整合検査に含める。seed、archive復帰、
+手動在庫移動はすべて管理監査ログへ残す。
+
+買い占め対策として、NPC店から成立した購入は1アカウント・同一`oracle_id`につき
+直近7日間で合計5個体までとする。キャラクター枠1枚＋40枚側4枚を一度に満たせる初期値であり、
+再録Printingを混ぜても購入枠は共通とする。パック、スターター、交換で得た個体はこの購入枠へ
+数えず、同一Oracleの総所持数自体には上限を設けない。期間と上限は版付き設定にし、
+注文実行時はアカウントとOracleの組を直列化して並行注文による超過を防ぐ。
+
+#### 初期β価格と在庫
+
+用語の混同を避け、プレイヤーがNPCへ払う額を「販売価格」、NPCからプレイヤーへ払う額を
+「買取価格」と呼ぶ。
+
+| レアリティ | 販売基準価格 | 買取基準価格 | Printingごとの目標在庫 |
+|---|---:|---:|---:|
+| C | 15 BP | 4 BP | 12枚 |
+| UC | 30 BP | 8 BP | 10枚 |
+| R | 60 BP | 14 BP | 8枚 |
+| SR | 120 BP | 28 BP | 6枚 |
+| SSR | 240 BP | 50 BP | 4枚 |
+| USR | 360 BP | 80 BP | 2枚 |
+| LSR | 480 BP | 110 BP | 1枚 |
+
+正式な排出率が確定するまでは仮値とし、次の経済不変条件を価格公開の必須ゲートにする。
+
+- 150 BPブースターの通常時、保証時、天井到達時を含む全排出状態で、現在の買取価格による
+  期待清算額を60 BP以下にする
+- 1200 BPスターターは、売却可能な全個体を清算しても600 BP以下にする
+- 同じPrintingの買取価格は販売価格を常に下回る
+- 購入直後の同一個体を売却してBPが増える組合せを作らない
+- 条件に違反する価格版は全体を不採用にし、直前の正常な価格版を維持する
+
+初期のNPC買取上限は、1アカウント150 BP/日、同一`oracle_id`は4個体/日とし、04:00 JSTに
+リセットする。全体の日次買取予算は
+`買取可能アカウント数 × 150 BP`と運営設定のhard capの小さい方にする。招待人数を増やす前に
+hard capも更新し、予算を使い切った場合は次のリセットまで新しい買取quoteを発行しない。
+確定済みquoteも注文実行時に予算を行ロックして消費し、予算を超える部分成立はさせない。
+
+#### 価格更新
+
+価格は次の4段階で開放する。
+
+1. **固定価格＋raw集計**: G2では上表の基準価格だけを使い、在庫と適格な成立売買を蓄積する
+2. **policy承認**: rawデータを基に、補正関数、標本条件、整数丸め、clamp順を
+   `single_market_pricing_policy.policy_version`として運営承認する。承認前は候補価格を計算しない
+3. **shadow計算**: 承認済みpolicyで最低14日、原則2〜4週間、候補価格を保存するが
+   画面と注文には反映しない
+4. **日次動的価格**: G8 Live Operationsでのみ、経済テスト、shadow review、復旧訓練の
+   通過後に対象弾/レアリティ単位のfeature flagで有効化する
+
+候補価格は、Printingの在庫補正とOracleの14日需要補正から求める。
+
+```text
+candidate =
+  rarity_base_sale_or_buyback_price
+  × inventory_factor(printing_id)
+  × demand_factor(oracle_id, trailing_14_days)
+```
+
+- `inventory_factor`は、実際に購入可能な`SELLABLE`在庫と目標在庫から算出する
+- `demand_factor`は成立した購入者数と売却者数を`oracle_id`単位で集計する
+- 販売価格と買取価格はそれぞれの基準価格から別々に計算し、経済不変条件を最後に再検査する
+- `business_date + oracle_id + account_id`を1観測行に集約し、同日の売買方向をbooleanで持つ。
+  14日標本は日別件数の加算ではなく、この観測からアカウント集合を再構成する
+- アカウント保護済み、チュートリアル完了、作成7日以上で、不正/凍結対象外の取引だけを
+  qualified unique需要へ含める
+- seed、archive移動、取消、失敗注文、運営アカウントは需要観測へ含めない
+- Oracleごとに直近14日のqualified unique購入者/売却者の和集合が20アカウント未満なら、
+  在庫補正を含め候補価格を直前価格から動かさない。20はpolicy version内の初期仮値とする
+- 04:00 JSTは、前営業日の需要集計確定 → archive復帰 → 復帰後`SELLABLE`在庫snapshot →
+  候補価格検査/公開、の順で実行する
+- 毎日04:00 JSTに全員分を一括更新し、日中は変更しない
+- 計算順は`基準価格 × factor` → 基準価格の80〜120% clamp →
+  直前価格の±5% clamp → 承認済み整数丸め → 経済不変条件検査とする
+- 丸め後も両clampの共通範囲を出ない丸め規則をpolicyで必須にする
+- 端数処理、補正係数、需要期間、標本下限は版付き設定にし、管理画面から無監査で変更できなくする
+
+価格へ勝率、デッキ採用率、プレイヤーのBP残高、購入履歴、端末、地域を直接使わない。
+「よく勝つカードだから高い」「この人なら払えそうだから高い」という不公平を避ける。
+
+#### quoteと注文
+
+画面表示価格だけを信用せず、注文前にサーバーが短時間有効なquoteを返す。
+
+```text
+single_market_quote
+  quote_id
+  account_id
+  side: BUY_FROM_NPC | SELL_TO_NPC
+  printing_id
+  sell_instance_ids: nullable
+  quantity
+  observed_sellable_quantity
+  unit_price
+  total_bp
+  price_version
+  expires_at
+
+single_market_order
+  order_id
+  account_id
+  quote_id
+  idempotency_key
+  status
+  total_bp
+  created_at
+  completed_at
+
+single_market_order_item
+  order_id
+  side
+  oracle_id
+  printing_id
+  instance_id
+  quantity
+  settled_at
+```
+
+関連テーブルの最低限の責務:
+
+```text
+single_market_inventory
+  instance_id, printing_id, bucket, entered_stock_at, version
+
+single_market_price_snapshot
+  price_version, printing_id, sale_price, buyback_price,
+  base prices, factors, valid_from, calculation_input_hash
+
+single_market_pricing_policy
+  policy_version, inventory_factor_config, demand_factor_config,
+  demand_window_days, qualified_sample_floor, rounding_rule,
+  daily_clamp, base_clamp, status, approved_by, approved_at
+
+single_market_demand_daily
+  business_date, oracle_id, qualified_unique_buyers,
+  qualified_unique_sellers, excluded_observations
+
+single_market_demand_observation
+  business_date, oracle_id, account_id, bought, sold,
+  qualified, exclusion_reason
+
+single_market_daily_budget
+  business_date, account_id/null(global), limit_bp, consumed_bp, version
+
+single_market_purchase_guard
+  account_id, oracle_id, version
+
+single_market_seed_batch
+  seed_batch_id, content_version, printing_id, quantity,
+  reason, approved_by, executed_at
+```
+
+- quoteの初期有効期間は60秒
+- 購入quoteはPrinting、数量、価格だけを固定し、具体的な個体と在庫を予約しない。
+  観測後に在庫が変わっても、同じPrintingの在庫が数量分あればquoteを継続できる
+- 購入実行時に同じPrintingの`SELLABLE`を`entered_stock_at`順でロックし、具体的な個体を割り当てる
+- 売却quoteだけが`sell_instance_ids`と価格を固定するが、match/escrowロックや日次予算を予約しない
+- 同一Oracleの購入注文は、`account_id + oracle_id`で一意な`single_market_purchase_guard`を
+  `INSERT ... ON CONFLICT`後に`FOR UPDATE`し、必ず同じ順序で直列化する
+- guard lock取得後の別statementでDBの`clock_timestamp()`を1回だけ取得して基準時刻とする。
+  直前168時間の半開区間`(基準時刻 - 168時間, 基準時刻]`に`settled_at`が入る
+  `BUY_FROM_NPC`のorder item数量と
+  今回の注文数量の合計を判定する
+- NPCシングル注文transactionはPostgreSQL `READ COMMITTED`を使い、guard待機後の再集計で
+  直前transactionのcommitを見えるようにする。`REPEATABLE READ`の古いsnapshotは使わない
+- 成立時のorder item `settled_at`もDBの`clock_timestamp()`で保存し、アプリ時計を使わない
+- 売却/譲渡済みの購入個体も期間内は数え、失敗/取消注文は数えない。冪等キーが既に終端なら
+  上限判定より先に保存済み結果を返す
+- 注文実行時にquote期限、価格版、BP残高、同一Oracleの直近7日購入上限、個体所有、
+  カードロック、在庫、日次予算をサーバーで再検査する
+- 購入は在庫個体とBP残高、売却は所持個体と日次予算をDBで行ロックする
+- BP増減、個体移転、所有イベント、在庫bucket、注文完了を1トランザクションで確定する
+- 全部成功するか1つも変更しないかのどちらかとし、一部成立を禁止する
+- `account_id + idempotency_key`へ一意制約を付け、再送には最初の確定結果を返す
+- 成功と終端エラーは注文結果として保存し、一時障害だけを同じキーで再試行可能にする
+- 競合で在庫がなくなった場合は代替Printingへ勝手に変更せず、新しいquoteを求める
+
+#### UI/UX
+
+- カード詳細とショップに「買う」「売る」を置き、現在価格、在庫数、次回在庫更新時刻を表示する。
+  動的価格を開放した場合だけ次回価格更新時刻も表示する
+- `SELLABLE`在庫ゼロは「売り切れ」、目標在庫より少ない固定価格期は
+  「在庫不足・カード買取中」と表示する
+- 動的価格期に実際の買取価格が買取基準価格を上回る場合だけ「買取強化中」と表示する
+- 「デッキに不足」「所持0枚」「現在使用中」で絞り込める
+- 購入確認では購入後の所持数、残高、割当て個体は自動選択であることを示す
+- 売却確認では影響を受ける保存デッキ、不足枚数、使用不能になるデッキを名前付きで示す
+- 売却後にデッキが使用不能になる場合は再確認し、該当デッキを自動で書き換えない
+- quote切れ、在庫競合、日次予算終了は、入力を失わせず再取得できるエラーにする
+- MVPでは相場ランキング、価格チャート、値上がり通知、シリアル指定を置かない
+
+#### 運用と停止
+
+以下を独立したfeature flagにする。
+
+- `single_market_read`: 商品閲覧
+- `single_market_buy_from_npc`: NPCから購入
+- `single_market_sell_to_npc`: NPCへ売却
+- `single_market_dynamic_pricing`: G8だけで有効化できる日次動的価格
+- `single_market_seed`: seed batch実行
+
+異常時は、動的価格だけを止めて直前の正常な固定snapshotを使う、買取だけ止める、全注文を
+止めて閲覧だけ残す、の順に影響を限定する。価格更新が26時間以上失敗した場合は動的価格を
+自動停止し、直前の正常snapshotへ戻して運営へ通知する。停止前に完了した注文は巻き戻さず、
+未完了quoteは安全側で失効させる。
 
 ---
 
@@ -1356,7 +1613,7 @@ seedと完全ログは試合終了までプレイヤーへ渡さない。
 | 所持 | `card_instance`, `ownership_event`, `card_lock` |
 | BP | `bp_wallet`, `bp_ledger` |
 | デッキ | `deck`, `deck_revision`, `deck_entry`, `deck_draft` |
-| ショップ | `starter_definition`, `pack_definition`, `shop_order`, `pack_result` |
+| ショップ | `starter_definition`, `pack_definition`, `shop_order`, `pack_result`, `single_market_inventory`, `single_market_pricing_policy`, `single_market_price_snapshot`, `single_market_demand_observation`, `single_market_demand_daily`, `single_market_quote`, `single_market_order`, `single_market_order_item`, `single_market_daily_budget`, `single_market_purchase_guard`, `single_market_seed_batch` |
 | 交換 | `trade_offer`, `trade_escrow_item`, `trade_acceptance` |
 | マッチ | `match`, `match_player`, `match_result`, `match_reward` |
 | レート | `rating`, `rating_history` |
@@ -1380,6 +1637,16 @@ seedと完全ログは試合終了までプレイヤーへ渡さない。
 11. 1つの`bracket_match`に確定結果は1つ
 12. 同じ所持個体をキャラクター枠と40枚側へ二重割当てしない
 13. 非本番serviceから本番DB/DOへ接続しない
+14. NPCシングル注文は、BP、全対象個体、所有イベント、在庫が全部移るか、1つも変わらないか
+15. `SYSTEM_STOCK`の実在個体と`single_market_inventory`行は双方向に必ず1対1で、
+    `SELLABLE`/`ARCHIVE`のどちらか一方だけを持つ
+16. 1つの`account_id + idempotency_key`にシングル注文結果は1つ
+17. 1つの`price_version`では、同じPrintingの価格を全プレイヤーへ同一にする
+18. NPCからの成立購入は、1アカウント・同一Oracleにつき直近7日で5個体以下
+19. `SYSTEM_STOCK`以外の個体は`single_market_inventory`行を持たず、
+    プレイヤー所有中は`current_owner_account_id`が必須
+20. 需要観測は`business_date + oracle_id + account_id`につき1行で、14日unique数を日別件数の
+    単純加算で水増ししない
 
 これらはアプリコードだけでなく、`UNIQUE`、`FOREIGN KEY`、`CHECK`、行ロック、DBトランザクションで守る。
 
@@ -1398,17 +1665,17 @@ seedと完全ログは試合終了までプレイヤーへ渡さない。
 - 片手で主要導線を触れる
 - safe area対応
 - 下部ナビ
-- バトルログ、カード詳細、CHチャット、大会表はbottom sheet
+- バトルログ、カード詳細、大会表はbottom sheet。CHチャットはG5以降だけ追加
 
 PC:
 
 - 共通の縦長盤面を中央または左へ置き、比率を崩して横へ引き伸ばさない
-- 余白へバトルログ、カード詳細、CHチャット、観戦人数、大会表のタブを置く
+- 余白へバトルログ、カード詳細、観戦人数、大会表のタブを置き、CHチャットはG5以降だけ追加
 - デッキ編集は一覧と詳細を2ペイン
 - デュエルスペースは横方向の余白を活かす
 - キーボード操作を提供
 
-対戦中の直接自由チャットは初期には置かない。PC右側へCHチャットを出す場合も、
+対戦中の直接自由チャットは初期には置かない。G5以降にPC右側へCHチャットを出す場合も、
 ブロック/制裁を含むデュエルスペースCHの同じ機能を表示し、別の無監督チャットを作らない。
 
 ### 13.2 操作
@@ -1617,7 +1884,7 @@ battle.event.damage
 
 ### 17.1 エンジン
 
-- 現99テストを維持
+- 現114テストを維持
 - serialize → restore → 同じ行動で同じ結果
 - seed + command logから同じ最終hash
 - property-based test
@@ -1658,6 +1925,22 @@ battle.event.damage
 - 報酬/離脱保証を100回再送しても1回だけ付与
 - 同一ペア逓減と04:00 JSTの日次切替
 - 初回無償スターターを売却/交換できない
+- シングル購入を並列実行しても在庫個体を二重販売しない
+- シングル売却を並列実行しても同じ個体と買取予算を二重消費しない
+- quote期限切れ、価格版切替、在庫競合、デッキ/match/escrowロックを安全に拒否する
+- 同じシングル注文を100回再送しても、BPと個体を1回だけ移転する
+- 再録Printingを混ぜた並行注文でも、同一Oracleの直近7日NPC購入数が5個体を超えない
+- 168時間境界の直前/一致/直後と、先にtransaction開始してguard待機した注文を含む
+  同一Oracleの並行初回注文で購入上限を一貫して判定する
+- パック等で同一Oracleを6個体以上所持していても総所持上限として誤拒否しない
+- 通常/保証/天井を含む全pack状態の期待清算額が60 BP以下
+- 全starter definitionの最大清算額が600 BP以下
+- 価格更新が直前±5%、基準価格の80〜120%、1日1回、全員同価格を破れない
+- Oracleごとのqualified unique和集合20未満、同一人物反復、不適格アカウント、
+  失敗注文がshadow候補を動かさない
+- seed → 売買 → archive → 復帰後も、発行数と個体状態の総和が一致する
+- 各シングル市場kill switchを注文途中で切っても部分成立しない
+- DB commit前後の障害注入と再試行でBP/個体/注文の整合が崩れない
 
 ### 17.5 Web
 
@@ -1754,6 +2037,14 @@ CIはrootでengineだけでなく、web、server、migration、E2E、漏洩検�
 - 2個目スターターまでのアクティブ日
 - 日次上限到達率
 - 離脱最低保証の発生/反復率
+- シングル商品閲覧→quote→成立率と、quote失効/競合理由
+- Printing別の`SELLABLE`/`ARCHIVE`在庫、売切れ時間、補充までの時間
+- シングル販売によるBP消費とNPC買取によるBP発行、日次予算消化率
+- Oracle別のqualified unique購入者/売却者と、除外された需要観測数
+- 販売/買取spread、pack期待清算額、starter最大清算額
+- 直近7日の同一Oracle購入上限、個体ロック、日次上限、不正検知による注文拒否率
+- 価格候補と実価格の差、±5%/±20% clamp発生数、価格更新失敗時間
+- seed/archive移動量、台帳不一致、二重所有、在庫不足アラート
 
 初期目標:
 
@@ -1766,6 +2057,9 @@ CIはrootでengineだけでなく、web、server、migration、E2E、漏洩検�
 - 初回パックまで中央値4〜7戦
 - 2個目スターターまで中央値7〜14アクティブ日
 - 日次BP上限到達者1〜3%
+- シングル注文の二重移転/部分成立 0件
+- シングル市場由来のBP台帳不一致/個体在庫不一致 0件
+- pack期待清算額 全状態60 BP以下、starter最大清算額600 BP以下
 
 サンプル数が少ない間は率だけで断定せず、実際の離脱画面とレビューを一緒に見る。
 
@@ -1776,12 +2070,12 @@ CIはrootでengineだけでなく、web、server、migration、E2E、漏洩検�
 ### Phase 0: ルールと版管理を固定
 
 - 3枠と、場/40枚間の同カード・個体の扱いを決定（完了）
-- `GAME_RULES.md` v0.10とデッキ検証を同期（完了）
+- `GAME_RULES.md` v0.11とデッキ検証を同期（完了）
 - キャラクター枠の同名複数選択を禁止（完了）
-- `oracle_id`導入
+- `oracle_id`導入（OLG-003、完了）
 - `format`定義
 - engine/content/format version
-- current branchとmainの統合基準を決定
+- current branchとmainの統合基準を決定（OLG-002、完了）
 - 古い文書を現行仕様へ同期
 
 完了条件:
@@ -1818,11 +2112,19 @@ CIはrootでengineだけでなく、web、server、migration、E2E、漏洩検�
 - 開封復帰
 - カード一覧/デッキ下書き
 - 売却
+- NPCシングル店の有限在庫、個体実移転、固定価格、quote/注文
+- seed/archive台帳、日次買取予算、同一Oracleの直近7日5個体購入上限
+- 固定価格でraw売買/在庫データを集計し、価格policyを承認
+- 承認後、最低14日・原則2〜4週間のshadow価格計算
 
 完了条件:
 
 - すべての個体の発生源と現在状態を追跡できる
 - 注文再送で二重発行されない
+- シングル店の並列購入/売却、在庫切れ、再送、障害復帰でBPと個体台帳が崩れない
+- 全pack/天井の期待清算額と全starter清算額が上限内
+- 全ユーザー同一価格、日次変動幅、薄い需要データの固定をshadowで自動検査できる
+- Phase 2では動的価格を実注文へ適用できず、G8用feature flagはOFF固定
 
 ### Phase 3: ルームPvP
 
@@ -1850,11 +2152,14 @@ CIはrootでengineだけでなく、web、server、migration、E2E、漏洩検�
 - Glicko-2
 - rating history
 - anti-farming
+- 問い合わせ/意見フォーム、受付ID、返信導線
+- 障害/混雑/メンテナンス/feature停止の状態表示
 
 完了条件:
 
 - 低人口でも単一待機列で成立
 - 同時キュー/二重マッチが起きない
+- 問い合わせを送信でき、現在のサービス状態をゲーム内で確認できる
 
 ### Phase 5: ソーシャルと観戦
 
@@ -1865,7 +2170,7 @@ CIはrootでengineだけでなく、web、server、migration、E2E、漏洩検�
 - chat kill switch
 - spectator projection
 - クイック30秒/大会60秒遅延
-- 問い合わせ/意見フォーム
+- 制裁通知/異議申立てと問い合わせadminの統合
 
 完了条件:
 
@@ -1901,16 +2206,23 @@ CIはrootでengineだけでなく、web、server、migration、E2E、漏洩検�
 
 - 並列accept、取消、期限切れ、障害復帰で台帳が崩れない
 
-### Phase 8: 最新N弾
+### Phase 8: Live Operations
 
 - `LATEST_N`
 - 禁止/制限改定
 - フォーマット別キュー/大会
+- 新弾のstaging検証、段階公開、rollback、過去content保持
+- locale key、日本語fallback、翻訳QA、欠落文言検査
+- NPCシナリオ/解放グラフ/報酬contentの版管理
+- SLO、監視/alert、backup/restore、障害/rollback訓練
+- reviewed shadowの対象弾/レアリティ限定activationと動的価格kill switch
 
 完了条件:
 
 - 弾追加/ローテーション時に保存デッキの合法性を正しく再判定
 - 進行中試合/大会は開始時の旧フォーマットを維持
+- 新弾、翻訳、NPC contentを既存進行へ影響させずrollbackできる
+- 復旧訓練を通し、動的価格を止めて固定価格へ戻せる
 
 ---
 
@@ -1947,6 +2259,21 @@ CIはrootでengineだけでなく、web、server、migration、E2E、漏洩検�
 | 環境 | 推奨 | local/development/staging/productionを完全分離 |
 | 初期フォーマット | 推奨 | FREEのみ |
 | NPC強化 | 推奨 | Tier 1〜3の解放グラフ |
+| NPCシングル店 | 決定 | Phase 2。NPCの有限在庫と実在個体を売買する |
+| シングル商品単位 | 決定 | `printing_id`単位で価格/在庫、需要は`oracle_id`単位 |
+| 初期シングル価格 | 仮値 | C 15/4 BP〜LSR 480/110 BP（販売/買取） |
+| 初期seed/目標在庫 | 仮値 | PrintingごとにLSR 1枚〜C 12枚。超過はarchive |
+| シングル価格更新 | 決定 | 固定raw集計→policy承認→最低14日・原則2〜4週間shadow→G8だけ日次動的 |
+| 価格変動幅 | 決定 | 直前価格±5%/日、基準価格の80〜120% |
+| シングル購入上限 | 仮値 | NPC成立購入は同一Oracleごとに直近7日5個体。総所持数は制限しない |
+| NPC買取上限 | 仮値 | 1人150 BP/日、同一Oracle 4個体/日、全体hard cap |
+| 全体買取hard cap | 要決定 | 招待人数とβのBP発行量を基に公開前に設定 |
+| 正式排出率/天井 | 要決定 | pack全状態の期待清算額60 BP以下を検証できる値 |
+| 特殊加工のシングル売買 | 要決定 | 初期は対象外。価格単位と買占め上限への算入方法を決める |
+| 動的価格係数/端数 | 要決定 | rawログで決め、OLG-213のshadow開始前に版付きpolicyとして承認する |
+| シングル市場の価格入力 | 決定 | qualified unique需要と在庫だけ。勝率/個人属性は不使用 |
+| P2P注文板/オークション | 決定 | 導入しない。Phase 7もカード同士の構造化交換だけ |
+| 個別/リアルタイム価格 | 決定 | 導入しない。全員共通の日次snapshot |
 
 ---
 
@@ -1975,6 +2302,23 @@ CIはrootでengineだけでなく、web、server、migration、E2E、漏洩検�
 同一ペア逓減、初回スターター拘束、順位ボーナスのシステム大会限定、離脱保証の反復検出を
 同時に入れる。
 
+### High: NPCシングル買取がBP発行装置または価格操作対象になる
+
+複数アカウントで売却を繰り返すと、BP発行と需要観測の両方を歪められる。アカウント保護、
+作成7日、qualified unique集計、1人150 BP/日、Oracle別上限、全体予算、買取kill switchを
+同時に入れる。価格へ反映する観測と、不正検知用の生イベントを分けて保存する。
+
+### Medium: 有限在庫が初心者の必要カード入手を妨げる
+
+在庫ゼロを無限発行で隠さず、売切れ表示、スターターだけで合法デッキを作れる保証、NPC交換、
+不足カードフィルタで補う。seedは開始時/新弾時または運営レビューで承認した安全在庫batchに
+限定し、欠品率と欠品時間を見て目標在庫と期間/弾ごとの発行hard capを版付きで調整する。
+
+### Medium: 日次価格が分かりにくく買い控えを生む
+
+次回更新時刻と変動上限を表示し、価格チャートや値上がり通知で投機を煽らない。shadow期間に
+購入率、売切れ、問い合わせを確認し、改善しなければ固定価格のまま運用する。
+
 ### High: 観戦projectionまたは遅延から秘匿情報が漏れる
 
 player stateの削除変換ではなく公開allowlistで別生成し、遅延snapshot、event、試合終了表示を
@@ -1997,9 +2341,9 @@ player stateの削除変換ではなく公開allowlistで別生成し、遅延sn
 
 環境別binding/project/secretだけでなく、`APP_ENV`とDB側markerの一致を起動時に検査する。
 
-### Medium: 現ブランチとmainが分岐している
+### Closed: 現ブランチとmainの分岐
 
-2026-07-29時点で`feat/ingame-fx`と`main`は双方に固有コミットがある。実装開始前に統合し、設計実装の基準ブランチを1つにする。
+OLG-002で`main`を`feat/online-foundation`へ統合し、設計実装の基準ブランチを固定済み。
 
 ---
 
@@ -2025,6 +2369,7 @@ player stateの削除変換ではなく公開allowlistで別生成し、遅延sn
 
 PWA/UX:
 
+- [Steam Support: Community Market FAQ（commodity itemの集約表示例）](https://help.steampowered.com/en/faqs/view/61F0-72B7-9A18-C70B)
 - [MDN Progressive Web Apps](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/Guides/What_is_a_progressive_web_app)
 - [WebKit Storage Policy](https://webkit.org/blog/14403/updates-to-storage-policy/)
 - [Apple Web Push for Home Screen Web Apps](https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/)

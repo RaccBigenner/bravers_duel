@@ -5,15 +5,154 @@
 - ルールの正本: `docs/GAME_RULES.md`
 - 目的: オンライン常設版を、検証可能な縦切り単位で実装する
 
+## 0. 最終ゴールと段階リリースゲート
+
+### 最終ゴール
+
+日本向けに最適化した無料のブラウザTCGとして、スマホでもPCでもインストールなしで始められ、
+必要になった時だけLINE/Google等へ連携してアカウントを保護できる状態を作る。
+
+プレイヤーは仮想カードショップの同じ空間でNPCと他プレイヤーを見つけ、対戦、収集、
+デッキ編集、BPによるスターター/パック/シングル購入、売却、観戦、交流、大会、交換を
+段階的に楽しめる。対戦、カード個体、BP、報酬は完全にサーバー権威とし、リロードや一時切断でも
+進行中の操作を失わない。初回公開は日本語だけでも、画面文言、イベント、カード表示データは
+localeから分離し、後からゲームロジックを分岐せずに多言語を追加できる構造を維持する。
+
+運営側は、公開前検査、監査ログ、telemetry、段階開放、kill switch、ロールバックによって、
+カード追加、経済、チャット、大会を一人運営でも安全に止めたり戻したりできることを最終条件とする。
+
+P0〜P8は実装の依存関係、以下のGateはプレイヤーへ公開範囲を広げる判断基準である。
+IssueがDoneでも、対応するplayer-visible exit conditionを実機で満たすまで次のGateへ進めない。
+
+### G0: Foundation
+
+状態: **進行中**。OLG-003の実装は完了。本番カード公開パイプラインの有効化が未完了で、
+次のコードタスクはOLG-004。
+
+主な範囲: P0とカード公開運用
+
+player-visible exit conditions:
+
+- 現在公開中のブラウザゲーム、既存デッキJSON、共有ログが移行前と同じように使える
+- 選択中のformatと違反理由が表示され、保存時と対戦開始時で合法性判定が一致する
+- 公開済みの試合は、固定されたengine/content/format versionから同じ結果を再現できる
+- 非公開の新弾を本番管理画面から安全に公開し、カード一覧、デッキ編集、NPC戦へ同じ内容が反映される
+- 公開失敗時に制作中カードが消えず、未公開カード、画像、資格情報が公開物やログへ漏れない
+
+### G1: Internal Alpha
+
+状態: 未着手
+
+主な範囲: P1
+
+player-visible exit conditions:
+
+- ゲストとして開始し、サーバー権威のNPC戦を最初から最後まで遊べる
+- バトル中にリロードまたは一時切断しても、同じ試合と操作待ちへ復帰できる
+- LINE/Google等へ連携すると、NPC進行、デッキ、進行中試合が失われずアカウントを保護できる
+- スマホ縦持ちとPCの共通バトル盤面で、勝敗、時間切れ、再接続理由を理解できる
+- クライアント改変、再送、複数タブから勝敗、カード、報酬を作れない
+
+### G2: Collection Closed Beta
+
+状態: 未着手
+
+主な範囲: P2
+
+player-visible exit conditions:
+
+- 招待したテスターが、初回無償スターター選択からNPC戦でのBP獲得、5枚パック購入、
+  カード一覧、合法デッキ作成までを自力で完走できる
+- NPCシングル売買では、表示価格と有限在庫に基づいて実在するカード個体だけが移転し、
+  売り切れ、価格変更、使用不能になるデッキが購入/売却前に分かる
+- 同じ購入/売却/報酬を再送または並行実行しても、BPとカード個体が二重に増減しない
+- 初期は固定シングル価格で運用し、自動価格はプレイヤーの表示価格を変えないshadow modeに留める
+
+### G3: PvP Closed Beta
+
+状態: 未着手
+
+主な範囲: P3
+
+player-visible exit conditions:
+
+- 招待URLまたは6文字コードで非公開ルームへ入り、対戦、リロード復帰、結果/BP確定まで完走できる
+- 相手と観戦者に手札、山札順、個体IDが漏れず、同じ注文や報酬の再送でも二重取得が起きない
+- スマホ2台またはスマホ/PC間で、招待、Ready、対戦、切断復帰、再戦を実機確認できる
+
+### G4: Public Online Beta
+
+状態: 未着手
+
+主な範囲: P4、問い合わせ/告知の最小運用。P2の価格shadow検証を継続する
+
+player-visible exit conditions:
+
+- 無料公開URLへスマホ/PCから入り、デュエルスペースでNPCとプレイヤーを同じレイヤーから選べる
+- クイック対戦前に`待機者なし/相手が待機中`が分かり、低人口でも共通キューから対戦できる
+- ゲーム内から問い合わせ/意見を送り、障害、混雑、メンテナンス、機能停止理由を確認できる
+- 運営がマッチング、ショップを個別に停止しても、所持カードと進行中取引を壊さない
+
+### G5: Community Release
+
+状態: 未着手
+
+主な範囲: P5
+
+player-visible exit conditions:
+
+- CHオープンチャットを利用でき、不快な相手を即時block/reportして以後の表示を止められる
+- 観戦者には両者の手札を隠し、遅延を伴う公開情報だけで試合を観戦できる
+- 通報の確認、証跡保全、警告/停止/解除、異議申立てを運営が一貫して処理できる
+- 運営がチャットと公開観戦を個別に停止しても、対戦と所持データを壊さない
+
+### G6: Tournament Release
+
+状態: 未着手
+
+主な範囲: P6
+
+player-visible exit conditions:
+
+- 時刻指定または即時大会へ参加し、3〜8人のBYEを含む組合せ、Ready、各回戦、結果、報酬を完走できる
+- 募集締切、check-in、開始時刻、次の対戦時刻、不成立理由が参加前後に分かる
+- 切断、no-show、同着、運営停止が発生してもbracketと報酬を二重確定しない
+
+### G7: Trade Release
+
+状態: 未着手
+
+主な範囲: P7
+
+player-visible exit conditions:
+
+- NPC交換とプレイヤー間の構造化交換を利用でき、同時accept、取消、期限切れでもカードを失わない
+- 使用中、match lock中、凍結中の個体を交換できず、成立前に受取内容と警告が分かる
+- 交換を停止してもescrow中の個体を安全に返却または確定できる
+
+### G8: Live Operations
+
+状態: 未着手
+
+主な範囲: P8と継続運用。十分なshadowデータがある場合だけ動的シングル価格を段階開放する
+
+player-visible exit conditions:
+
+- フリールールと`LATEST_N`を選べ、禁止/制限改定後も保存デッキの違反理由と使える場所が分かる
+- シングル価格を動的にする場合、更新時刻と現在価格が明確で、異常時は固定価格へ安全に戻せる
+- 新弾、翻訳、NPCシナリオ、formatを既存対戦や過去replayを壊さず追加できる
+
 ## 1. タスク管理の使い分け
 
 - 設計書: 何を、なぜ作るかの正本
-- GitHub Issue: 1つの実装/検証単位
-- GitHub Project: 状態、担当、優先度、依存関係の正本
+- RaccTerm: 現在の`done/doing`、次に着手する項目、G0〜G8の進捗の正本
+- GitHub Issue: 着手時に作る1つの実装/検証単位と、完了後の永続記録
+- GitHub Project: 複数担当/Issue運用へ移行する時の候補。現時点では状態の正本にしない
 - Pull Request: コード差分と検証結果
 - Milestone: 公開可能なまとまり
 
-GitHub Projectの列:
+GitHub Projectへ移行する場合は、RaccTermから一度だけ未完了項目を移し、この文書で正本切替日を
+宣言する。両方の状態を手作業で同期し続けない。移行後の推奨列:
 
 1. Inbox
 2. Ready
@@ -47,6 +186,7 @@ Issueは、完了条件が独立して検証できる0.5〜3日程度を基本�
 - 新しい失敗状態にユーザー向け表示がある
 - 必要なtelemetry、監査、feature flagがある
 - 仕様/運用手順が変わる場合は正本文書も更新
+- 新しい表示文言、イベント、カード表示値をlocale非依存の識別子と分離し、日本語fallbackを検証
 
 PvP、経済、認証、チャットは、正常系のデモだけでDoneにしない。再送、並行処理、切断、
 複数タブ、権限不正、運営停止を受入条件へ含める。
@@ -59,7 +199,7 @@ P0 ルール/版管理
        ├─ P2 所持/BP/ショップ
        │    ├─ P3 ルームPvP
        │    │    └─ P4 デュエルスペース/クイック
-       │    │         ├─ P5 チャット/観戦/問い合わせ
+       │    │         ├─ P5 チャット/観戦/制裁運用
        │    │         └─ P6 トーナメント
        │    └─ P7 交換
        └─ P8 最新N弾/禁止制限
@@ -70,11 +210,11 @@ P5のコミュニティガイドライン、通報画面、管理設計は早く
 
 ## 4. Milestone P0: ルールと版管理
 
-### OLG-001 公式ルールv0.10と現行検証器を同期
+### OLG-001 公式ルールv0.11と現行検証器を同期
 
-状態: この作業ツリーで実装・検証済み、未commit
+状態: 完了（2026-07-29、`546f39c`）
 
-検証: 2026-07-29にengine 99 tests、Web production build、未公開データ漏洩検査を通過
+検証: 2026-07-29にengine 114 tests、Web production build、未公開データ漏洩検査を通過
 
 - キャラクター3枠を必須化
 - 実カード2〜3枚
@@ -118,7 +258,7 @@ P5のコミュニティガイドライン、通報画面、管理設計は早く
 
 ### OLG-003 `oracle_id`と`printing_id`を分離
 
-状態: 完了（2026-07-29、この作業ツリー）
+状態: 完了（2026-07-29、`546f39c`）
 
 - 第1弾144枚へ不変`oracleId`を付与
 - 現行IDを`printingId`として維持。既存デッキJSON・共有ログv1は値を変えない
@@ -154,6 +294,24 @@ P5のコミュニティガイドライン、通報画面、管理設計は早く
 - Cloudflareへprivate Contents write/Actions用`GITHUB_PRIVATE_TOKEN`と、
   public Contents read-only用`GITHUB_PUBLIC_TOKEN`を設定して本番再デプロイ
 - Access application-domain cookieをSameSite=Laxにし、公開smoke testを実施
+
+### OLG-003P 本番カード公開パイプラインを有効化
+
+状態: **未完了**。OLG-003のコード実装とは分離した本番運用タスク
+
+- 非公開リポへworkflowとtrusted scriptsを同期し、実行ファイルmodeを確認
+- 対象弾の非公開`effects/volN.ts`と`effects/volN.test.ts`を用意
+- 最小権限の`PUBLIC_PUBLISH_TOKEN`、`GITHUB_PRIVATE_TOKEN`、`GITHUB_PUBLIC_TOKEN`を設定
+- Cloudflare Access cookieをSameSite=Laxへ設定し、管理画面をproduction branchへ再デプロイ
+- 管理画面からのpublish、Actions status表示、公開commit、WIP cleanupを実対象で確認
+- 失敗を注入し、再試行時に公開二重commit、WIP消失、資格情報/未公開値のログ漏洩がないことを確認
+- 旧`GITHUB_TOKEN`をrevokeし、設定値と復旧手順を運用台帳へ記録
+
+受入:
+
+- 本番管理画面から1回の操作で、manifestに固定した対象だけが公開側1commitへ反映される
+- 公開側remoteの一致を確認した後だけWIPがcleanupされ、失敗時は同じrequestを安全に再開できる
+- 公開後のカード、画像、効果を公開ゲームで確認でき、非対象のWIPは公開物とActions logへ出ない
 
 ### OLG-004 version付きformatとデッキ合法性
 
@@ -229,7 +387,94 @@ P1 exit:
 - OLG-205 order再送/開封復帰
 - OLG-206 共通18/+6 BP、日次上限、反復逓減
 - OLG-207 card list/deck draft
-- OLG-208 売却と期待売却額検査
+
+### OLG-208 NPC固定買取と期待売却額検査
+
+- 売却したカード個体を削除せず、プレイヤーから運営NPCへ移転して追記型台帳へ残す
+- `printingId`とレアリティから固定買取価格を引き、カード移転とBP付与を1取引として扱う
+- 初回無償starterの`onboarding_bound`、match lock中、交換escrow中の個体は売却不可
+- 売却前に個体、受取BP、最後の1枚、高レア、使用不能になるデッキと不足枚数を表示
+- β初期値として、NPC買取によるBP発行は1アカウント150 BP/日、
+  同一Oracle 4個体/日を上限にし、設定値として変更可能にする
+- 150 BPパックの期待買取総額を通常45〜55 BP、保証を含む上限60 BP以下、
+  1200 BP starterの全売却額を600 BP以下にする自動検査
+- どの購入物も、購入直後に全売却してBPが増えないことを版付き排出表ごとに検査
+
+### OLG-209 NPC有限在庫と基準販売価格
+
+- NPC在庫は`printingId`単位で管理し、需要集計は同じ性能を表す`oracleId`単位で行う
+- プレイヤーが売った実在個体を在庫へ加え、購入時は在庫内の1個体を自動割当てして移転する
+- シングル購入による新規個体発行は行わず、在庫0なら購入不可とし、
+  固定価格期は「売り切れ/在庫不足・カード買取中」を表示
+- 開始時、新弾時、承認済み安全在庫補充だけ`SYSTEM_SEED` batchを実行でき、
+  理由/承認者/期間・弾ごとの発行hard capを監査する
+- 目標在庫の2倍を超えた実個体はarchiveし、日次更新時に不足分だけ販売在庫へ戻す
+- 同一Printingはまとめて表示し、MVPでは個体番号指定購入、価格チャート、オークションを実装しない
+- NPCからの成立購入は同一Oracle・1アカウントにつき直近7日5個体までとし、
+  pack等を含む総所持数そのものには上限を設けない
+- 基準販売/買取価格と目標在庫の初期値を版付き設定にし、コード変更なしで調整可能にする
+
+| レアリティ | 基準販売 | 固定買取 | 目標在庫 |
+|---|---:|---:|---:|
+| C | 15 BP | 4 BP | 12 |
+| UC | 30 BP | 8 BP | 10 |
+| R | 60 BP | 14 BP | 8 |
+| SR | 120 BP | 28 BP | 6 |
+| SSR | 240 BP | 50 BP | 4 |
+| USR | 360 BP | 80 BP | 2 |
+| LSR | 480 BP | 110 BP | 1 |
+
+### OLG-210 atomic quote/order
+
+- 購入quoteは`printingId`、単価、数量、観測時在庫数、期限、価格versionを返すが、
+  個体を予約/固定しない。売却quoteだけ対象`instanceId`を固定する
+- 購入実行時、観測後に在庫が変わっていても同じPrintingが数量分あればFIFOで割り当てる
+- `orderId/idempotencyKey`、quote期限、価格versionを検証し、BP、個体所有者、NPC在庫、
+  台帳、注文結果を1トランザクションで確定する
+- 同一Oracleの直近7日購入数は`accountId + oracleId`のguard行を`FOR UPDATE`して直列化し、
+  lock取得後にDBから1回だけ採った時刻の直前168時間に`settledAt`が入る購入order itemから
+  `READ COMMITTED`で再検査する。transaction開始時刻、古いsnapshot、クライアント時計は使わない
+- 最後の1個体を並行購入しても成功は1件だけ。同じ注文の再送は同じ結果を返す
+- 期限切れ、在庫不足、価格version変更、残高不足、個体lockでは何も部分更新せず、再見積り理由を返す
+- 応答前に注文結果を保存し、リロード後に購入/売却結果と新残高を再表示する
+
+### OLG-211 NPCシングル売買UIと運用telemetry
+
+- ショップに`買う/売る`、在庫、現在価格、不足カード、在庫不足時の買取導線を設ける
+- 固定価格期は「在庫不足・カード買取中」、G8の動的価格期は実際に買取価格が基準を
+  上回る時だけ「買取強化中」と表示する
+- デッキ不足警告から該当シングルへ移動でき、売却後は不足デッキを使用不可として理由を表示
+- スマホは片手で確認と確定ができ、PCではカード詳細と在庫を同時表示する
+- quote失効、売り切れ、上限到達、lock中、kill switch中をそれぞれ異なる文言で表示する
+- quote、成立、拒否理由、在庫推移、ユニーク購入者/売却者を個人情報なしで計測する
+
+### OLG-212 固定価格raw集計と価格policy承認
+
+- 表示/成立価格を固定したまま、Printing在庫とOracle別の適格な成立売買をraw集計する
+- 同一人物の反復を水増しせず、アカウント保護/チュートリアル/作成7日等を満たす
+  qualified unique購入者/売却者だけを需要集計へ含める
+- rawレビュー後に、在庫/需要factor関数、14日標本、標本下限、整数丸め、clamp順を
+  `pricing_policy_version`として承認する。承認前は候補価格を計算しない
+- 初期標本下限はOracleごとのqualified unique購入者/売却者の和集合20アカウントとし、
+  未満なら在庫補正を含め価格を動かさない
+- 勝率、デッキ採用率、個人属性は価格入力に使わない
+
+### OLG-213 承認済みpolicyのshadow計算とreview
+
+- 実価格は固定のまま、承認済みpolicyによる候補価格を毎日04:00 JSTに計算する
+- 計算順を`基準×factor`→基準80〜120% clamp→前日±5% clamp→承認済み丸め→経済検査に固定
+- 最低14日、原則2〜4週間、固定価格とshadow価格、成立数、売り切れ時間、BP流入出、
+  不正候補、clamp発生を比較する
+- 同じ入力snapshotとpolicy versionから同じ価格を再計算でき、運営画面で差分と根拠を確認できる
+- Phase 2では候補価格を表示/quote/注文へ適用せず、動的価格feature flagをONにできない
+
+P2 exit:
+
+> 初回starter選択 → 対戦でBP獲得 → 5枚pack開封 → カード一覧/デッキ編集 →
+> NPCの有限在庫から固定価格でシングル購入/売却 → リロード後も同じ残高/所持
+
+を完走し、並行操作や再送でもBPとカード個体が増減しない。G2 Collection Closed Betaは
+固定価格＋raw集計で開始し、承認済みpolicyのshadowまでをP2とする。実価格への適用はG8まで禁止する。
 
 ## 7. Milestone P3: ルームPvP
 
@@ -248,15 +493,17 @@ P1 exit:
 - OLG-403 `待機者なし/相手が待機中`
 - OLG-404 Glicko-2/rating history
 - OLG-405 同一ペア優先回避/anti-farming
+- OLG-406 ゲーム内問い合わせ/意見フォーム、受付ID、最小返信導線
+- OLG-407 障害/混雑/メンテナンス/feature停止の状態表示
 
-## 9. Milestone P5: ソーシャル、観戦、問い合わせ
+## 9. Milestone P5: ソーシャル、観戦、制裁運用
 
 - OLG-500 コミュニティガイドライン/年齢帯方針/保持期間
 - OLG-501 CH chat/rate limit/content filter
 - OLG-502 block/report/evidence snapshot
 - OLG-503 moderation admin/audit/kill switch
 - OLG-504 quick 30秒/tournament 60秒spectator delay
-- OLG-505 ゲーム内問い合わせ/意見
+- OLG-505 制裁通知/異議申立てと問い合わせadminの統合
 - OLG-506 限定CH試験と運用レビュー
 
 ## 10. Milestone P6: トーナメント
@@ -280,21 +527,42 @@ P7 交換:
 - parallel accept/expiry/cancel
 - trust restriction/GM freeze
 
-P8 format:
+P8 Live Operations:
 
-- `LATEST_N`
-- 禁止/制限改定
-- format別queue/tournament
-- 旧format replay保持
+- OLG-800 `LATEST_N`、禁止/制限改定、format別queue/tournament
+- OLG-801 新弾のstaging検証、段階公開、rollback、過去content保持
+- OLG-802 locale key、日本語fallback、翻訳QA、欠落文言検査
+- OLG-803 NPCシナリオ/解放グラフ/報酬contentの版管理
+- OLG-804 SLO、監視/alert、backup/restore、障害/rollback訓練
+- OLG-805 reviewed shadowを対象弾/レアリティ単位で動的価格へactivationし、kill switchを訓練
+- OLG-806 旧format replayと進行中match/tournamentの互換保持
 
 ## 12. 最初に着手する順
 
-1. OLG-001のtest/build確認
-2. OLG-002で基準ブランチを統合
-3. OLG-003 `oracle_id`
-4. OLG-004 format
-5. OLG-005 version/replay
-6. OLG-101 server/protocol/supabase scaffold
+完了済み: OLG-001、OLG-002、OLG-003
 
-OLG-002は完了済み。OLG-003、OLG-004、OLG-005でカード同一性、format、再現性の土台を
-固めてから、大規模なserver scaffoldへ進む。
+直近:
+
+1. OLG-003Pで本番カード公開パイプラインを有効化し、運用上のFoundation blockerを外す
+2. OLG-004でversion付きformatと、保存/参加/試合開始前のデッキ合法性を統一する
+3. OLG-005でengine/content/format version、state hash、golden replayを固定する
+4. OLG-006で現行文書、全8プリセット、starter候補を同期する
+5. G0 Foundationのplayer-visible exit conditionsをproduction smoke testで確認する
+
+その後:
+
+6. OLG-101〜105、OLG-111〜114、OLG-121〜128、OLG-131〜134を縦に通し、
+   ゲストNPC戦とreload復帰を完成させてG1 Internal Alphaへ進む
+7. P2は台帳/個体/packを先に作り、NPCシングルは固定価格→有限在庫→atomic order→
+   raw集計→policy承認→shadowの順で開き、
+   収集loopを完走できたらG2 Collection Closed Betaへ進む
+8. P3の非公開ルームPvPを2台の実機で完走できたらG3 PvP Closed Betaへ進む
+9. P4のデュエルスペース/クイックと問い合わせ/告知の最小運用を揃えてG4 Public Online Betaへ進む
+10. P5の制裁運用、通報・block、CH chat、公開観戦を限定開放から検証し、
+    G5 Community Releaseへ進む
+11. P6大会をG6 Tournament Release、P7交換をG7 Trade Releaseとして別々に開放する
+12. P8 format拡張、新弾/翻訳、監視復旧と、検証済み範囲の動的シングル価格を
+    G8 Live Operationsとして継続運用する
+
+各Gateで得た実測値を次Gateの初期値へ反映する。特に動的価格、公開チャット、交換、大会は、
+コード完成を理由に一括開放せず、shadow/限定CH/feature flagから始める。
