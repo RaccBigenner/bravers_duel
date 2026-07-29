@@ -404,10 +404,45 @@ Web/Admin production build、未公開データ漏洩検査を通過
 
 ### OLG-006 現行文書とgolden deckを同期
 
+状態: 完了（2026-07-29）
+
 - 全8プリセット
 - starter候補
 - `README.md`, `STATE.md`, β要件の現行/履歴区分
 - stale comment検査
+
+実装:
+
+- スタンダードデッキ8種を`engine/test/golden/decks.json`へgolden deckとして固定し、
+  中身が1枚でも変われば落ちるようにした。作り直しは`npm --workspace engine run golden:decks`で意図的に行う
+- 8種すべてが`FREE_V1@1`で合法・キャラ枠3枠ちょうど・全カードが公開カタログに存在することを検査
+- 初回スターターの候補4種を`data/starters.json`へ登録（設計6.3の「初期は4種類程度」）。
+  中身はプリセットから引くのでカード一覧を二重に持たない。片方が古くなるのを防ぐため
+- 「1個で合法デッキを作れる個体数を含める」（設計6.3）を`checkStarter`で検査。
+  場と40枚側で同じカードを使う分も個体数へ合算する
+- `scripts/check-stale-comments.mjs`で古くなった記述を検査し、`npm test`へ組み込んだ。
+  実在しないファイルへの参照、古い決定が残った言い回し、READMEのnpmコマンドの3種類を見る
+- 当時のまま残す履歴は、見出しの`stale-ok`で現行の記述と区別する。
+  `STATE.md`を「今の状態」と「開発の記録（履歴）」に分け、読み方を先頭へ書いた。
+  `GAME_RULES.md`の決定・変更の記録と、取り消された50枚デッキの実験記録も履歴として明示した
+- `README.md`を今の構成（admin/scripts/ops、formats.json、starters.json、検査コマンド）へ更新
+
+受入:
+
+- プリセット8種の中身・名前・コンセプトがgolden deckと完全一致し、崩れたらテストが落ちる
+- スターター候補4種は遊び方が全部違い、大型キャラクター（2枠）を使わない
+- 候補は`candidate`のままで、採決前は配布に使わない
+- 検査器自身のテストで、行印・節印・雛形・テストファイル除外の動きを固定
+- リポジトリ全体（140ファイル）に古くなった記述が0件
+
+検証: 2026-07-29にengine 225 tests、stale検査 13 tests、npm test 306件、
+engine/admin typecheck、Web/Admin production build、未公開データ漏洩検査を通過
+
+要確認（社長の採決待ち）:
+
+- スターター候補4種（剣聖の一閃／聖歌隊／氷獄の女王／槍衾の陣）の採否。
+  攻め・守り・妨害・手数で選び分けられることと、大型キャラを含まないことを基準に選んだ。
+  採決後に`status`を`released`へ変える
 
 ## 5. Milestone P1: オンライン縦切り
 
