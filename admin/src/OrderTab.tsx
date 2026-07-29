@@ -4,7 +4,7 @@
  * できること:
  * - ドラッグ&ドロップ（スマホでは ▲▼ ボタン）で順番を入れ替える
  * - 第1弾と同じ考え方で自動並べ替え
- * - 今の並びのとおりに A001 から採番し直す（確定すると以後は動かせない）
+ * - 今の並びのとおりに A001 から採番し直す（公開するまでは何度でもやり直せる）
  *
  * 並びは保存を押すまでこの画面の中だけの変更。誤操作でいきなり
  * 100枚のIDが変わると取り返しがつかないので、必ず一手挟む。
@@ -45,7 +45,7 @@ export function OrderTab({ cards, set, images, saving, released, onSaveOrder, on
     setList(initial);
   }
 
-  const locked = released || set.codesLocked === true;
+  const locked = released;
   const dirty = list.some((c, i) => initial[i]?.id !== c.id);
   /** 保存が押せない理由。押せないのに理由が出ないと「壊れている」と見える */
   const saveBlockedBecause = locked ? '' : saving ? '保存中です。' : !dirty ? 'まだ並べ替えていません。' : '';
@@ -80,13 +80,9 @@ export function OrderTab({ cards, set, images, saving, released, onSaveOrder, on
       </div>
 
       <div className="order-note">
-        {released ? (
+        {locked ? (
           <p className="locked">
             第{set.vol}弾は<b>公開済み</b>です。並び替えも採番もできません。
-          </p>
-        ) : locked ? (
-          <p className="locked">
-            この弾は<b>採番が確定済み</b>です。並び替えも採番もできません。
           </p>
         ) : (
           <p>
@@ -173,16 +169,14 @@ export function OrderTab({ cards, set, images, saving, released, onSaveOrder, on
             番号が変わるカードは <b>{preview.changed}枚</b>、
             画像も同じ数だけ引っ越します。
             <br />
-            <b>確定するとこの弾の並び替えと採番はできなくなります。</b>
+            カードを足すたびに何度でもやり直せます。<b>弾を公開すると、それ以降は変更できなくなります。</b>
           </p>
           <button
             type="button"
             className="danger"
             disabled={saving || dirty || preview.changed === 0}
             onClick={() => {
-              const ok = window.confirm(
-                `${preview.changed}枚の番号を振り直し、以後この弾の並びは変更できなくなります。実行しますか？`,
-              );
+              const ok = window.confirm(`${preview.changed}枚の番号と画像を振り直します。実行しますか？`);
               if (ok) void onConfirmCodes(preview.cards, preview.renames);
             }}
           >

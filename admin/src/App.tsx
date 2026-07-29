@@ -446,25 +446,15 @@ export function App() {
   }
 
   /**
-   * 採番の確定。カードのIDと画像を同時に動かし、弾に「確定済み」の印を付ける。
-   * 印を付けた後は並び替えも採番もできない。
+   * 採番。カードのIDと画像を同時に動かす。
+   * 公開するまでは何度でもやり直せる（公開後はサーバ側が変更を拒否する）。
    */
   async function onConfirmCodes(renumbered: MasterCard[], renames: { from: string; to: string }[]) {
     if (!currentSet) return;
     setSaving(true);
     try {
       const r = await saveCards(vol, renumbered, renames);
-      const lockedSet: MasterSet = { ...currentSet, codesLocked: true };
-      await saveSet(lockedSet);
-      setMaster((m) =>
-        m
-          ? {
-              ...m,
-              cards: [...m.cards.filter((c) => c.vol !== vol), ...renumbered],
-              sets: [...m.sets.filter((s) => s.vol !== vol), lockedSet].sort((a, b) => a.vol - b.vol),
-            }
-          : m,
-      );
+      setMaster((m) => (m ? { ...m, cards: [...m.cards.filter((c) => c.vol !== vol), ...renumbered] } : m));
       setSelectedId(null);
       // 画像の版番号（?v=）は GitHub 側の sha なので、引っ越し後は読み直さないと合わない
       await reload();

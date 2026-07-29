@@ -47,11 +47,6 @@ export interface MasterSet {
   status: CardStatus;
   releasedAt: string;
   codename?: string;
-  /**
-   * 採番を確定したか。true になったら並び替えも採番もできない。
-   * 番号が刷られたカードの順番を後から動かすと、印刷物やメモと食い違うため。
-   */
-  codesLocked?: boolean;
 }
 
 export interface Master {
