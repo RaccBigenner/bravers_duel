@@ -483,6 +483,7 @@ export function App() {
         set={currentSet}
         images={images}
         saving={saving}
+        released={locked}
         onSaveOrder={onSaveOrder}
         onConfirmCodes={onConfirmCodes}
       />

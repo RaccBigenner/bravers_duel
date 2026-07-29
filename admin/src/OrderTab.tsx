@@ -18,6 +18,8 @@ interface Props {
   set: MasterSet;
   images: Record<string, string>;
   saving: boolean;
+  /** 公開済みの弾。サーバーが403で拒否するので、画面の側でも触らせない */
+  released: boolean;
   onSaveOrder: (cards: MasterCard[]) => Promise<void>;
   onConfirmCodes: (cards: MasterCard[], renames: { from: string; to: string }[]) => Promise<void>;
 }
@@ -29,7 +31,7 @@ const TYPE_LABEL: Record<string, string> = {
   field: 'フィールド',
 };
 
-export function OrderTab({ cards, set, images, saving, onSaveOrder, onConfirmCodes }: Props) {
+export function OrderTab({ cards, set, images, saving, released, onSaveOrder, onConfirmCodes }: Props) {
   const initial = useMemo(() => inCurrentOrder(cards), [cards]);
   const [list, setList] = useState<MasterCard[]>(initial);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
@@ -43,8 +45,10 @@ export function OrderTab({ cards, set, images, saving, onSaveOrder, onConfirmCod
     setList(initial);
   }
 
-  const locked = set.codesLocked === true;
+  const locked = released || set.codesLocked === true;
   const dirty = list.some((c, i) => initial[i]?.id !== c.id);
+  /** 保存が押せない理由。押せないのに理由が出ないと「壊れている」と見える */
+  const saveBlockedBecause = locked ? '' : saving ? '保存中です。' : !dirty ? 'まだ並べ替えていません。' : '';
 
   function move(from: number, to: number) {
     if (from === to || to < 0 || to >= list.length) return;
@@ -76,7 +80,11 @@ export function OrderTab({ cards, set, images, saving, onSaveOrder, onConfirmCod
       </div>
 
       <div className="order-note">
-        {locked ? (
+        {released ? (
+          <p className="locked">
+            第{set.vol}弾は<b>公開済み</b>です。並び替えも採番もできません。
+          </p>
+        ) : locked ? (
           <p className="locked">
             この弾は<b>採番が確定済み</b>です。並び替えも採番もできません。
           </p>
@@ -84,6 +92,7 @@ export function OrderTab({ cards, set, images, saving, onSaveOrder, onConfirmCod
           <p>
             並べ替えは<b>「並びを保存」を押すまで反映されません</b>。
             番号（A001…）は下の「採番を確定」を押した時に振り直します。
+            {saveBlockedBecause && <><br /><span className="blocked">{saveBlockedBecause}行を動かすと保存できるようになります。</span></>}
           </p>
         )}
       </div>
