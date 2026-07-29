@@ -351,6 +351,11 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
     myTrashCount: () => me().trash.length,
     myAttrCount: (attr) =>
       effectiveAttributes(state, owner, ownerChar).filter((a) => a === attr).length,
+    teamAttrCount: (attr) =>
+      me().characters.reduce(
+        (sum, _, i) => sum + effectiveAttributes(state, owner, i).filter((a) => a === attr).length,
+        0,
+      ),
     targetAttrCount: (attr) => {
       const t = firstTarget();
       if (t === null) return 0;
@@ -367,9 +372,11 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
       return t === null ? 0 : maxHpOf(state, defenderIdx(), t);
     },
     myDamage: () => me().characters[ownerChar].damage,
+    myHp: () => Math.max(0, maxHpOf(state, owner, ownerChar) - me().characters[ownerChar].damage),
     myKoCount: () => me().characters.filter((_, i) => !isCharAlive(state, owner, i)).length,
     myAliveCount: () => me().characters.filter((_, i) => isCharAlive(state, owner, i)).length,
     skillsUsedThisTurn: () => me().skillsUsedThisTurn,
+    amActor: () => ownerChar === me().actorIndex,
 
     addDamage: (n) => {
       if (state.pendingAttack && clampN(n) > 0) {
@@ -385,6 +392,17 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
       if (state.pendingAttack) {
         state.pendingAttack.value = clampN(n);
         pushLog(state, `攻撃のダメージが${clampN(n)}に変わった`);
+      }
+    },
+    reduceDamage: (n) => {
+      if (state.pendingAttack && clampN(n) > 0) {
+        const amount = clampN(n);
+        state.pendingAttack.value = Math.max(0, state.pendingAttack.value - amount);
+        pushLog(
+          state,
+          `P${owner + 1}の${me().characters[ownerChar].name}の攻撃威力-${amount}（ダメージ${state.pendingAttack.value}）`,
+        );
+        emit(state, { t: 'powerUp', player: owner, charIndex: ownerChar, n: -amount, total: state.pendingAttack.value });
       }
     },
     addGuardValue: (n) => {
@@ -471,6 +489,15 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
       if (moved.length > 0) {
         pushLog(state, `P${enemyIdx + 1}のAPから${moved.length}枚トラッシュ`);
         emit(state, { t: 'apTrash', player: enemyIdx, n: moved.length });
+      }
+    },
+    discardMyAp: (n) => {
+      const p = me();
+      const moved = p.ap.splice(0, clampN(n));
+      p.trash.push(...moved);
+      if (moved.length > 0) {
+        pushLog(state, `P${owner + 1}のAPから${moved.length}枚トラッシュ`);
+        emit(state, { t: 'apTrash', player: owner, n: moved.length });
       }
     },
     damageEnemyActor: (n) => {
@@ -641,6 +668,15 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
         c.equipmentCardId = null;
       }
     },
+    destroySelfEquipment: () => {
+      const c = me().characters[ownerChar];
+      if (c.equipmentCardId) {
+        me().trash.push(c.equipmentCardId);
+        pushLog(state, `P${owner + 1}の${c.name}の装備${cardByPrintingId(c.equipmentCardId).name}を破壊`);
+        emit(state, { t: 'equipDestroyed', player: owner, charIndex: ownerChar, cardId: c.equipmentCardId });
+        c.equipmentCardId = null;
+      }
+    },
     handUsableSkillCount: (by) => {
       const p = me();
       const ci = by === 'self' ? ownerChar : p.actorIndex;
@@ -661,6 +697,16 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
         emit(state, { t: 'apTrash', player: owner, n });
       }
       return n;
+    },
+    consumeAp: (n) => {
+      const p = me();
+      const moved = p.ap.splice(0, clampN(n));
+      p.trash.push(...moved);
+      if (moved.length > 0) {
+        pushLog(state, `P${owner + 1}のAPから${moved.length}枚トラッシュ`);
+        emit(state, { t: 'apTrash', player: owner, n: moved.length });
+      }
+      return moved.length;
     },
     damageSelf: (n) => {
       applyDamage(state, owner, ownerChar, clampN(n));

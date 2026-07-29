@@ -20,6 +20,8 @@ export interface EffectApi {
   myTrashCount(): number;
   /** 効果の持ち主キャラの属性の個数（追加属性・味方付与込み） */
   myAttrCount(attr: Attribute): number;
+  /** 味方全体（控え・戦闘不能も含む3枚）が持つ属性の合計数（追加属性込み） */
+  teamAttrCount(attr: Attribute): number;
   /** 攻撃対象（最初の対象）の属性の個数 */
   targetAttrCount(attr: Attribute): number;
   /** 攻撃対象の残りHP */
@@ -28,17 +30,23 @@ export interface EffectApi {
   targetMaxHp(): number;
   /** 効果の持ち主キャラの受けているダメージ */
   myDamage(): number;
+  /** 効果の持ち主キャラの残りHP */
+  myHp(): number;
   /** 自分の戦闘不能キャラの数 */
   myKoCount(): number;
   /** 自分の生きている味方の数（自分含む） */
   myAliveCount(): number;
   /** このターン自分が使ったスキルの数（このスキルを含む） */
   skillsUsedThisTurn(): number;
+  /** 効果の持ち主キャラが今アクターか（控えから攻撃/効果発動している時はfalse） */
+  amActor(): boolean;
 
   // ---- 攻撃の修正（攻撃宣言のタイミングだけ有効） ----
   addDamage(n: number): void;
   /** ダメージを直接この値にする（ディメンションエッジ等） */
   setDamage(n: number): void;
+  /** 攻撃ダメージを減らす（0未満にはならない）。addDamageに負数を渡しても0扱いになるため別メソッドにした */
+  reduceDamage(n: number): void;
 
   // ---- ガードの修正（ガード割り込みのタイミングだけ有効） ----
   addGuardValue(n: number): void;
@@ -51,6 +59,8 @@ export interface EffectApi {
   discardHandAll(): void;
   millDeck(who: 'me' | 'enemy', n: number): void;
   discardEnemyAp(n: number): void;
+  /** 自分のAPをn枚トラッシュ（不足時はあるだけ） */
+  discardMyAp(n: number): void;
   /** 効果ダメージ（ガード割り込み不可）。敵アクターへ */
   damageEnemyActor(n: number): void;
   /** 攻撃してきた「使用キャラ本人」への効果ダメージ（反射用）。攻撃中でなければ敵アクターへ */
@@ -90,10 +100,14 @@ export interface EffectApi {
   searchDeckToHand(filter: (cardId: string) => boolean): boolean;
   /** 自分のAPを全てトラッシュし、その枚数を返す（無双乱撃） */
   consumeAllMyAp(): number;
+  /** 自分のAPを最大n枚トラッシュし、実際に消費した枚数を返す（足りなければあるだけ） */
+  consumeAp(n: number): number;
   /** 効果の持ち主キャラが装備を持っているか（ロッソ） */
   selfHasEquipment(): boolean;
   /** 攻撃対象の装備をトラッシュする（ポイントブレイク） */
   destroyTargetEquipment(): void;
+  /** 効果の持ち主キャラ自身の装備をトラッシュする */
+  destroySelfEquipment(): void;
   /** 手札のスキルのうち、属性条件を満たせる枚数を数える（AP無視。アニマの判断用） */
   handUsableSkillCount(by: 'self' | 'actor'): number;
   /** 効果の持ち主キャラ自身へのダメージ（邪神の呪い） */
