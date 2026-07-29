@@ -496,8 +496,8 @@ engine/admin typecheck、Web/Admin production build、未公開データ漏洩�
 - OLG-124 player projection
 - OLG-125 snapshot/event persistence
 - OLG-126 reconnect/resume
-- OLG-127 timeout/disconnect
-- OLG-128 authoritative NPC tutorial E2E
+- OLG-127 timeout/disconnect（PvP標準クロック・切断との関係・レート反映の設計: 11.5）
+- OLG-128 authoritative NPC tutorial E2E（NPC戦は無制限＋idle suspendの設計: 4.1）
 
 ### Epic OLG-130 PWA shell
 
@@ -616,7 +616,7 @@ P2 exit:
 - OLG-300 招待URL/6文字code
 - OLG-301 2人用seat認可
 - OLG-302 player projection漏洩検査
-- OLG-303 clock/reconnect/複数タブ
+- OLG-303 clock（標準/ゆっくりpreset・設計: 4.3）/reconnect/複数タブ
 - OLG-304 共通BPと同一ペア逓減
 - OLG-305 招待観戦用spectator projection
 
