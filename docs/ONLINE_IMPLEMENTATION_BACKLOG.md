@@ -356,11 +356,51 @@ Web/Admin production build、未公開データ漏洩検査を通過
 
 ### OLG-005 engine/content/format versionを固定
 
+状態: 完了（2026-07-29）
+
 - replay header
 - 不変content manifest
 - state hash
 - 旧版保持方針
 - golden replay
+
+実装:
+
+- `engine/src/versions.ts`: `ENGINE_VERSION`と不変content manifest。
+  公開済みカードと公開済み弾だけから版を作る（制作中カードの指紋・枚数を公開ビルドへ載せず、
+  制作中の修正で公開中の試合の版が動かないようにするため）。
+  `Object.freeze`で凍らせ、進行中の試合が参照している版を後から書き換えられないようにした
+- 版の指紋は環境非依存の純粋実装（キー順を固定したJSON＋FNV-1a 64bit）。
+  ブラウザとサーバーで同じ値になる必要があるため`node:crypto`を使わない。
+  改ざん検知ではなく同一性判定であり、公開物の完全性はOLG-003のGit blob SHAが担保する
+- `engine/src/replay.ts`: 設計11.4が求めるreplay headerを実装。
+  seed、engine/content/format version、初期デッキsnapshot、先攻、ターン上限、
+  全command、各command後のstate hash、終了理由を記録する
+- state hashはルール上の盤面だけを対象にし、`log`/`events`とその通し番号を含めない。
+  演出や文言の修正で決定論検査が落ちると、本当のルール変更に気づけなくなるため
+- golden replay（`engine/test/golden/replay.json`）を固定。
+  作り直しは`npm --workspace engine run golden:update`で意図的に行う
+- 旧版保持方針を`REPLAY_RETENTION_POLICY`と`replayCompatibility`として実装。
+  engine/content/formatのどれか1つでも違うリプレイは`exact`以外を返し、今の版で流し直さない
+
+受入:
+
+- 記録した全61手を流し直し、各手のstate hashが一致することをgolden replayで検査
+- 1手でも書き換えると、その手番号を示して検査が落ちる
+- 同じ入力から毎回まったく同じ記録になる。seedが違えば結果も違う
+- 先攻をseedのコイントスで決めた試合も、ターン上限で引き分けた試合も再生できる
+- engine版/content版/format版のいずれかが違うリプレイは`exact`にならない
+
+検証: 2026-07-29にengine 205 tests（+28）、npm test 279件、engine/admin typecheck、
+Web/Admin production build、未公開データ漏洩検査を通過
+
+補足（P1で扱う）:
+
+- 「seedと完全ログは試合終了までプレイヤーへ渡さない」（設計11.4）はサーバー側の配信制御。
+  エンジンは入れ物と検査だけを持つ
+- `createBattle`は先攻を省略したときだけ乱数を1つ引くため、同じseedでも
+  「省略」と「明示」で山札の並びが変わる。replay headerへ`firstPlayerFromSeed`として記録し、
+  再生時は記録時と同じ呼び方を再現する
 
 ### OLG-006 現行文書とgolden deckを同期
 

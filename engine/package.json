@@ -8,7 +8,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "sim": "tsx src/sim/run.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "golden:update": "tsx test/golden/update.ts"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",

@@ -1,0 +1,650 @@
+{
+  "header": {
+    "replayFormatVersion": 1,
+    "engineVersion": "0.1.0",
+    "contentVersion": "c1-46b6387ea3376a10",
+    "formatVersionId": "FREE_V1@1",
+    "seed": 20260729,
+    "firstPlayer": 0,
+    "firstPlayerFromSeed": false,
+    "maxTurns": 200,
+    "decks": [
+      {
+        "characterIds": [
+          "1-A003-USR",
+          "1-A005-USR",
+          "1-A007-SSR"
+        ],
+        "cardIds": [
+          "1-A041-SR",
+          "1-A041-SR",
+          "1-A041-SR",
+          "1-A048-SR",
+          "1-A048-SR",
+          "1-A048-SR",
+          "1-A048-SR",
+          "1-A059-R",
+          "1-A059-R",
+          "1-A059-R",
+          "1-A059-R",
+          "1-A062-R",
+          "1-A062-R",
+          "1-A062-R",
+          "1-A068-R",
+          "1-A068-R",
+          "1-A068-R",
+          "1-A068-R",
+          "1-A083-R",
+          "1-A083-R",
+          "1-A083-R",
+          "1-A083-R",
+          "1-A097-UC",
+          "1-A097-UC",
+          "1-A123-C",
+          "1-A123-C",
+          "1-A123-C",
+          "1-A123-C",
+          "1-A128-C",
+          "1-A128-C",
+          "1-A128-C",
+          "1-A128-C",
+          "1-A030-C",
+          "1-A030-C",
+          "1-A003-USR",
+          "1-A003-USR",
+          "1-A005-USR",
+          "1-A005-USR",
+          "1-A007-SSR",
+          "1-A007-SSR"
+        ]
+      },
+      {
+        "characterIds": [
+          "1-A009-SR",
+          "1-A012-SR",
+          "1-A004-USR"
+        ],
+        "cardIds": [
+          "1-A038-USR",
+          "1-A038-USR",
+          "1-A038-USR",
+          "1-A038-USR",
+          "1-A075-R",
+          "1-A075-R",
+          "1-A075-R",
+          "1-A075-R",
+          "1-A079-R",
+          "1-A079-R",
+          "1-A079-R",
+          "1-A082-R",
+          "1-A082-R",
+          "1-A082-R",
+          "1-A082-R",
+          "1-A091-UC",
+          "1-A091-UC",
+          "1-A091-UC",
+          "1-A117-C",
+          "1-A117-C",
+          "1-A117-C",
+          "1-A117-C",
+          "1-A135-C",
+          "1-A135-C",
+          "1-A138-C",
+          "1-A138-C",
+          "1-A138-C",
+          "1-A138-C",
+          "1-A140-C",
+          "1-A140-C",
+          "1-A140-C",
+          "1-A140-C",
+          "1-A030-C",
+          "1-A030-C",
+          "1-A004-USR",
+          "1-A004-USR",
+          "1-A009-SR",
+          "1-A009-SR",
+          "1-A012-SR",
+          "1-A012-SR"
+        ]
+      }
+    ]
+  },
+  "commands": [
+    {
+      "index": 0,
+      "player": 0,
+      "action": {
+        "type": "endPlay"
+      },
+      "stateHash": "1b4399b23c471a7d"
+    },
+    {
+      "index": 1,
+      "player": 0,
+      "action": {
+        "type": "charge",
+        "handIndex": 4
+      },
+      "stateHash": "dd7fdb8769df72e6"
+    },
+    {
+      "index": 2,
+      "player": 0,
+      "action": {
+        "type": "charge",
+        "handIndex": 3
+      },
+      "stateHash": "96b5b7bd34792805"
+    },
+    {
+      "index": 3,
+      "player": 0,
+      "action": {
+        "type": "charge",
+        "handIndex": 2
+      },
+      "stateHash": "2f6881abca85e9e6"
+    },
+    {
+      "index": 4,
+      "player": 0,
+      "action": {
+        "type": "charge",
+        "handIndex": 1
+      },
+      "stateHash": "3f2c9f2fb2ce614b"
+    },
+    {
+      "index": 5,
+      "player": 0,
+      "action": {
+        "type": "endTurn"
+      },
+      "stateHash": "911206774784653b"
+    },
+    {
+      "index": 6,
+      "player": 1,
+      "action": {
+        "type": "playSkill",
+        "handIndex": 3
+      },
+      "stateHash": "b20e3949aa305238"
+    },
+    {
+      "index": 7,
+      "player": 1,
+      "action": {
+        "type": "endPlay"
+      },
+      "stateHash": "707e5838f21aa40a"
+    },
+    {
+      "index": 8,
+      "player": 1,
+      "action": {
+        "type": "charge",
+        "handIndex": 3
+      },
+      "stateHash": "47d0a8d8bd7bcb47"
+    },
+    {
+      "index": 9,
+      "player": 1,
+      "action": {
+        "type": "charge",
+        "handIndex": 2
+      },
+      "stateHash": "c3e235ad1ba9eb9e"
+    },
+    {
+      "index": 10,
+      "player": 1,
+      "action": {
+        "type": "charge",
+        "handIndex": 1
+      },
+      "stateHash": "371e4c2cfe95c9bd"
+    },
+    {
+      "index": 11,
+      "player": 1,
+      "action": {
+        "type": "endTurn"
+      },
+      "stateHash": "1bafb81995a9d381"
+    },
+    {
+      "index": 12,
+      "player": 0,
+      "action": {
+        "type": "playSkill",
+        "handIndex": 1
+      },
+      "stateHash": "956408f8606fba48"
+    },
+    {
+      "index": 13,
+      "player": 0,
+      "action": {
+        "type": "playSkill",
+        "handIndex": 1
+      },
+      "stateHash": "6244a1238912d939"
+    },
+    {
+      "index": 14,
+      "player": 0,
+      "action": {
+        "type": "endPlay"
+      },
+      "stateHash": "91e890fbb8c8d25b"
+    },
+    {
+      "index": 15,
+      "player": 0,
+      "action": {
+        "type": "charge",
+        "handIndex": 2
+      },
+      "stateHash": "334d1b30d79b7376"
+    },
+    {
+      "index": 16,
+      "player": 0,
+      "action": {
+        "type": "charge",
+        "handIndex": 1
+      },
+      "stateHash": "b76da19019de05cd"
+    },
+    {
+      "index": 17,
+      "player": 0,
+      "action": {
+        "type": "endTurn"
+      },
+      "stateHash": "b47e267d6d502fa7"
+    },
+    {
+      "index": 18,
+      "player": 1,
+      "action": {
+        "type": "playSkill",
+        "handIndex": 3
+      },
+      "stateHash": "5f70f3a1898224ae"
+    },
+    {
+      "index": 19,
+      "player": 1,
+      "action": {
+        "type": "endPlay"
+      },
+      "stateHash": "8e24de3ed3607e50"
+    },
+    {
+      "index": 20,
+      "player": 1,
+      "action": {
+        "type": "charge",
+        "handIndex": 3
+      },
+      "stateHash": "4dda2d68c03a882d"
+    },
+    {
+      "index": 21,
+      "player": 1,
+      "action": {
+        "type": "charge",
+        "handIndex": 2
+      },
+      "stateHash": "9b364bcf33050b6c"
+    },
+    {
+      "index": 22,
+      "player": 1,
+      "action": {
+        "type": "charge",
+        "handIndex": 1
+      },
+      "stateHash": "7146b23be6c56087"
+    },
+    {
+      "index": 23,
+      "player": 1,
+      "action": {
+        "type": "endTurn"
+      },
+      "stateHash": "7a434014e89eb7af"
+    },
+    {
+      "index": 24,
+      "player": 0,
+      "action": {
+        "type": "playSkill",
+        "handIndex": 3
+      },
+      "stateHash": "9f98fc740de50bd4"
+    },
+    {
+      "index": 25,
+      "player": 0,
+      "action": {
+        "type": "endPlay"
+      },
+      "stateHash": "b1f7630c3bc4560e"
+    },
+    {
+      "index": 26,
+      "player": 0,
+      "action": {
+        "type": "charge",
+        "handIndex": 3
+      },
+      "stateHash": "732fccb02d228239"
+    },
+    {
+      "index": 27,
+      "player": 0,
+      "action": {
+        "type": "charge",
+        "handIndex": 2
+      },
+      "stateHash": "53b3b9ccd11e4ae4"
+    },
+    {
+      "index": 28,
+      "player": 0,
+      "action": {
+        "type": "charge",
+        "handIndex": 1
+      },
+      "stateHash": "cec9e9d0676af1cb"
+    },
+    {
+      "index": 29,
+      "player": 0,
+      "action": {
+        "type": "endTurn"
+      },
+      "stateHash": "a000bdb94126e7fb"
+    },
+    {
+      "index": 30,
+      "player": 1,
+      "action": {
+        "type": "playSkill",
+        "handIndex": 4
+      },
+      "stateHash": "daf5fe0181cf57f8"
+    },
+    {
+      "index": 31,
+      "player": 1,
+      "action": {
+        "type": "endPlay"
+      },
+      "stateHash": "7d95398b3fabf606"
+    },
+    {
+      "index": 32,
+      "player": 1,
+      "action": {
+        "type": "charge",
+        "handIndex": 3
+      },
+      "stateHash": "bc8101f9a854c3ff"
+    },
+    {
+      "index": 33,
+      "player": 1,
+      "action": {
+        "type": "charge",
+        "handIndex": 2
+      },
+      "stateHash": "4272878e10c469aa"
+    },
+    {
+      "index": 34,
+      "player": 1,
+      "action": {
+        "type": "charge",
+        "handIndex": 1
+      },
+      "stateHash": "46ef2d03ef9de3c1"
+    },
+    {
+      "index": 35,
+      "player": 1,
+      "action": {
+        "type": "endTurn"
+      },
+      "stateHash": "8f7baebcfc268bd1"
+    },
+    {
+      "index": 36,
+      "player": 0,
+      "action": {
+        "type": "playSkill",
+        "handIndex": 4
+      },
+      "stateHash": "4ea99cb950bbd809"
+    },
+    {
+      "index": 37,
+      "player": 0,
+      "action": {
+        "type": "playCharacter",
+        "handIndex": 1
+      },
+      "stateHash": "c4a84c5b1e3e4e1d"
+    },
+    {
+      "index": 38,
+      "player": 0,
+      "action": {
+        "type": "playCharacter",
+        "handIndex": 2
+      },
+      "stateHash": "eebb3239242cf633"
+    },
+    {
+      "index": 39,
+      "player": 0,
+      "action": {
+        "type": "endPlay"
+      },
+      "stateHash": "b19beabead756405"
+    },
+    {
+      "index": 40,
+      "player": 0,
+      "action": {
+        "type": "charge",
+        "handIndex": 1
+      },
+      "stateHash": "d4db4cd549a69832"
+    },
+    {
+      "index": 41,
+      "player": 0,
+      "action": {
+        "type": "endTurn"
+      },
+      "stateHash": "582ecae26afa9b0c"
+    },
+    {
+      "index": 42,
+      "player": 1,
+      "action": {
+        "type": "playSkill",
+        "handIndex": 2
+      },
+      "stateHash": "f57f8ba7d34996e4"
+    },
+    {
+      "index": 43,
+      "player": 1,
+      "action": {
+        "type": "endPlay"
+      },
+      "stateHash": "19b6052fa6ac8ed2"
+    },
+    {
+      "index": 44,
+      "player": 1,
+      "action": {
+        "type": "charge",
+        "handIndex": 3
+      },
+      "stateHash": "1a0a675e0b9bc863"
+    },
+    {
+      "index": 45,
+      "player": 1,
+      "action": {
+        "type": "charge",
+        "handIndex": 2
+      },
+      "stateHash": "608bc784540f98ca"
+    },
+    {
+      "index": 46,
+      "player": 1,
+      "action": {
+        "type": "charge",
+        "handIndex": 1
+      },
+      "stateHash": "0ac4b044e65cfc95"
+    },
+    {
+      "index": 47,
+      "player": 1,
+      "action": {
+        "type": "endTurn"
+      },
+      "stateHash": "ba9c7fbdb270175d"
+    },
+    {
+      "index": 48,
+      "player": 0,
+      "action": {
+        "type": "endPlay"
+      },
+      "stateHash": "37937908879f30af"
+    },
+    {
+      "index": 49,
+      "player": 0,
+      "action": {
+        "type": "charge",
+        "handIndex": 4
+      },
+      "stateHash": "070ca67d5a01ee24"
+    },
+    {
+      "index": 50,
+      "player": 0,
+      "action": {
+        "type": "charge",
+        "handIndex": 3
+      },
+      "stateHash": "ea03e05238733fef"
+    },
+    {
+      "index": 51,
+      "player": 0,
+      "action": {
+        "type": "charge",
+        "handIndex": 2
+      },
+      "stateHash": "801b4ac89af8ecd6"
+    },
+    {
+      "index": 52,
+      "player": 0,
+      "action": {
+        "type": "charge",
+        "handIndex": 1
+      },
+      "stateHash": "967fe6183544c441"
+    },
+    {
+      "index": 53,
+      "player": 0,
+      "action": {
+        "type": "endTurn"
+      },
+      "stateHash": "0c6bfde8b8efc1aa"
+    },
+    {
+      "index": 54,
+      "player": 1,
+      "action": {
+        "type": "playEquipment",
+        "handIndex": 4,
+        "targetIndex": 0
+      },
+      "stateHash": "d0fc4994087b468d"
+    },
+    {
+      "index": 55,
+      "player": 1,
+      "action": {
+        "type": "playSkill",
+        "handIndex": 3
+      },
+      "stateHash": "a55a7bef7a8e8dbd"
+    },
+    {
+      "index": 56,
+      "player": 1,
+      "action": {
+        "type": "playSkill",
+        "handIndex": 2
+      },
+      "stateHash": "30ea74ab09ca6571"
+    },
+    {
+      "index": 57,
+      "player": 1,
+      "action": {
+        "type": "endPlay"
+      },
+      "stateHash": "bee59664cf5d4437"
+    },
+    {
+      "index": 58,
+      "player": 1,
+      "action": {
+        "type": "charge",
+        "handIndex": 1
+      },
+      "stateHash": "c9d949ad640741dc"
+    },
+    {
+      "index": 59,
+      "player": 1,
+      "action": {
+        "type": "endTurn"
+      },
+      "stateHash": "43e86958e086b1d4"
+    },
+    {
+      "index": 60,
+      "player": 0,
+      "action": {
+        "type": "playSkill",
+        "handIndex": 2
+      },
+      "stateHash": "72aa155bdd340acd"
+    }
+  ],
+  "result": {
+    "winner": 0,
+    "endReason": "wipeout",
+    "turns": 11,
+    "finalStateHash": "72aa155bdd340acd"
+  }
+}

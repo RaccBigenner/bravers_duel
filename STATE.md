@@ -1,7 +1,7 @@
 # STATE — BRAVER'S DUEL
 
 - 最終更新: 2026-07-29
-- フェーズ: G0 Foundation / P0（OLG-003・OLG-004完了、OLG-003P未完了、次はOLG-005）
+- フェーズ: G0 Foundation / P0（OLG-003〜005完了、OLG-003P未完了、次はOLG-006）
 
 ## プロジェクトの今
 
@@ -64,8 +64,13 @@
   保存時・参加時・試合開始前の3つの入口が同じ関数を呼ぶ。Web/管理画面もengine経由で同じ判定を使う。
   ルール文書に定義がない設定（最新N弾の数え方、制限カードの上限枚数）は、
   黙って無視せず読込時に落とす。どちらもP8で確定させる。
+- OLG-005（engine/content/format versionの固定）は完了。試合ごとに
+  engine版・content版・format版・seed・初期デッキ・全手・各手のstate hashを記録するreplay headerを実装し、
+  「同じ入力から同じ結果になる」ことをgolden replay（61手）で検査するようにした。
+  content版は公開済みカードと公開済み弾だけから作る（制作中カードの情報を公開ビルドへ載せないため）。
+  版が1つでも違うリプレイは、今の版で流し直さない。
 - OLG-003PはG0 exit前に必ず完了するproduction blockerとして並行管理し、完了順を取り違えない。
-- 次はOLG-005（engine/content/format versionの固定）。
+- 次はOLG-006（現行文書・全8プリセット・starter候補の同期）。その後にP0 exit review。
 - P2へNPCシングル市場を正式登録した。G2 Collection Closed Betaは固定買取/販売、有限な実在個体在庫、
   atomic quote/orderで開始する。固定価格のraw集計からpolicyを承認し、2〜4週間shadow計算する。
   日次±5%・基準80〜120%の動的価格を実注文へ使えるのはG8だけとし、G4以降の標本、
