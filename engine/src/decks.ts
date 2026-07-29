@@ -1,6 +1,7 @@
 /**
  * デッキの型・検証・サンプルデッキ生成。
- * ルール: docs/GAME_RULES.md 4章（キャラ3枚まで・カード40枚・同名3枚まで）
+ * ルール: docs/GAME_RULES.md 4章
+ * （キャラ3枠ちょうど・カード40枚・40枚側は同名4枚まで）
  */
 import { ALL_CARDS, cardById } from './cards';
 import { mulberry32, pickOne, shuffled, type Rng } from './rng';
@@ -32,8 +33,8 @@ export const DEFAULT_DECK_RULES: DeckRules = {
 export function deckProblems(deck: DeckList, rules: DeckRules = DEFAULT_DECK_RULES): string[] {
   const problems: string[] = [];
 
-  if (deck.characterIds.length < 1 || deck.characterIds.length > MAX_CHARACTERS) {
-    problems.push(`キャラクターは1〜${MAX_CHARACTERS}枚（今: ${deck.characterIds.length}枚）`);
+  if (deck.characterIds.length < 2 || deck.characterIds.length > MAX_CHARACTERS) {
+    problems.push(`キャラクターは2〜${MAX_CHARACTERS}枚（今: ${deck.characterIds.length}枚）`);
   }
 
   // 大型（legendaryLarge）はキャラクター枠を2つ使う
@@ -48,8 +49,8 @@ export function deckProblems(deck: DeckList, rules: DeckRules = DEFAULT_DECK_RUL
       /* 存在しないカードは下で報告される */
     }
   }
-  if (slots > MAX_CHARACTERS) {
-    problems.push(`キャラクター枠は${MAX_CHARACTERS}まで（大型は2枠）。今: ${slots}枠`);
+  if (slots !== MAX_CHARACTERS) {
+    problems.push(`キャラクター枠は${MAX_CHARACTERS}枠ちょうど（大型は2枠）。今: ${slots}枠`);
   }
   if (deck.cardIds.length !== rules.deckSize) {
     problems.push(`デッキは${rules.deckSize}枚（今: ${deck.cardIds.length}枚）`);
@@ -73,13 +74,23 @@ export function deckProblems(deck: DeckList, rules: DeckRules = DEFAULT_DECK_RUL
     }
   }
 
+  const characterCounts = new Map<string, number>();
+  for (const id of deck.characterIds) {
+    characterCounts.set(id, (characterCounts.get(id) ?? 0) + 1);
+  }
+  for (const [id, n] of characterCounts) {
+    if (n > 1) {
+      problems.push(`キャラクター枠の同名カードは1枚まで: ${id} が${n}枚`);
+    }
+  }
+
   const counts = new Map<string, number>();
   for (const id of deck.cardIds) {
     counts.set(id, (counts.get(id) ?? 0) + 1);
   }
   for (const [id, n] of counts) {
     if (n > rules.maxCopies) {
-      problems.push(`同名カードは${rules.maxCopies}枚まで: ${id} が${n}枚`);
+      problems.push(`40枚側の同名カードは${rules.maxCopies}枚まで: ${id} が${n}枚`);
     }
   }
 

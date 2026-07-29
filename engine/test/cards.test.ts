@@ -19,6 +19,16 @@ describe('カードマスターデータ', () => {
     expect(count('field')).toBe(4);
   });
 
+  it('LSRキャラクターは2枠を使うlegendaryLargeである', () => {
+    const lsrCharacters = ALL_CARDS.filter(
+      (c) => c.type === 'character' && c.rarity === 'LSR',
+    );
+    expect(lsrCharacters).not.toHaveLength(0);
+    for (const card of lsrCharacters) {
+      expect(card.size, `${card.id} ${card.name}`).toBe('legendaryLarge');
+    }
+  });
+
   it('id でカードを引ける', () => {
     expect(cardById('1-A001-LSR').name).toBe('[集合知]アイ');
     expect(() => cardById('存在しないID')).toThrow();

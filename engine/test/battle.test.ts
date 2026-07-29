@@ -62,11 +62,17 @@ describe('デッキのルール', () => {
     }
   });
 
-  it('枚数違い・同名5枚は不合格', () => {
+  it('枚数違い・40枚側の同名5枚は不合格', () => {
     const deck = sampleDeck(1);
     expect(deckProblems({ ...deck, cardIds: deck.cardIds.slice(1) })).not.toEqual([]);
     const fiveCopies = [...deck.cardIds.slice(5), ...Array(5).fill(deck.cardIds[0])];
     expect(deckProblems({ ...deck, cardIds: fiveCopies }).join('')).toContain('4枚まで');
+  });
+
+  it('キャラクター枠へ同名キャラクターを複数選ぶと不合格', () => {
+    const deck = sampleDeck(1);
+    const duplicateCharacters = { ...deck, characterIds: [CHAR_A, CHAR_A, CHAR_A] };
+    expect(deckProblems(duplicateCharacters).join('')).toContain('同名カードは1枚まで');
   });
 
   it('属性の多重集合チェック', () => {

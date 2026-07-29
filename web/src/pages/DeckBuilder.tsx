@@ -98,7 +98,7 @@ export function DeckBuilder({ initial, onUse, onBack }: {
     setCounts((prev) => {
       const next = new Map(prev);
       const n = Math.max(0, Math.min(MAX_COPIES_PER_CARD, (next.get(id) ?? 0) + delta));
-      if (delta > 0 && total >= DECK_SIZE && n > (prev.get(id) ?? 0)) return prev; // 50枚上限
+      if (delta > 0 && total >= DECK_SIZE && n > (prev.get(id) ?? 0)) return prev; // 40枚上限
       if (n === 0) next.delete(id);
       else next.set(id, n);
       return next;
@@ -160,7 +160,7 @@ export function DeckBuilder({ initial, onUse, onBack }: {
 
       {tab === 'chars' && (
         <>
-          <p className="builder-hint">戦うキャラクターを選ぼう（大型は2枠）。並び順＝アクターの交代順</p>
+          <p className="builder-hint">3枠ちょうど選ぼう（大型は2枠）。並び順＝アクターの交代順</p>
           <div className="char-grid">
             {allChars.map((c) => {
               const idx = chars.indexOf(c.id);

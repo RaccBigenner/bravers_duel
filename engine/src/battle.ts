@@ -1,13 +1,13 @@
 /**
  * バトルエンジン本体。
- * ルールの正しい情報源は docs/GAME_RULES.md（v0.4）。
+ * ルールの正しい情報源は docs/GAME_RULES.md（v0.10）。
  *
  * カード効果は effects/ の静的レジストリから引く。
  * - 効果はバトル状態に保持しない（カードが増えてもバトルのメモリは増えない）
  * - 効果の実行はスナップショット保護付き（エラー時は巻き戻してスキップ）
  * - ログは上限つき（長期戦でもメモリが伸び続けない）
  *
- * 未実装: 装備・フィールドカードのプレイ（ルール未決定）、選択が必要な一部の効果
+ * 選択が必要な一部のカード効果は、効果ごとの実装状況を参照する。
  */
 import { cardById } from './cards';
 import { containsAll, deckProblems, DEFAULT_DECK_RULES, type DeckList, type DeckRules } from './decks';

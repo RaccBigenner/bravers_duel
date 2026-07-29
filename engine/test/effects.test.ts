@@ -278,12 +278,16 @@ describe('アニマ（AI自動判断）', () => {
 });
 
 describe('サイズ・雷雲召喚・デッキから使用', () => {
-  it('大型キャラは2枠: ジエンド＋普通2枚は不合格、＋普通1枚は合格', () => {
+  it('キャラは3枠ちょうど: 大型＋普通1枚と普通3枚は合格、それ以外は不合格', () => {
     const base = sampleArchetypeDecks()[0].deck;
     const fourSlots = { ...base, characterIds: ['1-A002-LSR', ORUS, STOMY] }; // 2+1+1=4枠
     expect(deckProblems(fourSlots).join('')).toContain('大型は2枠');
     const threeSlots = { ...base, characterIds: ['1-A002-LSR', ORUS] }; // 2+1=3枠
     expect(deckProblems(threeSlots).filter((p) => p.includes('枠'))).toEqual([]);
+    const twoSlots = { ...base, characterIds: [ORUS, STOMY] }; // 1+1=2枠
+    expect(deckProblems(twoSlots).join('')).toContain('3枠ちょうど');
+    const threeNormalCharacters = { ...base, characterIds: [ORUS, STOMY, DADA] }; // 1+1+1=3枠
+    expect(deckProblems(threeNormalCharacters).filter((p) => p.includes('枠'))).toEqual([]);
   });
 
   it('雷雲召喚: ダメージを与えたキャラの数だけ敵APが減る', () => {

@@ -1,0 +1,75 @@
+name: Online service task
+description: オンライン常設版の実装・検証タスク
+title: "[OLG-] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        仕様の正本は `docs/ONLINE_SERVICE_DESIGN_2026-07-29.md`、ルールの正本は `docs/GAME_RULES.md` です。
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - engine
+        - protocol
+        - server
+        - web
+        - admin
+        - data
+        - operations
+    validations:
+      required: true
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Player / operator outcome
+      description: 完了時にプレイヤーまたは運用者ができるようになること
+      placeholder: 例：バトル中にリロードしても、同じ手番と残り時間へ復帰できる。
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: このIssueで変更する範囲と、明示的に変更しない範囲
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: チェック可能な完了条件
+      placeholder: |
+        - [ ] 正常系
+        - [ ] 再送・切断・複数タブ
+        - [ ] 権限/秘匿情報
+    validations:
+      required: true
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: 先行Issue、外部設定、未決定事項
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification
+      description: unit/integration/E2E、対象端末、計測方法
+    validations:
+      required: true
+
+  - type: textarea
+    id: rollout
+    attributes:
+      label: Migration / rollout / rollback
+      description: DB互換、feature flag、監視、戻し方。不要なら「なし」。
+    validations:
+      required: true
