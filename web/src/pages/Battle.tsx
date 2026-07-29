@@ -1,6 +1,7 @@
 import {
   cardById,
   effectiveAttributes,
+  eligibleUsingChars,
   isCharAlive,
   maxHpOf,
   predictSkill,
@@ -753,7 +754,10 @@ function BattleInner({ setup, onExit, onRematch }: {
   interface DropZone {
     key: string;
     rect: DOMRect;
-    action: BattleAction;
+    /** そのまま実行する行動 */
+    action?: BattleAction;
+    /** 落としたあとにさらに相手を選ぶ必要があるとき */
+    follow?: NonNullable<Targeting>;
   }
 
   const [drag, setDrag] = useState<{
@@ -769,72 +773,123 @@ function BattleInner({ setup, onExit, onRematch }: {
   /** ドラッグで置いた場所。使用演出の出発点をそこに差し替える（指の位置から続けて飛ぶ） */
   const playOriginRef = useRef<Spot | null>(null);
 
+  /**
+   * カードの置き場所。
+   *
+   * **スキルは「使うキャラ」に置く。** 攻撃カードを相手に置く作りにしていたが、
+   * スキルには必ず使用主体がいるので、光るのも落とすのも自分側のキャラが正しい
+   * （社長指摘 2026-07-29）。使用主体はエンジンの eligibleUsingChars が唯一の正で、
+   * 属性条件を満たすキャラだけが返る（ふつうはアクター、控えからも使えるスキルなら控えも）。
+   *
+   * 落としたあとにさらに選ぶ必要があるカード（攻撃相手を選ぶ／回復先を選ぶ）は、
+   * follow を持たせて従来の対象選択モードへ渡す。
+   */
   function dropZonesFor(handIndex: number): DropZone[] {
     const root = rootRef.current;
-    if (!root) return [];
+    const card = safeCard(me.hand[handIndex]);
+    if (!root || !card) return [];
+    const acts = myActions.filter((a) => 'handIndex' in a && a.handIndex === handIndex);
+    if (acts.length === 0) return [];
+
     const zones: DropZone[] = [];
     const seen = new Set<string>();
-    const push = (key: string, sel: string, action: BattleAction) => {
+    const rectOf = (sel: string) => root.querySelector<HTMLElement>(sel)?.getBoundingClientRect() ?? null;
+    const pushChar = (side: 0 | 1, i: number, rest: Omit<DropZone, 'key' | 'rect'>) => {
+      const key = `char:${side}-${i}`;
       if (seen.has(key)) return;
-      const el = root.querySelector<HTMLElement>(sel);
-      if (!el) return;
+      const rect = rectOf(`[data-slot="${side}-${i}"]`);
+      if (!rect) return;
       seen.add(key);
-      zones.push({ key, rect: el.getBoundingClientRect(), action });
+      zones.push({ key, rect, ...rest });
     };
-    const aliveOf = (side: 0 | 1) =>
-      view.players[side].characters.map((_, i) => i).filter((i) => isCharAlive(view, side, i));
 
-    for (const a of myActions) {
-      if (!('handIndex' in a) || a.handIndex !== handIndex) continue;
-      switch (a.type) {
-        case 'charge':
-          push('ap', '.zone-col:not(.enemy) .pile.ap', a);
-          break;
-        case 'playField':
-          push('field', '.strip-field', a);
-          break;
-        case 'playEquipment':
-          push(`char:0-${a.targetIndex}`, `[data-slot="0-${a.targetIndex}"]`, a);
-          break;
-        case 'playCharacter':
-          for (const i of aliveOf(PLAYER)) push(`char:0-${i}`, `[data-slot="0-${i}"]`, a);
-          break;
-        case 'playSkill': {
-          if (a.targetIndex !== undefined) {
-            push(`char:1-${a.targetIndex}`, `[data-slot="1-${a.targetIndex}"]`, a);
-            break;
-          }
-          if (a.healTargetIndex !== undefined) {
-            push(`char:0-${a.healTargetIndex}`, `[data-slot="0-${a.healTargetIndex}"]`, a);
-            break;
-          }
-          if (a.usingIndex !== undefined) {
-            push(`char:0-${a.usingIndex}`, `[data-slot="0-${a.usingIndex}"]`, a);
-            break;
-          }
-          // 対象を選ばないカードは、置き場所を効果の targeting から決める
-          // （どこに置いても行動は同じだが、「どこへ向けるカードか」は見せたい）
-          const card = safeCard(me.hand[handIndex]);
-          if (card?.type !== 'skill') break;
-          if (card.valueType === 'attack') {
-            const t = skillEffectOf(card.id)?.targeting ?? 'actor';
-            const idxs =
-              t === 'all'
-                ? aliveOf(ENEMY)
-                : t === 'standby'
-                  ? aliveOf(ENEMY).filter((i) => i !== foe.actorIndex)
-                  : [foe.actorIndex];
-            for (const i of idxs) push(`char:1-${i}`, `[data-slot="1-${i}"]`, a);
-          } else {
-            for (const i of aliveOf(PLAYER)) push(`char:0-${i}`, `[data-slot="0-${i}"]`, a);
-          }
-          break;
+    // 使うキャラがいないものは、ゾーンそのものが置き場所
+    const chargeAct = acts.find((a) => a.type === 'charge');
+    if (chargeAct) {
+      const rect = rectOf('.zone-col:not(.enemy) .pile.ap');
+      if (rect) zones.push({ key: 'ap', rect, action: chargeAct });
+    }
+    const fieldAct = acts.find((a) => a.type === 'playField');
+    if (fieldAct) {
+      const rect = rectOf('.strip-field');
+      if (rect) zones.push({ key: 'field', rect, action: fieldAct });
+    }
+
+    // 装備は「装備するキャラ」、同名キャラ回復は「その同名キャラ」が置き場所
+    for (const a of acts) {
+      if (a.type === 'playEquipment') pushChar(PLAYER, a.targetIndex, { action: a });
+    }
+    const charAct = acts.find((a) => a.type === 'playCharacter');
+    if (charAct && card.type === 'character') {
+      me.characters.forEach((c, i) => {
+        if (c.name === card.name && isCharAlive(view, PLAYER, i)) pushChar(PLAYER, i, { action: charAct });
+      });
+    }
+
+    // スキルは「使うキャラ」が置き場所
+    const skillActs = acts.filter((a) => a.type === 'playSkill');
+    if (skillActs.length > 0 && card.type === 'skill') {
+      const withUsing = skillActs.filter((a) => a.usingIndex !== undefined);
+      if (withUsing.length > 0) {
+        // 使うキャラを選べるスキル。その候補がそのまま置き場所になる
+        for (const a of withUsing) pushChar(PLAYER, a.usingIndex!, { action: a });
+      } else {
+        const needTarget = skillActs.filter((a) => a.targetIndex !== undefined);
+        const needHeal = skillActs.filter((a) => a.healTargetIndex !== undefined);
+        let rest: Omit<DropZone, 'key' | 'rect'>;
+        if (needTarget.length > 1) {
+          rest = { follow: targetingFor(ENEMY, '攻撃する相手を選んでください', needTarget, 'targetIndex', card) };
+        } else if (needHeal.length > 1) {
+          rest = { follow: targetingFor(PLAYER, '回復する味方を選んでください', needHeal, 'healTargetIndex', card) };
+        } else {
+          rest = { action: skillActs[0] };
         }
-        default:
-          break;
+        for (const ci of eligibleUsingChars(state, PLAYER, card)) pushChar(PLAYER, ci, rest);
       }
     }
     return zones;
+  }
+
+  /** 「対象を選ぶ」状態を組み立てる（予定の数字もここで付ける） */
+  function targetingFor(
+    side: 0 | 1,
+    hint: string,
+    acts: BattleAction[],
+    field: 'targetIndex' | 'healTargetIndex',
+    card: SkillCard,
+  ): NonNullable<Targeting> {
+    const actions = new Map<number, BattleAction>();
+    for (const a of acts) {
+      const i = (a as unknown as Record<string, number | undefined>)[field];
+      if (i !== undefined) actions.set(i, a);
+    }
+    const p = predictSkill(state, PLAYER, card);
+    return {
+      side,
+      hint,
+      actions,
+      preview: p ? { side, indexes: [...actions.keys()], kind: p.kind, value: p.value } : undefined,
+    };
+  }
+
+  /** そのスキルが実際に効く相手（予定の数字を出す場所）。ドロップ先とは別 */
+  function previewTargetsFor(card: SkillCard): { side: 0 | 1; indexes: number[] } | null {
+    const aliveOf = (side: 0 | 1) =>
+      view.players[side].characters.map((_, i) => i).filter((i) => isCharAlive(view, side, i));
+    if (card.valueType === 'attack') {
+      const t = skillEffectOf(card.id)?.targeting ?? 'actor';
+      const indexes =
+        t === 'all'
+          ? aliveOf(ENEMY)
+          : t === 'standby'
+            ? aliveOf(ENEMY).filter((i) => i !== foe.actorIndex)
+            : t === 'choose'
+              ? aliveOf(ENEMY) // どれを狙うかは落としてから選ぶ
+              : [foe.actorIndex];
+      return { side: ENEMY, indexes };
+    }
+    if (card.valueType === 'heal') return { side: PLAYER, indexes: aliveOf(PLAYER) };
+    return null;
   }
 
   function beginDrag(handIndex: number, x: number, y: number) {
@@ -845,24 +900,26 @@ function BattleInner({ setup, onExit, onRematch }: {
     dragPosRef.current = { x, y };
     setDrag({ handIndex, cardId, x, y, zones, over: null });
 
-    // 掴んでいる間、置ける相手を光らせて「置くとどうなるか」を出す。
-    // 対象選択モードの仕組みをそのまま使うので、ダメージ予定（B-2）もここで効く。
+    // 掴んでいる間、置ける場所（＝使用主体）を光らせる。
+    // ただし「こうなる」の数字は実際に効く相手の上に出す（攻撃なら相手側）。
     const charZones = zones.filter((z) => z.key.startsWith('char:'));
-    if (charZones.length > 0) {
-      const side = Number(charZones[0].key.slice(5, 6)) as 0 | 1;
-      const map = new Map<number, BattleAction>();
-      for (const z of charZones) {
-        const [sd, ci] = z.key.slice(5).split('-').map(Number);
-        if (sd === side) map.set(ci, z.action);
-      }
-      let effect: NonNullable<Targeting>['effect'];
-      const card = safeCard(cardId);
-      if (card?.type === 'skill') {
-        const p = predictSkill(state, PLAYER, card);
-        if (p) effect = { kind: p.kind, value: p.value };
-      }
-      setTargeting({ side, hint: '', actions: map, effect });
+    if (charZones.length === 0) return;
+    const side = Number(charZones[0].key.slice(5, 6)) as 0 | 1;
+    const actions = new Map<number, BattleAction>();
+    for (const z of charZones) {
+      const [sd, ci] = z.key.slice(5).split('-').map(Number);
+      // 落とす場所を光らせるだけ。タップで発動させたいわけではないので action は入れない
+      if (sd === side && z.action) actions.set(ci, z.action);
+      else if (sd === side) actions.set(ci, { type: 'pass' });
     }
+    const card = safeCard(cardId);
+    let preview: NonNullable<Targeting>['preview'];
+    if (card?.type === 'skill') {
+      const p = predictSkill(state, PLAYER, card);
+      const tgt = previewTargetsFor(card);
+      if (p && tgt) preview = { side: tgt.side, indexes: tgt.indexes, kind: p.kind, value: p.value };
+    }
+    setTargeting({ side, hint: '', actions, preview });
   }
 
   function hitZone(zones: DropZone[], x: number, y: number): DropZone | null {
@@ -911,7 +968,12 @@ function BattleInner({ setup, onExit, onRematch }: {
     playOriginRef.current = { x, y, w: handW };
     // 手札が減ると番号がずれるので、チャージの選択は白紙に戻す
     setChargeSel(new Set());
-    act(hit.action);
+    if (hit.action) {
+      act(hit.action);
+      return;
+    }
+    // 使うキャラは決まったが、まだ相手を選ぶ必要があるカード
+    if (hit.follow) setTargeting(hit.follow);
   }
 
   /** 手札1枚ぶんのジェスチャ。掴む／長押しで見る／タップ を1か所で捌く */
@@ -1094,12 +1156,12 @@ function BattleInner({ setup, onExit, onRematch }: {
       return;
     }
     // 対象を選ぶ間、それぞれの相手に「HP いくつ → いくつ」を出すための予測
-    let effect: NonNullable<Targeting>['effect'];
+    let preview: NonNullable<Targeting>['preview'];
     if (card.type === 'skill') {
       const p = predictSkill(state, PLAYER, card);
-      if (p) effect = { kind: p.kind, value: p.value };
+      if (p) preview = { side, indexes: [...map.keys()], kind: p.kind, value: p.value };
     }
-    setTargeting({ side, hint, actions: map, effect });
+    setTargeting({ side, hint, actions: map, preview });
   }
 
   /**

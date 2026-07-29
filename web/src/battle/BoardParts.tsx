@@ -19,13 +19,24 @@ const ENEMY = 1 as const;
  */
 const FRONT_SQUASH = 0.58;
 
-/** 対象選択モード。合法手から導出した「選べる対象 → 実行する行動」の表を持つ */
+/**
+ * 光らせる対象と、そこで起きることの表。
+ *
+ * 「光る場所」と「こうなる場所」は同じとは限らない。
+ * カードをドラッグしている間は**使用主体（自分のキャラ）**が光るが、
+ * ダメージが入るのは**相手**なので、予定は相手の上に出す。
+ */
 export type Targeting = {
-  side: 0 | 1; // 対象側
+  side: 0 | 1; // 光る（選べる）側
   hint: string;
   actions: Map<number, BattleAction>; // charIndex → action
-  /** 選んだらどうなるか。対象の上に「9 → 3」で出す（装備など数字が無いものは無し） */
-  effect?: { kind: 'attack' | 'heal' | 'guard' | 'support'; value: number };
+  /** 「HP 9 → 3」を出す相手。光る側とは別 */
+  preview?: {
+    side: 0 | 1;
+    indexes: number[];
+    kind: 'attack' | 'heal' | 'guard' | 'support';
+    value: number;
+  };
 } | null;
 
 /**
@@ -250,18 +261,23 @@ export function Formation({ side, state, pops, targeting, onTap, koShown, cardW,
                 </span>
               )}
               {/* 選ぶとどうなるか。今までは「予想ダメージ」がプレビューの中にしか無く、
-               * 対象を選ぶ画面では何も分からなかった（B-2 ダメージ予定） */}
-              {alive && selectableSet?.has(i) && targeting?.effect && targeting.effect.value > 0 && (
-                <span className={`target-preview ${targeting.effect.kind}`}>
-                  {hp}
-                  <em>→</em>
-                  <b>
-                    {targeting.effect.kind === 'heal'
-                      ? Math.min(maxHp, hp + targeting.effect.value)
-                      : Math.max(0, hp - targeting.effect.value)}
-                  </b>
-                </span>
-              )}
+               * 対象を選ぶ画面では何も分からなかった（B-2 ダメージ予定）。
+               * 出す場所は「光る場所」ではなく「実際に効く相手」 */}
+              {alive &&
+                targeting?.preview &&
+                targeting.preview.side === side &&
+                targeting.preview.indexes.includes(i) &&
+                targeting.preview.value > 0 && (
+                  <span className={`target-preview ${targeting.preview.kind}`}>
+                    {hp}
+                    <em>→</em>
+                    <b>
+                      {targeting.preview.kind === 'heal'
+                        ? Math.min(maxHp, hp + targeting.preview.value)
+                        : Math.max(0, hp - targeting.preview.value)}
+                    </b>
+                  </span>
+                )}
               {alive && (
                 <div className="char-status">
                   <div className="hp-bar">
