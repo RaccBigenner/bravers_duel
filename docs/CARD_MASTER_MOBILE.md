@@ -114,12 +114,34 @@ Pages の環境変数 `GITHUB_TOKEN`（GitHub の fine-grained PAT）は **有�
 ```
 cd admin
 npx vite build
-npx wrangler pages deploy dist --project-name bravers-admin
+npx wrangler pages deploy dist --project-name bravers-admin --branch main
 ```
 
 ## 管理画面のプログラムを直したときも同じ
 
 上の再デプロイコマンドを流せば反映される。
+
+### ⚠ よくある間違い
+
+**GitHub に push しても管理画面は変わらない。**
+公開サイト（GitHub Pages）は main への push で自動デプロイされるが、
+管理画面は Cloudflare Pages にあり、**上のコマンドを手で流さないと更新されない**。
+push だけして「反映した」と思い込む事故が実際に起きた。
+
+**`--branch main` を必ず付ける。**
+wrangler は「今いる git ブランチ名」をそのまま Cloudflare のブランチとして送る。
+作業ブランチ（例 `feat/xxx`）にいるまま流すと **プレビュー環境にしか入らず**、
+`cards.racc.games` は古いままになる。デプロイ後は
+
+```
+npx wrangler pages deployment list --project-name bravers-admin
+```
+
+で先頭行が `Production` / `main` になっているか必ず確かめる。
+
+なお `cards.racc.games` は Cloudflare Access で守られているため、
+curl などで外から中身を取って確認することはできない（302 が返る）。
+最終確認はブラウザで開いて目で見る。
 
 ## セキュリティ
 

@@ -217,9 +217,12 @@ function masterApi(): Plugin {
             // その弾のファイルを一度だけ書き換える。
             // renames が付いていれば画像も一緒に引っ越す（id がファイル名なので、
             // これをやらないと採番し直した瞬間に全部の絵が迷子になる）。
+            // cards を省く（null）と「画像の引っ越しだけ」になる。
+            // レアリティを変えて id が変わった時に、カード本体は save-card が既に
+            // 書いているので、ここでは絵だけ動かせばよい
             const { vol, cards, renames } = await readBody(req);
-            if (typeof vol !== 'number' || !Array.isArray(cards)) {
-              return sendJson(res, 400, { error: 'vol と cards が必要' });
+            if (typeof vol !== 'number' || (cards != null && !Array.isArray(cards))) {
+              return sendJson(res, 400, { error: 'vol が必要（cards は配列か null）' });
             }
             const setsForBulk = loadSets();
             const lockedBulk = volLockError(vol, setsForBulk);
@@ -227,16 +230,29 @@ function masterApi(): Plugin {
 
             // 画像を先に動かす。カードだけ先に書いて画像で失敗すると、
             // 新しい id に対応する絵が無い状態になり、どこが欠けたか分からなくなる
+            // 採番し直すと A→B, B→C のように「移動先が別の移動元」になる（入れ替え・玉突き）。
+            // 順に上書きすると先に動かした側が潰れる。必ず全部を退避してから配り直す
             let moved = 0;
-            for (const { from, to } of (renames ?? []) as { from: string; to: string }[]) {
-              if (!from || !to || from === to) continue;
-              for (const dir of [WIP_IMAGES, IMAGES]) {
-                const src = resolve(dir, `${from}.webp`);
+            const renameList = ((renames ?? []) as { from: string; to: string }[]).filter(
+              (r) => r?.from && r?.to && r.from !== r.to,
+            );
+            for (const dir of [WIP_IMAGES, IMAGES]) {
+              const held: { to: string; buf: Buffer }[] = [];
+              for (const r of renameList) {
+                const src = resolve(dir, `${r.from}.webp`);
                 if (!existsSync(src)) continue;
-                copyFileSync(src, resolve(dir, `${to}.webp`));
+                held.push({ to: r.to, buf: readFileSync(src) });
                 unlinkSync(src);
+              }
+              for (const h of held) {
+                mkdirSync(dir, { recursive: true });
+                writeFileSync(resolve(dir, `${h.to}.webp`), h.buf);
                 moved++;
               }
+            }
+
+            if (cards == null) {
+              return sendJson(res, 200, { ok: true, savedTo: '(画像のみ)', saved: 0, movedImages: moved });
             }
 
             // 保存先は1枚目の振り分けに合わせる（弾単位で必ず同じ側に入る）

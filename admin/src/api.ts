@@ -47,11 +47,6 @@ export interface MasterSet {
   status: CardStatus;
   releasedAt: string;
   codename?: string;
-  /**
-   * 採番を確定したか。true になったら並び替えも採番もできない。
-   * 番号が刷られたカードの順番を後から動かすと、印刷物やメモと食い違うため。
-   */
-  codesLocked?: boolean;
 }
 
 export interface Master {
@@ -132,6 +127,26 @@ export async function saveCards(
     throw new Error(`一括保存失敗: ${(body as { error?: string }).error ?? res.status}`);
   }
   return res.json();
+}
+
+/**
+ * カード画像を別の id へ引っ越す。
+ * id は「弾-コード-レアリティ」なので、レアリティやコードを変えると id が変わる。
+ * 画像のファイル名は id そのものなので、これをやらないと絵が迷子になる。
+ * 元の画像が無ければ何もしない（moved:false）。
+ */
+export async function renameImage(vol: number, from: string, to: string): Promise<{ moved: boolean }> {
+  const res = await fetch('/api/save-cards', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ vol, cards: null, renames: [{ from, to }] }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(String((body as { error?: string }).error ?? res.status));
+  }
+  const r = (await res.json()) as { movedImages: number };
+  return { moved: r.movedImages > 0 };
 }
 
 export async function deleteCard(id: string, vol: number): Promise<void> {

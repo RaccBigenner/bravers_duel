@@ -431,3 +431,9 @@ textarea { resize: vertical; }
   .order-confirm { margin-bottom: calc(var(--tabbar-h) + 24px); }
   .stats-tab { padding-bottom: calc(var(--tabbar-h) + 24px); }
 }
+/* 押せないボタンは押せないように見せる。
+   .primary に金の背景を付けたせいで、無効でも押せそうに見えて
+   「ボタンが効かない」と受け取られた */
+.order-actions button:disabled,
+.center-tabs button:disabled { opacity: 0.4; cursor: not-allowed; }
+.order-note .blocked { color: var(--gold); }

@@ -13,6 +13,7 @@ import {
   fetchMaster,
   fileToWebp,
   publishSet,
+  renameImage,
   saveCard,
   saveCards,
   saveImage,
@@ -270,6 +271,12 @@ export function App() {
         await deleteCard(originalId, card.vol);
       }
       const res = await saveCard(card);
+      // id は「弾-コード-レアリティ」なので、レアリティを変えると id が変わる。
+      // 画像のファイル名は id そのものなので、一緒に引っ越さないと絵が迷子になる
+      // （実際に第2弾で8枚が「画像なし」になっていた）。
+      if (originalId && originalId !== card.id) {
+        await renameImage(card.vol, originalId, card.id).catch((e) => flash(`画像の引っ越しに失敗: ${e}`));
+      }
       applyCardLocally(stripForType(card), originalId);
       setDraftCard(null); // 下書きを確定
       // 保存を待っている間に「← 一覧へ」を押していたら、勝手に開き直さない
@@ -446,25 +453,15 @@ export function App() {
   }
 
   /**
-   * 採番の確定。カードのIDと画像を同時に動かし、弾に「確定済み」の印を付ける。
-   * 印を付けた後は並び替えも採番もできない。
+   * 採番。カードのIDと画像を同時に動かす。
+   * 公開するまでは何度でもやり直せる（公開後はサーバ側が変更を拒否する）。
    */
   async function onConfirmCodes(renumbered: MasterCard[], renames: { from: string; to: string }[]) {
     if (!currentSet) return;
     setSaving(true);
     try {
       const r = await saveCards(vol, renumbered, renames);
-      const lockedSet: MasterSet = { ...currentSet, codesLocked: true };
-      await saveSet(lockedSet);
-      setMaster((m) =>
-        m
-          ? {
-              ...m,
-              cards: [...m.cards.filter((c) => c.vol !== vol), ...renumbered],
-              sets: [...m.sets.filter((s) => s.vol !== vol), lockedSet].sort((a, b) => a.vol - b.vol),
-            }
-          : m,
-      );
+      setMaster((m) => (m ? { ...m, cards: [...m.cards.filter((c) => c.vol !== vol), ...renumbered] } : m));
       setSelectedId(null);
       // 画像の版番号（?v=）は GitHub 側の sha なので、引っ越し後は読み直さないと合わない
       await reload();
@@ -483,6 +480,7 @@ export function App() {
         set={currentSet}
         images={images}
         saving={saving}
+        released={locked}
         onSaveOrder={onSaveOrder}
         onConfirmCodes={onConfirmCodes}
       />
