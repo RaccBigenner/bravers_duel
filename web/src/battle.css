@@ -9,21 +9,46 @@
   gap: 4px;
   padding: 6px 8px 10px;
   box-sizing: border-box;
-  /* 卓＝真上から見たバトルマップ（プレイマット）。
-   * タイルの繰り返しではなく1枚絵なので cover で敷く。
-   * カードが主役なので、明るい草地のままだと札が沈む。暗幕と周辺減光を重ねて沈める。
-   * 中央だけ少し明るく残すのは「卓の上のライト」の表現（既存の演出と同じ考え方）。 */
+  background: #10131b;
+  overflow: hidden;
+  position: relative;
+  /* ピンチズーム等で画面がずれて山札やAPが見えなくなるのを防ぐ */
+  touch-action: none;
+}
+
+/* ============ 卓（プレイマット） ============
+ * 真上から見たバトルマップ。タイルの繰り返しではなく1枚絵なので cover で敷く。
+ * カードが主役なので、明るい草地のままだと札が沈む。暗幕と周辺減光を重ねて沈める。
+ * 中央だけ少し明るく残すのは「卓の上のライト」の表現。
+ *
+ * ★ 独立した「面」にしてあるのは、カメラワークに卓が付いてくるようにするため。
+ *   battle-root の背景として敷いていた頃は、カメラが寄っても卓だけ止まっていて、
+ *   カードが卓の上を滑っていくように見えていた（社長指摘 2026-07-29）。
+ *   画面より大きく取ってあるので、拡大しても端が出ない。 */
+.table-plane {
+  position: absolute;
+  inset: -22%;
+  z-index: 0;
+  pointer-events: none;
   background:
     radial-gradient(ellipse at 50% 44%, rgba(255, 228, 160, 0.12), transparent 58%),
     radial-gradient(ellipse at 50% 46%, transparent 34%, rgba(6, 8, 14, 0.42) 100%),
     linear-gradient(rgba(8, 10, 18, 0.36), rgba(6, 8, 14, 0.2) 45%, rgba(8, 10, 18, 0.42)),
     url('./assets/bg_mat.webp') center / cover no-repeat,
     #10131b;
-  overflow: hidden;
-  position: relative;
-  /* ピンチズーム等で画面がずれて山札やAPが見えなくなるのを防ぐ */
-  touch-action: none;
+  /* 盤と同じ支点・同じ緩急で動かす。角度（rotateX）は平らな地面には効かないので、
+   * 効きの大きい拡大と上下だけを合わせる */
+  transform-origin: 50% 88%;
+  transform: scale(1.04);
+  transition: transform 0.7s cubic-bezier(0.3, 0.08, 0.24, 1);
+  will-change: transform;
 }
+/* 上下の量は「盤が実際に動いたピクセル数」に合わせてある。
+ * 盤は3Dの遠近で translateY が圧縮されるので、同じ % を入れると卓だけ速く滑る
+ * （実測: 味方寄りで盤 -10.2px に対し卓 -14.8px だった）。
+ * この面は inset:-22% で画面より大きいぶん、1% あたりの移動量も大きい。 */
+.battle-root.cam-ally .table-plane { transform: scale(1.12) translateY(-0.76%); }
+.battle-root.cam-enemy .table-plane { transform: scale(1.12) translateY(4.04%); }
 
 /* ============ フィールドの絵を卓の上に敷く ============
  * 卓（バトルマップ）は消さずに残し、その上に薄く重ねて「その土地になる」。
@@ -863,6 +888,19 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
 
 /* 掴んでいる間、元の位置のカードは消す（同じ札が2枚あるように見えないため） */
 .hand-card.dragging { opacity: 0; }
+
+/* 盤面のカードは、ブラウザ既定の「画像をドラッグ」に横取りさせない。
+ * 横取りされると pointerup が来なくなり、掴んだまま戻らなくなる */
+.hand-card,
+.hand-card img,
+.drag-card,
+.drag-card img,
+.char-slot img,
+.pile img {
+  -webkit-user-drag: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
 
 .drag-card {
   position: fixed;
@@ -2136,11 +2174,12 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
 
 /* ============ カメラワーク ============
    ポーズは3つだけ: デフォルト / 味方寄り / 敵寄り。
-   「寄る」= 角度を浅くして少し拡大。動かしすぎない */
-.board.cam-ally {
+   「寄る」= 角度を浅くして少し拡大。動かしすぎない。
+   クラスは .battle-root に付ける（盤だけでなく卓も一緒に動かすため） */
+.battle-root.cam-ally .board {
   transform: rotateX(7deg) scale(1.12) translateY(-1.5%);
 }
-.board.cam-enemy {
+.battle-root.cam-enemy .board {
   transform: rotateX(7deg) scale(1.12) translateY(8%);
 }
 

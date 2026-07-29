@@ -11,7 +11,7 @@ import {
   type CharacterCard,
   type SkillCard,
 } from '@bravers/engine';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { BattleSetup } from '../App';
 import { CardFrame } from '../CardFrame';
 import { IMG } from '../cardAssets';
@@ -892,6 +892,37 @@ function BattleInner({ setup, onExit, onRematch }: {
     return null;
   }
 
+  /** 掴みを必ず終わらせるための保険。掴んだ要素の pointerup だけには頼らない */
+  const cancelDrag = useCallback(() => {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    setDrag(null);
+    setTargeting(null);
+  }, []);
+
+  useEffect(() => {
+    if (!drag) return;
+    // 画像の既定のドラッグに横取りされるなどして要素の pointerup が来なくても、
+    // window で拾えば掴みっぱなしにならない
+    const onUp = (e: PointerEvent) => endDrag(e.clientX, e.clientY);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', cancelDrag);
+    window.addEventListener('blur', cancelDrag);
+    return () => {
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', cancelDrag);
+      window.removeEventListener('blur', cancelDrag);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drag, cancelDrag]);
+
+  // 掴んでいた札が手札から無くなったら（使った・チャージした）、掴みも終わらせる。
+  // ここが無いと「使ったはずのカードがカーソルに付いてくる」ことになる
+  useEffect(() => {
+    if (drag && me.hand[drag.handIndex] !== drag.cardId) cancelDrag();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me.hand.join(','), drag, cancelDrag]);
+
   function beginDrag(handIndex: number, x: number, y: number) {
     const cardId = me.hand[handIndex];
     if (!cardId) return;
@@ -946,9 +977,12 @@ function BattleInner({ setup, onExit, onRematch }: {
 
   function endDrag(x: number, y: number) {
     const d = dragRef.current;
+    if (!d) return;
+    // ref も即座に落とす。setDrag は次の描画まで反映されないので、
+    // 要素側と window 側の両方から呼ばれると同じ行動が2回走ってしまう
+    dragRef.current = null;
     setDrag(null);
     setTargeting(null);
-    if (!d) return;
     const hit = hitZone(d.zones, x, y);
     if (!hit) {
       // 置けない場所で離したら手札へ戻す（何も起きない、を目に見える形で伝える）
@@ -1262,6 +1296,7 @@ function BattleInner({ setup, onExit, onRematch }: {
         // キャラ以外の置き場所（APゾーン・フィールド枠）も掴んでいる間だけ光らせる
         drag?.zones.some((z) => z.key === 'ap') ? 'drop-ap' : '',
         drag?.zones.some((z) => z.key === 'field') ? 'drop-field' : '',
+        camClass, // カメラは盤だけでなく卓（table-plane）も一緒に動かす
       ]
         .filter(Boolean)
         .join(' ')}
@@ -1278,8 +1313,11 @@ function BattleInner({ setup, onExit, onRematch }: {
         } as React.CSSProperties
       }
     >
-      {/* 卓の上に敷くフィールドの絵（一番後ろ） */}
-      <FieldBackdrop cardId={fieldCard?.id ?? null} />
+      {/* 卓（プレイマット）。カメラワークで盤と一緒に動く面。
+       * フィールドの絵もこの面の上に乗せるので、卓ごと動く */}
+      <div className="table-plane">
+        <FieldBackdrop cardId={fieldCard?.id ?? null} />
+      </div>
 
       {/* ターンバッジ（常時表示） */}
       {!finished && (
@@ -1316,7 +1354,7 @@ function BattleInner({ setup, onExit, onRematch }: {
 
       {/* 盤面（3Dに傾くテーブル） */}
       <div className="board-wrap">
-        <div className={`board ${camClass}`} ref={boardRef}>
+        <div className="board" ref={boardRef}>
           {/* 相手の手札（裏向きの扇） */}
           {/* 相手の手札: 自分と同じ扇状で、枚数がひと目でわかる間隔にする */}
           <div className="enemy-hand" ref={handRefE}>
