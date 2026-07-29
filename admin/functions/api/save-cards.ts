@@ -43,14 +43,16 @@ export const onRequestPost: PagesFunction<Env> = (ctx) =>
     const env = ctx.env;
     const { vol, cards, renames } = await readJsonBody<{
       vol: number;
-      cards: MasterCard[];
+      cards: MasterCard[] | null;
       renames?: Rename[];
     }>(ctx.request);
 
-    if (typeof vol !== 'number' || !Array.isArray(cards)) {
-      throw new HttpError(400, 'vol と cards が必要です');
+    // cards を省く（null）と「画像の引っ越しだけ」になる。
+    // レアリティを変えて id が変わった時に使う（カード本体は save-card が書いている）
+    if (typeof vol !== 'number' || (cards != null && !Array.isArray(cards))) {
+      throw new HttpError(400, 'vol が必要です（cards は配列か null）');
     }
-    if (cards.some((c) => !c?.id || c.vol !== vol)) {
+    if (cards?.some((c) => !c?.id || c.vol !== vol)) {
       throw new HttpError(400, 'cards には同じ vol のカードだけを入れてください');
     }
 
@@ -65,6 +67,10 @@ export const onRequestPost: PagesFunction<Env> = (ctx) =>
       for (const repo of [PRIVATE_REPO, PUBLIC_REPO]) {
         if (await ghMoveImage(env, repo, from, to)) movedImages++;
       }
+    }
+
+    if (cards == null) {
+      return json({ ok: true, savedTo: '(画像のみ)', saved: 0, movedImages });
     }
 
     // 保存先は弾単位で決まる（この弾は未公開なので実際は必ず非公開側）

@@ -13,6 +13,7 @@ import {
   fetchMaster,
   fileToWebp,
   publishSet,
+  renameImage,
   saveCard,
   saveCards,
   saveImage,
@@ -270,6 +271,12 @@ export function App() {
         await deleteCard(originalId, card.vol);
       }
       const res = await saveCard(card);
+      // id は「弾-コード-レアリティ」なので、レアリティを変えると id が変わる。
+      // 画像のファイル名は id そのものなので、一緒に引っ越さないと絵が迷子になる
+      // （実際に第2弾で8枚が「画像なし」になっていた）。
+      if (originalId && originalId !== card.id) {
+        await renameImage(card.vol, originalId, card.id).catch((e) => flash(`画像の引っ越しに失敗: ${e}`));
+      }
       applyCardLocally(stripForType(card), originalId);
       setDraftCard(null); // 下書きを確定
       // 保存を待っている間に「← 一覧へ」を押していたら、勝手に開き直さない

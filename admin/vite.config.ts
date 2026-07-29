@@ -217,9 +217,12 @@ function masterApi(): Plugin {
             // その弾のファイルを一度だけ書き換える。
             // renames が付いていれば画像も一緒に引っ越す（id がファイル名なので、
             // これをやらないと採番し直した瞬間に全部の絵が迷子になる）。
+            // cards を省く（null）と「画像の引っ越しだけ」になる。
+            // レアリティを変えて id が変わった時に、カード本体は save-card が既に
+            // 書いているので、ここでは絵だけ動かせばよい
             const { vol, cards, renames } = await readBody(req);
-            if (typeof vol !== 'number' || !Array.isArray(cards)) {
-              return sendJson(res, 400, { error: 'vol と cards が必要' });
+            if (typeof vol !== 'number' || (cards != null && !Array.isArray(cards))) {
+              return sendJson(res, 400, { error: 'vol が必要（cards は配列か null）' });
             }
             const setsForBulk = loadSets();
             const lockedBulk = volLockError(vol, setsForBulk);
@@ -237,6 +240,10 @@ function masterApi(): Plugin {
                 unlinkSync(src);
                 moved++;
               }
+            }
+
+            if (cards == null) {
+              return sendJson(res, 200, { ok: true, savedTo: '(画像のみ)', saved: 0, movedImages: moved });
             }
 
             // 保存先は1枚目の振り分けに合わせる（弾単位で必ず同じ側に入る）
