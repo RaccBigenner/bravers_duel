@@ -1253,6 +1253,94 @@ LINE/Googleのメールが同じでも、自動でアカウント統合しない
 
 クライアントからゲームDBへ直接書かせない。Supabaseは認証に使い、所持、BP、試合、交換の書込みは必ずゲームAPIを通す。
 
+### 8.6 招待コード（G2）
+
+G2 Collection Closed Betaは招待制。`docs/MARKETING-001_招待βの集客計画.md`が要求する
+「コード発行・使用回数の上限・使用済み管理・誰が誰を招いたかの記録・不正対策」を満たす。
+
+#### 8.6.1 何をゲートするか
+
+既存の公開NPCデモ（ゲスト・貸出デッキ）は招待コードなしで誰でも遊べる（8.2のまま維持）。
+招待コードが要るのは、G2の範囲＝**初回スターター選択・NPC戦BP・ブースター購入・NPCシングル
+売買**（P2機能一式）。招待コードを持たない人は、コードを持つまでこの一式へ進めない。
+
+有効な招待コードの消費（8.6.4）をもって「アカウントは招待済み」を確定する。以後、
+そのアカウントでのP2機能アクセスはコード再提示を求めない。
+
+#### 8.6.2 コードの形
+
+- 6文字。`ABCDEFGHJKMNPQRSTUVWXYZ23456789`（`I`/`L`/`O`/`0`/`1`を除いた31文字）から選ぶ。
+  読み上げ・手書きでの誤読を避けるための除外で、ルームコード（4.3）と同じ考え方
+- ルームコードと同じく、**コード自体は認証情報ではない**。ログインセッション
+  （ゲストで可。8.2の匿名`account_id`）とサーバー認可が必ず要る
+- 総当たりのコード試行をaccount/IP双方でrate limitする（ルームコードと同じ運用）
+
+#### 8.6.3 発行元は2種類
+
+| 種別 | 発行者 | 用途 |
+|---|---|---|
+| `admin_batch` | 運営（`issued_by`はnull） | MARKETING-001の第1〜3波（10/15/10人）。wave番号を持つ |
+| `referral` | 招待済みアカウント（`issued_by`はそのaccount_id） | 招待された人がさらに2枠を友人へ渡す（MARKETING-001 2章B） |
+
+- `admin_batch`は、waveごとに計画人数（例: 第1波10）を上限としたバッチ発行APIから作る。
+  上限は運営が設定した`wave_definition`（wave番号・計画人数・発行期限）を必ず参照し、
+  計画人数を超える追加発行はAPIレベルで拒否する。人数を増やしたい場合は
+  `wave_definition`を先に更新する（6.6のNPC買取hard cap更新と同じ「先に上限を上げる」順序）
+- `referral`コードは、後述（8.6.4）の条件を満たした招待済みアカウントへ**自動で2枠**発行する。
+  未使用の2枠を使い切らない限り追加発行はしない（自己増殖を防ぐ）
+
+#### 8.6.4 消費（redemption）のルール
+
+1回の消費は次の状態遷移を、対象`invite_code`行を**行ロックしたトランザクション**の中で行う
+（6.6 atomic quote/orderの`FOR UPDATE`パターンと同じ。ロックなしで並行実行すると
+`max_uses=1`のコードが2人に同時成立してしまう）。
+
+受理条件（1つでも満たさなければ拒否し、どれにも当てはまらなければ成立）:
+
+| 状態 | 判定 |
+|---|---|
+| `NOT_FOUND` | コードが存在しない |
+| `REVOKED` | 運営が取り消し済み |
+| `EXPIRED` | `now > expires_at` |
+| `EXHAUSTED` | `use_count >= max_uses` |
+| `SELF_REDEEM` | `issued_by`が消費しようとしている本人と同じaccount_id（自分のコードは自分で使えない） |
+| `ALREADY_INVITED` | このaccountが既に別のコードを消費済み（1アカウント1回。コードを渡り歩いて`referral`枠を稼ぐのを防ぐ） |
+
+成立したら:
+
+- `invite_code.use_count`を1増やす
+- `invite_redemption`へ1行追記（`invite_code_id`、`redeemed_by`、`redeemed_at`）。
+  `issued_by` → `redeemed_by`が「誰が誰を招いたか」の1本の辺になる。`admin_batch`は
+  `issued_by`がnullなので「運営から直接招待」として区別できる
+- account側に`invited_by_code_id`と`invited_at`を記録し、以後のP2機能アクセスを許可する
+- **`referral`コードの発行は、消費した瞬間ではなく、そのアカウントが外部ID連携
+  （8.3のLINE/Google、＝アカウント保護）を完了した時点まで遅らせる。**
+  ゲストのまま消費だけ許すと、使い捨てゲストを量産して2枠ずつ無限に増やす攻撃になる。
+  アカウント保護は交換や高価値操作と同じ「実在の連絡手段を持つ」証跡なので、これを条件にする
+
+#### 8.6.5 運営操作と監査
+
+- `status: active | revoked`。`revoked`は追加の消費を止めるだけで、既に成立した消費は取り消さない
+  （8.4のセキュリティ原則「誤発行の訂正は補償イベントで行う」と同じ考え方。過去の成立を無かったことにしない）
+- 漏洩したコード、想定外の拡散が起きたコードは`revoked`にする運用手順を管理画面へ用意する（P5の
+  moderation adminと同じ「取り消しは記録に残す」思想）
+- `admin_batch`のwaveごと発行数、`referral`の消費率、招待コード経由の①Day2復帰／②収集ループ完走／
+  ③対戦回数中央値（MARKETING-001 4章）を、招待コードIDを添えてログへ乗せる。誰の紹介から来た人が
+  よく続けているかを追える形にする
+
+#### 8.6.6 データモデル（12章へ追加）
+
+- `invite_code`: `code`, `source`(`admin_batch`|`referral`), `wave`(nullable), `issued_by`(nullable
+  account_id), `max_uses`, `use_count`, `status`, `expires_at`, `created_at`
+- `invite_redemption`: `invite_code_id`, `redeemed_by`, `redeemed_at`
+- `wave_definition`: `wave`, `planned_count`, `issue_deadline`
+
+不変条件:
+
+1. `invite_code.use_count`は`max_uses`を超えない（行ロック下での加算のみ許す）
+2. 1つの`account_id`は`invite_redemption.redeemed_by`に高々1回しか出現しない
+3. `referral`コードの`issued_by`は、外部ID連携済みのaccountのみ
+
 ---
 
 ## 9. PWA、リロード復帰、下書き保存
@@ -1607,7 +1695,7 @@ seedと完全ログは試合終了までプレイヤーへ渡さない。
 
 | 集約 | 主なテーブル |
 |---|---|
-| アカウント | `account`, `profile`, `auth_identity`, `session` |
+| アカウント | `account`, `profile`, `auth_identity`, `session`, `invite_code`, `invite_redemption`, `wave_definition` |
 | 進行 | `npc_progress`, `quest_progress`, `reward_grant` |
 | コンテンツ | `content_version`, `card_oracle`, `card_printing`, `format`, `npc_node` |
 | 所持 | `card_instance`, `ownership_event`, `card_lock` |
@@ -1632,6 +1720,8 @@ seedと完全ログは試合終了までプレイヤーへ渡さない。
 6. 1つの`match_id + reward_type`に報酬は1回
 7. 1つの`command_id`は1回だけ適用
 8. 1アカウントは同時に1つのレートキューへだけ参加
+9. `invite_code.use_count`は`max_uses`を超えない
+10. 1つの`account_id`は`invite_redemption.redeemed_by`に高々1回しか出現しない
 9. 進行中試合のカード個体は交換/売却不可
 10. 1アカウントは同時に1つの進行中大会だけ
 11. 1つの`bracket_match`に確定結果は1つ

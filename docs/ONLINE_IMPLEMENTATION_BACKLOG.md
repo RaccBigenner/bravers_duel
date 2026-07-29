@@ -461,6 +461,33 @@ engine/admin typecheck、Web/Admin production build、未公開データ漏洩�
 - OLG-113 secure session/seat token
 - OLG-114 active session/複数タブ制御
 
+### OLG-115 招待コードの発行と受け口
+
+状態: 設計完了・実装未着手（2026-07-29）。純粋ロジックのみ`scripts/invites.mjs`で先行実装
+
+- G2 Collection Closed Betaの入口。設計: `docs/ONLINE_SERVICE_DESIGN_2026-07-29.md` 8.6
+- `admin_batch`（運営発行・wave上限つき）と`referral`（招待済みアカウントが2枠を友人へ）の2種類
+- コード消費は行ロック下のトランザクションで検証・加算し、`NOT_FOUND`/`REVOKED`/`EXPIRED`/
+  `EXHAUSTED`/`SELF_REDEEM`/`ALREADY_INVITED`を判定する
+- 誰が誰を招いたかを`invite_redemption`（`issued_by` → `redeemed_by`）へ記録する
+- `referral`コードの発行は外部ID連携（アカウント保護）完了まで遅らせ、
+  使い捨てゲストによる無限増殖を防ぐ
+- 取り消し（`revoked`）は既に成立した消費を取り消さない
+
+受入:
+
+- `max_uses`を超える消費は成立しない（並行消費でも1件だけ成立）
+- 自分のコードは自分で消費できない。1アカウントは生涯1回しか招待コードを消費できない
+- 期限切れ・取り消し済みのコードは消費できない
+- `admin_batch`はwaveの計画人数を超えて発行できない
+
+依存:
+
+- コード生成・受理判定・状態遷移の純粋ロジックは`server/`workspaceが無くても実装・検証できる
+  （`scripts/invites.mjs`）。行ロック・DB永続化・API化はOLG-101（server/protocol/supabaseの
+  workspace scaffold）の後で`server/src/auth/`または`server/src/economy/`へ移す
+- G2公開前に、招待予定人数に合わせてNPC買取hard capを更新すること（6.6 / MARKETING-001必須手順）
+
 ### Epic OLG-120 MatchDO
 
 - OLG-121 engine server adapter
