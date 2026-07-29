@@ -6,6 +6,7 @@ export * from './versions';
 export * from './formats';
 export * from './decks';
 export * from './deckLegality';
+export * from './starters';
 export * from './battle';
 export * from './replay';
 export * from './events';

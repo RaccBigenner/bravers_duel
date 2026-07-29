@@ -9,7 +9,8 @@
     "test:watch": "vitest",
     "sim": "tsx src/sim/run.ts",
     "typecheck": "tsc --noEmit",
-    "golden:update": "tsx test/golden/update.ts"
+    "golden:update": "tsx test/golden/update.ts",
+    "golden:decks": "tsx test/golden/updateDecks.ts"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",

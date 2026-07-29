@@ -9,8 +9,14 @@
     "resolveJsonModule": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "types": ["vite/client"]
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "types": [
+      "vite/client"
+    ]
   },
   "include": [
     "src",
@@ -19,6 +25,7 @@
     "../engine/src",
     "../data/cards.json",
     "../data/sets.json",
-    "../data/formats.json"
+    "../data/formats.json",
+    "../data/starters.json"
   ]
 }

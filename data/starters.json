@@ -1,0 +1,45 @@
+{
+  "_comment": "初回スターターの候補。仕様は docs/ONLINE_SERVICE_DESIGN_2026-07-29.md 6.3「スターター」。中身はスタンダードデッキ8種（engine/src/sampleDecks.ts）から引くので、ここには「どのプリセットを候補にするか」だけを書く。カードの重複定義を作らないため。status が candidate のものは社長の採決前で、まだ販売・配布に使わない。ここに書いた内容はブラウザに丸ごと配信されるので、非公開の弾IDやカードIDを書かないこと。",
+  "starters": [
+    {
+      "starterId": "STARTER_SLASH",
+      "version": 1,
+      "status": "candidate",
+      "nameKey": "starter.slash.name",
+      "name": "剣聖の一閃",
+      "playstyle": "攻め",
+      "summary": "斬の札を続けて撃ち、最後に大技で押し切る。いちばん分かりやすい攻め方",
+      "deckName": "剣聖の一閃"
+    },
+    {
+      "starterId": "STARTER_CHOIR",
+      "version": 1,
+      "status": "candidate",
+      "nameKey": "starter.choir.name",
+      "name": "聖歌隊",
+      "playstyle": "守り",
+      "summary": "回復と復活で耐えながら、相手が息切れしたところを押し返す",
+      "deckName": "聖歌隊"
+    },
+    {
+      "starterId": "STARTER_FROST",
+      "version": 1,
+      "status": "candidate",
+      "nameKey": "starter.frost.name",
+      "name": "氷獄の女王",
+      "playstyle": "妨害",
+      "summary": "味方に氷を配って守りを固め、相手の動きを止めて勝つ",
+      "deckName": "氷獄の女王"
+    },
+    {
+      "starterId": "STARTER_SPEAR",
+      "version": 1,
+      "status": "candidate",
+      "nameKey": "starter.spear.name",
+      "name": "槍衾の陣",
+      "playstyle": "手数",
+      "summary": "突と飛び込みで手数を作り、3人で代わる代わる刺し続ける",
+      "deckName": "槍衾の陣"
+    }
+  ]
+}
