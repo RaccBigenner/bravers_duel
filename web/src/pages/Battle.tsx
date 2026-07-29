@@ -72,20 +72,25 @@ function useViewportSize(): { vw: number; vh: number } {
 }
 
 /**
- * 盤面が入りきらない「横長で低い」画面かどうか。
- * 盤面は縦長前提の作り。横向きの狭い高さ（例 844x390）だと控えのHPや山札が
- * 画面の外に出て見えなくなるので、遊ばせずに案内を出す。
- * タブレットの横向き（1024x768 等）は入るので対象外。
+ * 盤面が入りきらない画面かどうか。
  *
- * 指で触る端末かどうかも返す。PCのブラウザでウィンドウを低くしただけなのに
- * 「スマホを縦にしてください」と出ていた（回しようがない）ので、案内文を分ける。
+ * 効くのは**高さだけ**。横幅は battle-root が 440px で頭打ちになるので、
+ * どれだけ横に広くても盤面の収まりには関係しない。
+ * 以前は「横向き かつ 高さ520px未満」で判定していたが、これには2つ誤りがあった。
+ *   - 横向きかどうかは無関係（縦長で高さ400pxの画面でも同じように入らない）
+ *   - 520px は盤面を作り直す前の数字。今は 480px でも普通に入るのに止めていた
+ *     （実測: 1280x480 でカード幅47px・重なり0・帯への食い込み0）
+ *
+ * 下限（MIN_BOARD_HEIGHT）は boardMetrics のすぐ下で、寸法の式から逆算している。
+ * カード幅が下限の44pxに張り付くと、そこから先は画面が縮んでも盤面が縮まないので
+ * はみ出しが始まる。その境目が下限。
  */
 function isTouchDevice(): boolean {
   return window.matchMedia?.('(pointer: coarse)').matches ?? navigator.maxTouchPoints > 0;
 }
 
 function useNeedsPortrait(): boolean {
-  const check = () => window.innerWidth > window.innerHeight && window.innerHeight < 520;
+  const check = () => window.innerHeight < MIN_BOARD_HEIGHT;
   const [needs, setNeeds] = useState(check);
   useEffect(() => {
     let timer = 0;
@@ -132,6 +137,17 @@ const STRIP_H = 70;
  * 上乗せぶんだけでよい。予算がゼロだと、カードを大きくした瞬間にアクターが帯へ食い込む。
  */
 const ACTOR_GAP_BUDGET = 30;
+/** カード幅の下限。これ以下には縮めない（縮めても読めない） */
+const MIN_CARD_W = 44;
+/**
+ * 盤面が入りきる画面の高さの下限。
+ * カード幅が下限に張り付くと、そこから先は画面が縮んでも盤面が縮まないので
+ * はみ出しが始まる。その境目を式から逆算する（今の値は約 461px）。
+ * 低い画面用の @media が効く前提なので、chrome は短い方（79 / 26）で見積もる。
+ */
+const MIN_BOARD_HEIGHT = Math.ceil(
+  MIN_CARD_W * (FORMATION_SPAN + HAND_RATIO) + 79 + 26 + BOARD_PAD + STRIP_H + ACTOR_GAP_BUDGET,
+);
 /** 山札・AP・トラッシュが画面の内側に見えている幅。残りは画面外へはみ出す */
 const ZONE_VISIBLE = 28;
 /**
@@ -163,7 +179,7 @@ function boardMetrics(vh: number, vw: number): BoardMetrics {
   // 横は「陣形の全幅（3.2×カード幅）＋左右のゾーンの見えている幅」が画面に収まること。
   // 手前側は遠近で大きく描かれるので、その倍率で割ってからでないとパイルに食い込む。
   const byWidth = (Math.min(vw, 440) - ZONE_VISIBLE * 2) / (3.2 * NEAR_MAGNIFY);
-  const cardW = Math.max(44, Math.floor(Math.min(byHeight, byWidth)));
+  const cardW = Math.max(MIN_CARD_W, Math.floor(Math.min(byHeight, byWidth)));
 
   // ゾーン列は「片側の陣形と同じ高さ」に収める。ここを超えると相手側の半分へ食い込み、
   // さらに（絶対配置にする前は）エリアの高さを押し広げて死に余白を作っていた。
@@ -1637,11 +1653,13 @@ function BattleInner({ setup, onExit, onRematch }: {
           <img src={IMG('icon_sword')} alt="" />
           {/* 指で触る端末なら「回してください」、マウスの端末なら「窓を縦長に」。
            * 以前はPCでも「スマホを縦にしてください」と出ていて、回しようがなかった */}
-          <p>{isTouchDevice() ? '画面を縦にしてください' : 'ウィンドウを縦長にしてください'}</p>
+          <p>{isTouchDevice() ? '画面を縦にしてください' : 'ウィンドウを高くしてください'}</p>
+          {/* どこまで足りないのかを数字で出す。「縦にして」だけだと、
+           * すでに縦なのに出ている時に何をすればいいのか分からない */}
           <small>
-            バトル画面は縦長の画面用に作られています。
+            バトル画面には高さ {MIN_BOARD_HEIGHT}px 以上が必要です（今 {vh}px）。
             <br />
-            横に長いと山札や控えのHPが画面の外に出てしまいます。
+            足りないと山札や控えのHPが画面の外に出てしまいます。
           </small>
         </div>
       )}
