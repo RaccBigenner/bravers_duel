@@ -230,14 +230,23 @@ function masterApi(): Plugin {
 
             // 画像を先に動かす。カードだけ先に書いて画像で失敗すると、
             // 新しい id に対応する絵が無い状態になり、どこが欠けたか分からなくなる
+            // 採番し直すと A→B, B→C のように「移動先が別の移動元」になる（入れ替え・玉突き）。
+            // 順に上書きすると先に動かした側が潰れる。必ず全部を退避してから配り直す
             let moved = 0;
-            for (const { from, to } of (renames ?? []) as { from: string; to: string }[]) {
-              if (!from || !to || from === to) continue;
-              for (const dir of [WIP_IMAGES, IMAGES]) {
-                const src = resolve(dir, `${from}.webp`);
+            const renameList = ((renames ?? []) as { from: string; to: string }[]).filter(
+              (r) => r?.from && r?.to && r.from !== r.to,
+            );
+            for (const dir of [WIP_IMAGES, IMAGES]) {
+              const held: { to: string; buf: Buffer }[] = [];
+              for (const r of renameList) {
+                const src = resolve(dir, `${r.from}.webp`);
                 if (!existsSync(src)) continue;
-                copyFileSync(src, resolve(dir, `${to}.webp`));
+                held.push({ to: r.to, buf: readFileSync(src) });
                 unlinkSync(src);
+              }
+              for (const h of held) {
+                mkdirSync(dir, { recursive: true });
+                writeFileSync(resolve(dir, `${h.to}.webp`), h.buf);
                 moved++;
               }
             }

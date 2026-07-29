@@ -20,9 +20,14 @@ import {
   SETS_PATH,
   assertVolEditable,
   cardIsPublic,
+  bytesToBase64,
+  ghDelete,
   ghGetJson,
-  ghMoveImage,
+  ghGetRaw,
+  ghPutBase64,
   ghPutJson,
+  privateImagePath,
+  publicImagePath,
   handle,
   json,
   readJsonBody,
@@ -59,13 +64,28 @@ export const onRequestPost: PagesFunction<Env> = (ctx) =>
     const sets = (await ghGetJson<SetsFile>(env, PUBLIC_REPO, SETS_PATH)).data?.sets ?? [];
     assertVolEditable(vol, sets);
 
-    // 画像を先に引っ越す
+    // 画像を先に引っ越す。
+    //
+    // 採番し直すと A→B, B→C のように「移動先が別の移動元」になる（入れ替え・玉突き）。
+    // 順番に上書きすると先に動かした側が潰れ、画像が失われる。実際にこれで
+    // 第2弾の5枚が壊れた（27→30→31→28→29→27 の循環）。
+    // 必ず全部を退避してから、退避したものを配り直す。
     let movedImages = 0;
-    for (const { from, to } of renames ?? []) {
-      if (!from || !to || from === to) continue;
-      // 公開・非公開のどちらに置かれているか分からないので両方試す
-      for (const repo of [PRIVATE_REPO, PUBLIC_REPO]) {
-        if (await ghMoveImage(env, repo, from, to)) movedImages++;
+    const list = (renames ?? []).filter((r) => r?.from && r?.to && r.from !== r.to);
+    for (const repo of [PRIVATE_REPO, PUBLIC_REPO]) {
+      const path = repo === PRIVATE_REPO ? privateImagePath : publicImagePath;
+      // 1) 退避（元の中身を全部読んでから消す）
+      const held: { to: string; bytes: Uint8Array }[] = [];
+      for (const r of list) {
+        const bytes = await ghGetRaw(env, repo, path(r.from));
+        if (!bytes) continue;
+        held.push({ to: r.to, bytes });
+        await ghDelete(env, repo, path(r.from), `move image ${r.from} -> ${r.to}`);
+      }
+      // 2) 配り直す
+      for (const h of held) {
+        await ghPutBase64(env, repo, path(h.to), bytesToBase64(h.bytes), `move image -> ${h.to}`);
+        movedImages++;
       }
     }
 
