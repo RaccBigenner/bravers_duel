@@ -859,6 +859,44 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
   pointer-events: none;
 }
 
+/* ============ 掴んで置く（ドラッグ） ============ */
+
+/* 掴んでいる間、元の位置のカードは消す（同じ札が2枚あるように見えないため） */
+.hand-card.dragging { opacity: 0; }
+
+.drag-card {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 90;
+  pointer-events: none;
+  will-change: transform;
+  filter: drop-shadow(0 12px 20px rgba(0, 0, 0, 0.8));
+  transition: filter 0.15s ease;
+}
+/* 置ける場所の上に来たら光らせる。指の下は見えないので、カード側で伝える */
+.drag-card.over {
+  filter: drop-shadow(0 12px 20px rgba(0, 0, 0, 0.8)) drop-shadow(0 0 12px rgba(110, 220, 255, 0.95));
+}
+.drag-card .card-frame { transition: transform 0.12s ease; }
+.drag-card.over .card-frame { transform: scale(1.08); }
+
+/* 掴んでいる間は、演出の邪魔になる薄暗さを掛けない（対象選択モードと共用のため打ち消す） */
+.battle-root.dragging.targeting-mode .my-hand { opacity: 1; filter: none; }
+
+/* キャラ以外の置き場所も光らせる */
+.battle-root.drop-ap .zone-col:not(.enemy) .pile.ap .pile-card,
+.battle-root.drop-field .strip-field {
+  outline: 2px solid rgba(110, 220, 255, 0.9);
+  outline-offset: 2px;
+  border-radius: 6px;
+  animation: droppable-pulse 1s ease-in-out infinite alternate;
+}
+@keyframes droppable-pulse {
+  from { outline-color: rgba(110, 220, 255, 0.4); }
+  to { outline-color: rgba(110, 220, 255, 1); }
+}
+
 /* プレビューの「誰がどうなるか」 */
 .predict.outcome {
   display: flex;

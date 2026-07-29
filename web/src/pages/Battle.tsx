@@ -608,7 +608,8 @@ function BattleInner({ setup, onExit, onRematch }: {
         // 以前はここが3つの別物（消える手札／中央のreveal／小さいゴースト）に分かれていた。
         flyCard({
           cardId: current.card?.id,
-          from: spot.hand(s),
+          // ドラッグで置いたときは、指を離した場所から続けて飛ぶ（手札へ戻ってから飛び直さない）
+          from: (s === PLAYER && playOriginRef.current) || spot.hand(s),
           via: spot.center(),
           to: spot.trash(s),
           hold: Math.max(300, current.duration - 900),
@@ -618,6 +619,7 @@ function BattleInner({ setup, onExit, onRematch }: {
           poseTo: 'lay',
           duration: Math.max(700, current.duration - 260),
         });
+        playOriginRef.current = null;
         break;
       }
       case 'field':
@@ -723,64 +725,256 @@ function BattleInner({ setup, onExit, onRematch }: {
     setPreviewGuard(null);
   }, [state.phase, isMyTurn]);
 
-  // 手札の長押しピーク: 押している間だけ拡大。指を横に滑らせると隣のカードに切り替わる
+  // ============ 手札のジェスチャ（掴んで置く / 長押しで見る / タップ） ============
+  //
+  // これまでは「タップ → 全画面モーダル → 使う → 対象選択 → タップ」で3タップ＋モーダル1回。
+  // 掴んで置けるようにして1ドラッグに縮める。
+  // 動かさずに長押し＝拡大して見る、動かさず離す＝これまでどおりのタップ。
   const peekTimerRef = useRef(0);
-  const peekingRef = useRef(false);
-  const peekedRecentlyRef = useRef(false);
+  const gestureRef = useRef<{ x: number; y: number; i: number; moved: boolean; peeked: boolean } | null>(null);
 
-  function handIndexFromX(clientX: number): number | null {
-    const el = handRefP.current;
-    const n = me.hand.length;
-    if (!el || n === 0) return null;
-    const r = el.getBoundingClientRect();
-    const step = Math.round(handW * 0.63);
-    const idx = Math.round((clientX - (r.left + r.width / 2)) / step + (n - 1) / 2);
-    return Math.max(0, Math.min(n - 1, idx));
+  /** 掴んでいるカードの置き場所（合法手から導出する。UIで推測しない） */
+  interface DropZone {
+    key: string;
+    rect: DOMRect;
+    action: BattleAction;
   }
 
-  const handPeek = {
-    onPointerDown: (e: React.PointerEvent) => {
-      try {
-        (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
-      } catch {
-        /* すでに解放済みのポインタなどは無視 */
+  const [drag, setDrag] = useState<{
+    handIndex: number;
+    cardId: string;
+    x: number;
+    y: number;
+    zones: DropZone[];
+    over: string | null;
+  } | null>(null);
+  const dragRef = useRef(drag);
+  dragRef.current = drag;
+  /** ドラッグで置いた場所。使用演出の出発点をそこに差し替える（指の位置から続けて飛ぶ） */
+  const playOriginRef = useRef<Spot | null>(null);
+
+  function dropZonesFor(handIndex: number): DropZone[] {
+    const root = rootRef.current;
+    if (!root) return [];
+    const zones: DropZone[] = [];
+    const seen = new Set<string>();
+    const push = (key: string, sel: string, action: BattleAction) => {
+      if (seen.has(key)) return;
+      const el = root.querySelector<HTMLElement>(sel);
+      if (!el) return;
+      seen.add(key);
+      zones.push({ key, rect: el.getBoundingClientRect(), action });
+    };
+    const aliveOf = (side: 0 | 1) =>
+      view.players[side].characters.map((_, i) => i).filter((i) => isCharAlive(view, side, i));
+
+    for (const a of myActions) {
+      if (!('handIndex' in a) || a.handIndex !== handIndex) continue;
+      switch (a.type) {
+        case 'charge':
+          push('ap', '.zone-col:not(.enemy) .pile.ap', a);
+          break;
+        case 'playField':
+          push('field', '.strip-field', a);
+          break;
+        case 'playEquipment':
+          push(`char:0-${a.targetIndex}`, `[data-slot="0-${a.targetIndex}"]`, a);
+          break;
+        case 'playCharacter':
+          for (const i of aliveOf(PLAYER)) push(`char:0-${i}`, `[data-slot="0-${i}"]`, a);
+          break;
+        case 'playSkill': {
+          if (a.targetIndex !== undefined) {
+            push(`char:1-${a.targetIndex}`, `[data-slot="1-${a.targetIndex}"]`, a);
+            break;
+          }
+          if (a.healTargetIndex !== undefined) {
+            push(`char:0-${a.healTargetIndex}`, `[data-slot="0-${a.healTargetIndex}"]`, a);
+            break;
+          }
+          if (a.usingIndex !== undefined) {
+            push(`char:0-${a.usingIndex}`, `[data-slot="0-${a.usingIndex}"]`, a);
+            break;
+          }
+          // 対象を選ばないカードは、置き場所を効果の targeting から決める
+          // （どこに置いても行動は同じだが、「どこへ向けるカードか」は見せたい）
+          const card = safeCard(me.hand[handIndex]);
+          if (card?.type !== 'skill') break;
+          if (card.valueType === 'attack') {
+            const t = skillEffectOf(card.id)?.targeting ?? 'actor';
+            const idxs =
+              t === 'all'
+                ? aliveOf(ENEMY)
+                : t === 'standby'
+                  ? aliveOf(ENEMY).filter((i) => i !== foe.actorIndex)
+                  : [foe.actorIndex];
+            for (const i of idxs) push(`char:1-${i}`, `[data-slot="1-${i}"]`, a);
+          } else {
+            for (const i of aliveOf(PLAYER)) push(`char:0-${i}`, `[data-slot="0-${i}"]`, a);
+          }
+          break;
+        }
+        default:
+          break;
       }
-      const x = e.clientX;
-      window.clearTimeout(peekTimerRef.current);
-      peekTimerRef.current = window.setTimeout(() => {
-        peekingRef.current = true;
-        peekedRecentlyRef.current = true;
-        const idx = handIndexFromX(x);
-        if (idx !== null && me.hand[idx]) setZoomCard(me.hand[idx]);
-      }, 450);
-    },
-    onPointerMove: (e: React.PointerEvent) => {
-      if (!peekingRef.current) return;
-      const idx = handIndexFromX(e.clientX);
-      if (idx !== null && me.hand[idx]) setZoomCard(me.hand[idx]);
-    },
-    onPointerUp: () => {
-      window.clearTimeout(peekTimerRef.current);
-      if (peekingRef.current) {
-        peekingRef.current = false;
+    }
+    return zones;
+  }
+
+  function beginDrag(handIndex: number, x: number, y: number) {
+    const cardId = me.hand[handIndex];
+    if (!cardId) return;
+    const zones = dropZonesFor(handIndex);
+    if (zones.length === 0) return; // 置ける場所が無いカードは掴めない
+    dragPosRef.current = { x, y };
+    setDrag({ handIndex, cardId, x, y, zones, over: null });
+
+    // 掴んでいる間、置ける相手を光らせて「置くとどうなるか」を出す。
+    // 対象選択モードの仕組みをそのまま使うので、ダメージ予定（B-2）もここで効く。
+    const charZones = zones.filter((z) => z.key.startsWith('char:'));
+    if (charZones.length > 0) {
+      const side = Number(charZones[0].key.slice(5, 6)) as 0 | 1;
+      const map = new Map<number, BattleAction>();
+      for (const z of charZones) {
+        const [sd, ci] = z.key.slice(5).split('-').map(Number);
+        if (sd === side) map.set(ci, z.action);
+      }
+      let effect: NonNullable<Targeting>['effect'];
+      const card = safeCard(cardId);
+      if (card?.type === 'skill') {
+        const p = predictSkill(state, PLAYER, card);
+        if (p) effect = { kind: p.kind, value: p.value };
+      }
+      setTargeting({ side, hint: '', actions: map, effect });
+    }
+  }
+
+  function hitZone(zones: DropZone[], x: number, y: number): DropZone | null {
+    return zones.find((z) => x >= z.rect.left && x <= z.rect.right && y >= z.rect.top && y <= z.rect.bottom) ?? null;
+  }
+
+  /**
+   * 指の追従は state ではなく DOM を直接動かす。
+   * 1フレームごとに setState すると、バトル画面まるごとが再描画されて指に付いてこない。
+   * 状態として持つのは「どのゾーンの上にいるか」が変わった瞬間だけ。
+   */
+  const dragPosRef = useRef({ x: 0, y: 0 });
+  const dragCardRef = useRef<HTMLDivElement>(null);
+  function moveDrag(x: number, y: number) {
+    dragPosRef.current = { x, y };
+    if (dragCardRef.current) {
+      dragCardRef.current.style.transform = `translate3d(${x}px, ${y}px, 0) translate(-50%, -62%)`;
+    }
+    const d = dragRef.current;
+    if (!d) return;
+    const over = hitZone(d.zones, x, y)?.key ?? null;
+    if (over !== d.over) setDrag({ ...d, over });
+  }
+
+  function endDrag(x: number, y: number) {
+    const d = dragRef.current;
+    setDrag(null);
+    setTargeting(null);
+    if (!d) return;
+    const hit = hitZone(d.zones, x, y);
+    if (!hit) {
+      // 置けない場所で離したら手札へ戻す（何も起きない、を目に見える形で伝える）
+      flyCard({
+        cardId: d.cardId,
+        from: { x, y, w: handW },
+        to: spot.hand(PLAYER),
+        faceFrom: 'front',
+        faceTo: 'front',
+        poseFrom: 'stand',
+        poseTo: 'stand',
+        arc: 10,
+        duration: 240,
+      });
+      return;
+    }
+    playOriginRef.current = { x, y, w: handW };
+    // 手札が減ると番号がずれるので、チャージの選択は白紙に戻す
+    setChargeSel(new Set());
+    act(hit.action);
+  }
+
+  /** 手札1枚ぶんのジェスチャ。掴む／長押しで見る／タップ を1か所で捌く */
+  function handGesture(i: number) {
+    return {
+      onPointerDown: (e: React.PointerEvent) => {
+        if (finished || !isMyTurn || busy) return;
+        try {
+          (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+        } catch {
+          /* すでに解放済みのポインタなどは無視 */
+        }
+        gestureRef.current = { x: e.clientX, y: e.clientY, i, moved: false, peeked: false };
+        window.clearTimeout(peekTimerRef.current);
+        peekTimerRef.current = window.setTimeout(() => {
+          const g = gestureRef.current;
+          if (!g || g.moved) return;
+          g.peeked = true;
+          if (me.hand[g.i]) setZoomCard(me.hand[g.i]);
+        }, 450);
+      },
+      onPointerMove: (e: React.PointerEvent) => {
+        const g = gestureRef.current;
+        if (!g) return;
+        if (!g.moved) {
+          // 指のぶれでドラッグが始まらないよう、少し動いてから掴んだ扱いにする
+          if (Math.hypot(e.clientX - g.x, e.clientY - g.y) < 8) return;
+          g.moved = true;
+          window.clearTimeout(peekTimerRef.current);
+          if (g.peeked) {
+            g.peeked = false;
+            setZoomCard(null);
+          }
+          beginDrag(g.i, e.clientX, e.clientY);
+          return;
+        }
+        moveDrag(e.clientX, e.clientY);
+      },
+      onPointerUp: (e: React.PointerEvent) => {
+        const g = gestureRef.current;
+        gestureRef.current = null;
+        window.clearTimeout(peekTimerRef.current);
+        if (!g) return;
+        if (g.moved) {
+          endDrag(e.clientX, e.clientY);
+          return;
+        }
+        if (g.peeked) {
+          setZoomCard(null);
+          return;
+        }
+        tapHand(g.i);
+      },
+      onPointerCancel: () => {
+        const g = gestureRef.current;
+        gestureRef.current = null;
+        window.clearTimeout(peekTimerRef.current);
         setZoomCard(null);
-        window.setTimeout(() => { peekedRecentlyRef.current = false; }, 80);
-      }
-    },
-    onPointerCancel: () => {
-      window.clearTimeout(peekTimerRef.current);
-      peekingRef.current = false;
-      setZoomCard(null);
-    },
-    onClickCapture: (e: React.MouseEvent) => {
-      // 長押しピークの直後のクリックは「カードを選んだ」扱いにしない
-      if (peekedRecentlyRef.current) {
-        e.stopPropagation();
-        e.preventDefault();
-        peekedRecentlyRef.current = false;
-      }
-    },
-  };
+        if (g?.moved) {
+          const d = dragRef.current;
+          setDrag(null);
+          setTargeting(null);
+          if (d) {
+            flyCard({
+              cardId: d.cardId,
+              from: { x: d.x, y: d.y, w: handW },
+              to: spot.hand(PLAYER),
+              faceFrom: 'front',
+              faceTo: 'front',
+              poseFrom: 'stand',
+              poseTo: 'stand',
+              arc: 10,
+              duration: 240,
+            });
+          }
+        }
+      },
+    };
+  }
 
   /**
    * 手札1枚ごとの「今この瞬間の実効値」（消費APと予想ダメージ）。
@@ -982,7 +1176,17 @@ function BattleInner({ setup, onExit, onRematch }: {
   return (
     <div
       ref={rootRef}
-      className={`battle-root ${finished ? '' : isMyTurn ? 'my-turn' : 'enemy-turn'} ${targeting ? 'targeting-mode' : ''}`}
+      className={[
+        'battle-root',
+        finished ? '' : isMyTurn ? 'my-turn' : 'enemy-turn',
+        targeting ? 'targeting-mode' : '',
+        drag ? 'dragging' : '',
+        // キャラ以外の置き場所（APゾーン・フィールド枠）も掴んでいる間だけ光らせる
+        drag?.zones.some((z) => z.key === 'ap') ? 'drop-ap' : '',
+        drag?.zones.some((z) => z.key === 'field') ? 'drop-field' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
       // 盤面の寸法はここで一度だけ決めて、CSS変数でCSS側へ渡す。
       // CSSに固定pxで書くと、画面サイズごとの @media が積み重なって収拾がつかなくなる（実際になった）。
       // パイルのはみ出し量だけは上の useLayoutEffect が1枚ずつ実測して上書きする。
@@ -1173,6 +1377,7 @@ function BattleInner({ setup, onExit, onRematch }: {
                   'hand-card',
                   picked ? 'raised' : '',
                   playable || chargeable ? 'playable' : '',
+                  drag?.handIndex === i ? 'dragging' : '', // 掴んでいる間、元の位置からは消す
                 ].join(' ')}
                 style={{
                   left: `calc(50% + ${Math.round(off * step)}px)`,
@@ -1181,8 +1386,7 @@ function BattleInner({ setup, onExit, onRematch }: {
                   transform: `translateX(-50%) rotate(${arcRot}deg) translateY(${Math.round(arcY)}px)${picked ? ' scale(1.08)' : ''}`,
                   transformOrigin: '50% 115%',
                 }}
-                onClick={() => tapHand(i)}
-                {...handPeek}
+                {...handGesture(i)}
               >
                 <CardFrame card={card} width={handW} upright live={live} />
                 {picked && <img className="pick-badge" src={IMG('icon_bolt')} alt="チャージ予定" />}
@@ -1299,6 +1503,17 @@ function BattleInner({ setup, onExit, onRematch }: {
 
       {/* 動いているカード（使ったカードを中央で見せるのも、ここが担う） */}
       <CardStage moves={moves} onDone={(key) => setMoves((prev) => prev.filter((m) => m.key !== key))} />
+
+      {/* 掴んでいるカード。指について回り、置ける場所の上では少し大きくなる */}
+      {drag && safeCard(drag.cardId) && (
+        <div
+          ref={dragCardRef}
+          className={`drag-card ${drag.over ? 'over' : ''}`}
+          style={{ transform: `translate3d(${drag.x}px, ${drag.y}px, 0) translate(-50%, -62%)` }}
+        >
+          <CardFrame card={safeCard(drag.cardId)!} width={Math.round(handW * 1.2)} upright />
+        </div>
+      )}
 
       {/* 手札カードの拡大プレビュー */}
       {previewHand !== null && previewHand < me.hand.length && (
