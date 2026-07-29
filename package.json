@@ -8,7 +8,7 @@
     "admin"
   ],
   "scripts": {
-    "test": "npm run test:migration && npm run test:publish && npm run test:stale && npm run check:stale && npm --workspace engine run test && npm --workspace web run test && npm --workspace admin run test",
+    "test": "npm run test:migration && npm run test:publish && npm run test:invites && npm run test:stale && npm run check:stale && npm --workspace engine run test && npm --workspace web run test && npm --workspace admin run test",
     "test:migration": "node --test scripts/migrate-card-identities.test.mjs",
     "test:publish": "node --test scripts/publish-card-set.test.mjs",
     "sim": "npm --workspace engine run sim --",
@@ -17,7 +17,8 @@
     "admin": "npm --workspace admin run dev",
     "check:leak": "node scripts/check-no-wip-leak.mjs",
     "check:stale": "node scripts/check-stale-comments.mjs",
-    "test:stale": "node --test scripts/check-stale-comments.test.mjs"
+    "test:stale": "node --test scripts/check-stale-comments.test.mjs",
+    "test:invites": "node --test scripts/invites.test.mjs"
   },
   "devDependencies": {
     "sharp": "^0.35.3"
