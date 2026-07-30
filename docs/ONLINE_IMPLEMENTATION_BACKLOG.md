@@ -26,8 +26,9 @@ IssueがDoneでも、対応するplayer-visible exit conditionを実機で満た
 
 ### G0: Foundation
 
-状態: **進行中**。OLG-003の実装は完了。本番カード公開パイプラインの有効化が未完了で、
-次のコードタスクはOLG-004。
+状態: **進行中**。OLG-001〜006は完了。OLG-003P（本番カード公開パイプラインの有効化）は
+git側まで完了、Cloudflare側（社長のトークン設定・再デプロイ・実smoke test）が未完了で、
+G0を終える前に必ず片付ける。P0 exit reviewは依頼済み（Cloudflare側は対象外）。
 
 主な範囲: P0とカード公開運用
 
@@ -302,21 +303,74 @@ P5のコミュニティガイドライン、通報画面、管理設計は早く
 
 ### OLG-003P 本番カード公開パイプラインを有効化
 
-状態: **未完了**。OLG-003のコード実装とは分離した本番運用タスク
+状態: **一部完了（git側）**。OLG-003のコード実装とは分離した本番運用タスク。
+残りはCloudflare側の設定・再デプロイ・実smoke testで、社長のトークン発行待ち。
 
-- 非公開リポへworkflowとtrusted scriptsを同期し、実行ファイルmodeを確認
-- 対象弾の非公開`effects/volN.ts`と`effects/volN.test.ts`を用意
-- 最小権限の`PUBLIC_PUBLISH_TOKEN`、`GITHUB_PRIVATE_TOKEN`、`GITHUB_PUBLIC_TOKEN`を設定
-- Cloudflare Access cookieをSameSite=Laxへ設定し、管理画面をproduction branchへ再デプロイ
-- 管理画面からのpublish、Actions status表示、公開commit、WIP cleanupを実対象で確認
-- 失敗を注入し、再試行時に公開二重commit、WIP消失、資格情報/未公開値のログ漏洩がないことを確認
-- 旧`GITHUB_TOKEN`をrevokeし、設定値と復旧手順を運用台帳へ記録
+- [x] 非公開リポへworkflowとtrusted scriptsを同期し、実行ファイルmodeを確認
+  （2026-07-30実測: 内容一致、`decode-webp-sandbox.sh`は`100755`）
+- [x] `PUBLIC_PUBLISH_TOKEN`を設定（2026-07-29）
+- [x] テストバッチとして対象弾の非公開`effects/vol2.ts`と`effects/vol2.test.ts`を3枚ぶん用意
+  （クラシックカウンター/骸集め/帯電。commit `191fbef`）。公開リポのengineへ一時配置し、
+  `npm test`（vol2分4件・engine全体229件）と型検査がgreenであることを確認済み。
+  **vol2は全33枚中3枚のみ**で、残り30枚の実装は別項目（本チェックリストには含めない）
+  - 2026-07-30追記: 上記の型検査は`c89ece9`（効果API追加7メソッド）以後は落ちる状態だった
+    （testのmock EffectApiが7メソッド未網羅）。`46fb3b6`でmockを補完し、
+    公開エンジンへ再配置してengine 229 tests＋型検査greenを再確認済み
+- [ ] **GitHub Actionsの課金を修理（社長）**: 2026-07-30の失敗注入smoke 2本
+  （run `30505556395` / `30505576941`）が、job起動前に
+  「recent account payments have failed or your spending limit needs to be increased」で
+  停止した。GitHubのBilling & plansで支払いとspending limitを直すまで、
+  非公開リポのActionsは一切動かない（本パイプライン全体のblocker）
+- [ ] `GITHUB_PRIVATE_TOKEN`、`GITHUB_PUBLIC_TOKEN`を設定（社長のCloudflare作業）
+- [ ] Cloudflare Access cookieをSameSite=Laxへ設定し、管理画面をproduction branchへ再デプロイ
+- [ ] 管理画面からのpublish、Actions status表示、公開commit、WIP cleanupを実対象で確認
+- [ ] 失敗を注入し、再試行時に公開二重commit、WIP消失、資格情報/未公開値のログ漏洩がないことを確認
+  （2026-07-30に不正入力／lock無しの2本をdispatch済みだが課金blockでjob未起動。
+  課金修理後に再実行し、入力ゲート即失敗・prepare安全失敗・公開リポ無変更・
+  ログに未公開値が出ないことを確認する）
+- [ ] 旧`GITHUB_TOKEN`をrevokeし、設定値と復旧手順を運用台帳へ記録
 
 受入:
 
 - 本番管理画面から1回の操作で、manifestに固定した対象だけが公開側1commitへ反映される
 - 公開側remoteの一致を確認した後だけWIPがcleanupされ、失敗時は同じrequestを安全に再開できる
 - 公開後のカード、画像、効果を公開ゲームで確認でき、非対象のWIPは公開物とActions logへ出ない
+
+#### 残作業計画（2026-07-30）
+
+緑（成功）smokeの成立条件。パイプラインは弾単位の全量公開で、部分公開はできない
+（manifestが`cards/volN.json`の全カードと全画像の一致を要求し、公開候補側では
+`sets.test.ts`が「効果文のある公開カード全部に実装があること」を検査するため）:
+
+1. vol2全33枚のoracle確定（現状は全て仮Oracle扱いで公開ゲートが拒否する）
+2. 効果文のある29枚全部の効果実装（テストバッチ3枚のみ実装済み）
+3. 全33枚の画像（現状揃っている）
+4. 管理画面（Pages Functions）からのpublishing lock発行（Cloudflare設定後）
+
+したがって緑smokeは「vol2を実際に公開する時」にしか通らない。G0の間は失敗系smoke
+2本（不正入力・lock無し）までをOLG-003Pの検証範囲とし、緑smokeはvol2公開の
+リハーサルとして扱う。緑smokeを先行させたい場合は、公開しても実害のないテスト弾を
+作って本番へ公開する判断（社長）が必要になる。
+
+vol2効果の残り26枚のバッチ計画（本項目では着手しない。実装時に別項目を切る）:
+
+- **バッチ2（既存APIで実装可能・11枚）**: 2-A002, 2-A003, 2-A010, 2-A013, 2-A018,
+  2-A022, 2-A025, 2-A026, 2-A027, 2-A028, 2-A031。`c89ece9`の追加7メソッド
+  （teamAttrCount / myHp / amActor / reduceDamage / discardMyAp / consumeAp /
+  destroySelfEquipment）と既存フックで表現できる。「〜して良い」系（2-A010）は
+  アニマ（1-A006）と同じくAI自動判断＋turnStartAction相当の任意発動で扱う
+- **バッチ3（engineへ新フックが必要・15枚）**: 2-A001, 2-A004, 2-A006, 2-A007,
+  2-A008, 2-A009, 2-A014, 2-A015, 2-A016, 2-A017, 2-A020, 2-A021, 2-A023,
+  2-A024, 2-A030。必要な新フックは、常時被ダメ軽減（2-A001）、相手アクター交代時
+  トリガ（2-A014）、自身戦闘不能時トリガ（2-A007）、スキル使用可否の制約
+  （2-A008と2-A024の使用条件）、相手スキルコスト修正（2-A006）、控えからの攻撃
+  （2-A004, 2-A015, 2-A030）、フィールドのターン終了処理と属性条件コスト
+  （2-A020, 2-A021）、任意発動の装備トラッシュ（2-A016）、アクターになった時の
+  任意変更（2-A017）、属性スキル使用時トリガ（2-A009）、味方全体の被ダメ参照
+  （2-A023）
+- 効果文が空の4枚（2-A005, 2-A011, 2-A012, 2-A019）は実装不要
+- 新フックはバトルの進行結果を変えるため、設計時にOLG-005のstate hash・
+  golden replayとの整合を確認し、`ENGINE_VERSION`を上げる
 
 ### OLG-004 version付きformatとデッキ合法性
 
