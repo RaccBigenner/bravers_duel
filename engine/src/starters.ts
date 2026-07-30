@@ -31,6 +31,7 @@ export interface StarterDefinition {
   status: StarterStatus;
   /** 表示名の翻訳キー（設計 14.2） */
   nameKey: string;
+  /** 現在の ja-JP 表示名。翻訳基盤ができたら nameKey 側へ移す（formats.ts と同じ扱い） */
   name: string;
   /** 攻め / 守り / 妨害 / 手数 など、選ぶときの手がかり */
   playstyle: string;

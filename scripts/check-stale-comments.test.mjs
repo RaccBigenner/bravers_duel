@@ -115,6 +115,24 @@ test('深い見出しで始めた履歴は、同じ深さ以上の見出しで�
   assert.equal(exempt.has(3), false);
 });
 
+test('stale-ok節が入れ子でも、内側の見出しで外側の免除が縮まない', () => {
+  const text = [
+    '## 決定の記録 <!-- stale-ok -->', // 0
+    'デッキは50枚', // 1: 親節の中（対象外） // stale-ok: 検査器の題材
+    '### 2026-07-22 <!-- stale-ok -->', // 2: 子のstale-ok見出し
+    'デッキは50枚', // 3: 子節の中（対象外） // stale-ok: 検査器の題材
+    '### 2026-07-23', // 4: 子節は閉じたが、まだ親「決定の記録」の中
+    'デッキは50枚', // 5: 親節の中のまま（対象外のはず） // stale-ok: 検査器の題材
+    '## 次の節', // 6: 親も閉じる
+    'デッキは50枚', // 7: 対象 // stale-ok: 検査器の題材
+  ].join('\n');
+  const exempt = exemptLines(text);
+  assert.equal(exempt.has(1), true, '親節の直下');
+  assert.equal(exempt.has(3), true, '入れ子の子節の中');
+  assert.equal(exempt.has(5), true, '子節を出ても親節の中のまま');
+  assert.equal(exempt.has(7), false, '親も閉じたら対象に戻る');
+});
+
 test('READMEに書いた npm コマンドが実在するか見る', () => {
   const problems = checkReadmeCommands('npm run nope   # 説明\n', { test: 'vitest' });
   assert.equal(problems.length, 1);
@@ -129,6 +147,37 @@ test('動くコマンドを「準備中」と書いていたら見つける', ()
 
 test('実在するコマンドの普通の説明は通す', () => {
   assert.deepEqual(checkReadmeCommands('npm run sim   # 自動対戦\n', { sim: 'tsx' }), []);
+});
+
+test('npm --workspace 付きコマンドも実在を検査する', () => {
+  const scripts = { test: 'vitest' };
+  const workspaceScripts = { engine: { typecheck: 'tsc --noEmit' } };
+  assert.deepEqual(
+    checkReadmeCommands('npm --workspace engine run typecheck  # 型検査\n', scripts, workspaceScripts),
+    [],
+  );
+  const problems = checkReadmeCommands(
+    'npm --workspace engine run nope  # 説明\n',
+    scripts,
+    workspaceScripts,
+  );
+  assert.equal(problems.length, 1);
+  assert.match(problems[0].detail, /npm --workspace engine run nope/);
+});
+
+test('未知のワークスペース名は実在しないコマンド扱いにする', () => {
+  const problems = checkReadmeCommands('npm --workspace ghost run test  # 説明\n', { test: 'vitest' }, {});
+  assert.equal(problems.length, 1);
+  assert.match(problems[0].detail, /package\.json に無い/);
+});
+
+test('1行に2つコマンドがあっても両方見る', () => {
+  const problems = checkReadmeCommands(
+    'npm run sim と npm run nope を使う\n',
+    { sim: 'tsx' },
+  );
+  assert.equal(problems.length, 1);
+  assert.match(problems[0].detail, /npm run nope/);
 });
 
 test('禁止語の一覧は理由つきで書かれている', () => {

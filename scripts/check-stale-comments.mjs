@@ -74,19 +74,23 @@ export function scanTargets(root = ROOT) {
 /**
  * 履歴として当時のまま残す節を割り出す。
  * 見出しに `stale-ok` があれば、同じ深さ以上の次の見出しの手前までを対象外にする。
+ * 節は入れ子になりうる（stale-ok節の中にさらにstale-ok小見出しがある等）ので、
+ * 深さをスタックで持ち、閉じるときは自分より深い（＝内側の）ものから閉じる。
  */
 export function exemptLines(text) {
   const lines = text.split('\n');
   const exempt = new Set();
-  let depth = null;
+  const openDepths = [];
   lines.forEach((line, i) => {
     const heading = line.match(/^(#{1,6})\s/);
     if (heading) {
       const level = heading[1].length;
-      if (depth !== null && level <= depth) depth = null;
-      if (line.includes('stale-ok')) depth = level;
+      while (openDepths.length > 0 && level <= openDepths[openDepths.length - 1]) {
+        openDepths.pop();
+      }
+      if (line.includes('stale-ok')) openDepths.push(level);
     }
-    if (depth !== null) exempt.add(i);
+    if (openDepths.length > 0) exempt.add(i);
   });
   return exempt;
 }
@@ -156,43 +160,64 @@ export function findForbiddenPhrases(files, root = ROOT, phrases = FORBIDDEN_PHR
   return problems;
 }
 
-/** C. README に書いた npm コマンドが実在するか、「準備中」が嘘になっていないか */
-export function checkReadmeCommands(readmeText, scripts) {
+const README_COMMAND_RE = /npm (?:--workspace (\S+) )?run ([\w:]+)/g;
+
+/**
+ * C. README に書いた npm コマンドが実在するか、「準備中」が嘘になっていないか。
+ * `npm --workspace engine run ...` 形式は、そのワークスペースの package.json を見る
+ * （`workspaceScripts` に無いワークスペース名は「実在しないコマンド」として扱う）。
+ */
+export function checkReadmeCommands(readmeText, scripts, workspaceScripts = {}) {
   const problems = [];
   readmeText.split('\n').forEach((line, i) => {
     if (line.includes('stale-ok')) return;
-    const match = line.match(/npm run ([\w:]+)/);
-    if (!match) return;
-    const name = match[1];
-    if (!(name in scripts)) {
-      problems.push({
-        rule: 'readme-command',
-        file: 'README.md',
-        line: i + 1,
-        detail: `package.json に無いコマンドを書いています: npm run ${name}`,
-      });
-      return;
-    }
-    if (/準備中|未実装/.test(line)) {
-      problems.push({
-        rule: 'readme-command',
-        file: 'README.md',
-        line: i + 1,
-        detail: `npm run ${name} は動くのに「準備中」と書いてあります`,
-      });
+    for (const match of line.matchAll(README_COMMAND_RE)) {
+      const [, workspace, name] = match;
+      const label = workspace ? `npm --workspace ${workspace} run ${name}` : `npm run ${name}`;
+      const target = workspace ? workspaceScripts[workspace] : scripts;
+      if (!target || !(name in target)) {
+        problems.push({
+          rule: 'readme-command',
+          file: 'README.md',
+          line: i + 1,
+          detail: `package.json に無いコマンドを書いています: ${label}`,
+        });
+        continue;
+      }
+      if (/準備中|未実装/.test(line)) {
+        problems.push({
+          rule: 'readme-command',
+          file: 'README.md',
+          line: i + 1,
+          detail: `${label} は動くのに「準備中」と書いてあります`,
+        });
+      }
     }
   });
   return problems;
 }
 
+/** ワークスペースごとの package.json scripts（`npm --workspace <name> run ...` の検査用） */
+function loadWorkspaceScripts(root, rootPackage) {
+  const workspaceScripts = {};
+  for (const name of rootPackage.workspaces ?? []) {
+    const path = join(root, name, 'package.json');
+    if (!existsSync(path)) continue;
+    workspaceScripts[name] = JSON.parse(readFileSync(path, 'utf8')).scripts ?? {};
+  }
+  return workspaceScripts;
+}
+
 export function runChecks(root = ROOT) {
   const files = scanTargets(root);
-  const scripts = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).scripts ?? {};
+  const rootPackage = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+  const scripts = rootPackage.scripts ?? {};
+  const workspaceScripts = loadWorkspaceScripts(root, rootPackage);
   const readme = readFileSync(join(root, 'README.md'), 'utf8');
   return [
     ...findDeadFileReferences(files, root),
     ...findForbiddenPhrases(files, root),
-    ...checkReadmeCommands(readme, scripts),
+    ...checkReadmeCommands(readme, scripts, workspaceScripts),
   ];
 }
 

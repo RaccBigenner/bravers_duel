@@ -120,19 +120,22 @@ describe('スターター候補', () => {
   });
 
   it('1個で合法デッキを作れる個体数を含む（設計6.3）', () => {
+    // check.missing は中身をstarterDeck自身から組んでいるので構造的に必ず[]になる
+    // （手書きの中身に変えたときに壊れる担保はvalidateStarter/starterContents側の仕事）。
+    // ここで実際に効いているのは legality（フォーマット合法性）だけ。
     for (const starter of ALL_STARTERS) {
       const check = checkStarter(starter);
-      expect(check.missing, starter.name).toEqual([]);
       expect(check.legality.violations, starter.name).toEqual([]);
       expect(check.ok, starter.name).toBe(true);
     }
   });
 
-  it('中身は43個体（キャラ枠＋40枚側）で、購入前に全部出せる', () => {
+  it('中身は43個体（キャラ枠3＋40枚側40）で、購入前に全部出せる', () => {
     for (const starter of ALL_STARTERS) {
       const deck = starterDeck(starter);
-      const expected = deck.characterIds.length + deck.cardIds.length;
-      expect(starterInstanceCount(starter), starter.name).toBe(expected);
+      expect(deck.characterIds.length, starter.name).toBe(3);
+      expect(deck.cardIds.length, starter.name).toBe(40);
+      expect(starterInstanceCount(starter), starter.name).toBe(43);
 
       const contents = starterContents(starter);
       expect(contents.length).toBeGreaterThan(0);
