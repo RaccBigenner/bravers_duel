@@ -34,9 +34,18 @@ export function generateCode(randomInt) {
 
 const CODE_FORMAT_RE = new RegExp(`^[${CODE_ALPHABET}]{${CODE_LENGTH}}$`);
 
-/** コードの見た目が正しいか（存在確認はしない） */
+/** コードの見た目が正しいか（存在確認はしない）。呼び出し側は先に normalizeCode を通すこと */
 export function isValidCodeFormat(code) {
   return typeof code === 'string' && CODE_FORMAT_RE.test(code);
+}
+
+/**
+ * ユーザー入力を検証・検索にかける前の正規化。大文字化と、区切りに使われがちな
+ * ハイフン・空白の除去だけを行う（誤読しやすい文字自体の読み替えはしない。
+ * I/L/O/0/1 を最初から使わないアルファベットで対処済みのため）。
+ */
+export function normalizeCode(input) {
+  return typeof input === 'string' ? input.toUpperCase().replace(/[\s-]/g, '') : '';
 }
 
 export const INVITE_SOURCES = ['admin_batch', 'referral'];
@@ -50,8 +59,19 @@ export const REDEMPTION_REJECTION_REASONS = [
   'ALREADY_INVITED',
 ];
 
+/** ISO日時文字列2つを、オフセット・精度が揃っていなくても正しく比べる */
+function isAfter(a, b) {
+  return new Date(a).getTime() > new Date(b).getTime();
+}
+
 /**
  * このコードをこのアカウントが今消費できるか（設計8.6.4の受理条件）。
+ *
+ * `ALREADY_INVITED`（1アカウント生涯1回）は、コード側の行ロックだけでは守れない
+ * （同一アカウントが別々のコードを並行消費すると、ロック対象の行が別なので両方成立してしまう）。
+ * ここでの判定は「読んだ時点でどうか」でしかなく、直列化そのものは呼び出し側の責務:
+ * サーバー側は `invite_redemption.redeemed_by` にUNIQUE制約を置き、
+ * 行ロックの順序を account → invite_code に固定すること（設計8.6.4）。
  *
  * @param inviteCode - `{ status, expiresAt, useCount, maxUses, issuedBy }` の形。
  *   `null`ならコードが存在しない（サーバーのDB検索結果をそのまま渡す）
@@ -62,7 +82,7 @@ export const REDEMPTION_REJECTION_REASONS = [
 export function checkRedemption(inviteCode, account, now) {
   if (!inviteCode) return { ok: false, reason: 'NOT_FOUND' };
   if (inviteCode.status === 'revoked') return { ok: false, reason: 'REVOKED' };
-  if (inviteCode.expiresAt !== null && now > inviteCode.expiresAt) {
+  if (inviteCode.expiresAt !== null && isAfter(now, inviteCode.expiresAt)) {
     return { ok: false, reason: 'EXPIRED' };
   }
   if (inviteCode.useCount >= inviteCode.maxUses) return { ok: false, reason: 'EXHAUSTED' };
@@ -78,24 +98,47 @@ export function checkRedemption(inviteCode, account, now) {
  * `checkRedemption` を先に通してから呼ぶこと。サーバーは行ロック内で
  * 「読む→ここで計算→書く」を1トランザクションにする）。
  *
- * `grantReferralCodes` はtrueのときだけ、成立に加えてreferralコード2枠ぶんの
- * 種（`issuedBy`だけを持つ雛形）を返す。呼び出し側は、消費したアカウントが
- * 外部ID連携済み（設計8.6.4）のときだけtrueを渡す。ゲストのままでは常にfalse。
+ * referralコードの発行はここに畳まない（消費と発行は別の出来事: 設計8.6.4は
+ * 発行を「外部ID連携を完了した時点」まで遅らせると定めている。連携済みアカウントが
+ * 消費した場合も含め、発行は必ず `grantReferralSeeds` を通す）。
+ * `accountUpdate` は、消費が「誰に招かれたか」をアカウント側へ反映するために
+ * 呼び出し側が書き込む値（設計8.6.4の主効果: 以後のP2機能アクセスを許可する）。
  */
-export function applyRedemption(inviteCode, account, now, { grantReferralCodes } = {}) {
+export function applyRedemption(inviteCode, account, now) {
   const redemption = {
     inviteCodeId: inviteCode.id,
     redeemedBy: account.id,
     redeemedAt: now,
   };
   const updatedCode = { ...inviteCode, useCount: inviteCode.useCount + 1 };
-  const referralSeeds = grantReferralCodes
-    ? [
-        { source: 'referral', issuedBy: account.id, maxUses: 1 },
-        { source: 'referral', issuedBy: account.id, maxUses: 1 },
-      ]
-    : [];
-  return { updatedCode, redemption, referralSeeds };
+  const accountUpdate = { invitedByCodeId: inviteCode.id, invitedAt: now };
+  return { updatedCode, redemption, accountUpdate };
+}
+
+/**
+ * `referral`コードの発行が今できるか（設計8.6.3: 1アカウント生涯1回だけ2枠。
+ * 発行済みの2枠を使い切ったかどうかに関わらず、一度発行したら再発行しない）。
+ * `account.referralSeedsIssued` は「このアカウントへ既に発行したか」のフラグ。
+ */
+export function checkReferralIssuance(account) {
+  if (account.referralSeedsIssued) {
+    return { ok: false, reason: 'ALREADY_ISSUED' };
+  }
+  return { ok: true };
+}
+
+/**
+ * `referral`コード2枠の雛形を作る（設計8.6.3/8.6.4）。
+ * 呼び出しの起点は消費ではなく「外部ID連携を完了した」イベント
+ * （消費時点で既に連携済みなら、その場でこのイベントも起きたものとして呼ぶ）。
+ * 呼び出し側は先に `checkReferralIssuance` を通し、成立したら
+ * `account.referralSeedsIssued` を立てること（生涯1回の担保はそちら）。
+ */
+export function grantReferralSeeds(account) {
+  return [
+    { source: 'referral', issuedBy: account.id, maxUses: 1 },
+    { source: 'referral', issuedBy: account.id, maxUses: 1 },
+  ];
 }
 
 /**
