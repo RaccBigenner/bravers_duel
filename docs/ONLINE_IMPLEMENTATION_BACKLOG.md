@@ -51,7 +51,8 @@ player-visible exit conditions:
 - バトル中にリロードまたは一時切断しても、同じ試合と操作待ちへ復帰できる
 - LINE/Google等へ連携すると、NPC進行、デッキ、進行中試合が失われずアカウントを保護できる
 - スマホ縦持ちとPCの共通バトル盤面で、勝敗、時間切れ、再接続理由を理解できる
-- クライアント改変、再送、複数タブから勝敗、カード、報酬を作れない
+- 改変した勝敗/報酬payload、期限切れsession、重複command、古いrevision、複数タブ競合、
+  match未参加者の直接API要求をE2Eで拒否し、不正な結果/BP/所有行が0件
 
 ### G2: Collection Closed Beta
 
@@ -103,7 +104,9 @@ player-visible exit conditions:
 
 - CHオープンチャットを利用でき、不快な相手を即時block/reportして以後の表示を止められる
 - 観戦者には両者の手札を隠し、遅延を伴う公開情報だけで試合を観戦できる
-- 通報の確認、証跡保全、警告/停止/解除、異議申立てを運営が一貫して処理できる
+- blockの即時反映、report受付番号、制裁/異議申立て状態を本人が確認できる
+- fixture 20件を証跡欠落0件で処理し、公開運営時間内の初回確認24時間、
+  重大alert 5分、全体停止訓練5分以内を達成する
 - 運営がチャットと公開観戦を個別に停止しても、対戦と所持データを壊さない
 
 ### G6: Tournament Release
@@ -128,6 +131,7 @@ player-visible exit conditions:
 
 - NPC交換とプレイヤー間の構造化交換を利用でき、同時accept、取消、期限切れでもカードを失わない
 - 使用中、match lock中、凍結中の個体を交換できず、成立前に受取内容と警告が分かる
+- NPC購入後168時間以内の個体を交換できず、複数アカウントの即時集約を検知/停止できる
 - 交換を停止してもescrow中の個体を安全に返却または確定できる
 
 ### G8: Live Operations
@@ -139,7 +143,8 @@ player-visible exit conditions:
 player-visible exit conditions:
 
 - フリールールと`LATEST_N`を選べ、禁止/制限改定後も保存デッキの違反理由と使える場所が分かる
-- シングル価格を動的にする場合、更新時刻と現在価格が明確で、異常時は固定価格へ安全に戻せる
+- シングル価格を動的にする場合、更新時刻と現在価格が明確で、異常時はlast-good価格へ凍結できる
+- G4後の標本条件、approved policy/review、復旧訓練を欠くscopeはDB activationで拒否される
 - 新弾、翻訳、NPCシナリオ、formatを既存対戦や過去replayを壊さず追加できる
 
 ## 1. タスク管理の使い分け
@@ -212,7 +217,7 @@ P5のコミュニティガイドライン、通報画面、管理設計は早く
 
 ### OLG-001 公式ルールv0.11と現行検証器を同期
 
-状態: 完了（2026-07-29、`546f39c`）
+状態: 完了（基礎ルール/3枠検証は`03229ce`、v0.11とOracle対応の最終同期は`546f39c`）
 
 検証: 2026-07-29にengine 114 tests、Web production build、未公開データ漏洩検査を通過
 
@@ -531,9 +536,13 @@ P1 exit:
 - 売却前に個体、受取BP、最後の1枚、高レア、使用不能になるデッキと不足枚数を表示
 - β初期値として、NPC買取によるBP発行は1アカウント150 BP/日、
   同一Oracle 4個体/日を上限にし、設定値として変更可能にする
-- 150 BPパックの期待買取総額を通常45〜55 BP、保証を含む上限60 BP以下、
+- account/Oracle/営業日guardで並行売却を直列化し、DBのJST 04:00境界で4個体を再集計する
+- global日次予算行→account日次予算行の順にlockし、hard capと150 BP/日の両方を再検査する
+- 150 BPパックの期待買取総額を`NORMAL`45〜55 BP、`NORMAL`/`PITY`各stateの
+  条件付き期待清算額と天井cycleの1pack平均を60 BP以下、
   1200 BP starterの全売却額を600 BP以下にする自動検査
-- どの購入物も、購入直後に全売却してBPが増えないことを版付き排出表ごとに検査
+- `pack_definition`へ全draw state、条件付き確率、天井counter遷移/resetを定義し、
+  高レア単発の実現値と期待値を混同せず版付き分布から検査する
 
 ### OLG-209 NPC有限在庫と基準販売価格
 
@@ -547,6 +556,7 @@ P1 exit:
 - 同一Printingはまとめて表示し、MVPでは個体番号指定購入、価格チャート、オークションを実装しない
 - NPCからの成立購入は同一Oracle・1アカウントにつき直近7日5個体までとし、
   pack等を含む総所持数そのものには上限を設けない
+- P7前にNPC購入個体へ168時間の交換lockを付け、複数アカウントからの即時集約を拒否する
 - 基準販売/買取価格と目標在庫の初期値を版付き設定にし、コード変更なしで調整可能にする
 
 | レアリティ | 基準販売 | 固定買取 | 目標在庫 |
@@ -569,6 +579,11 @@ P1 exit:
 - 同一Oracleの直近7日購入数は`accountId + oracleId`のguard行を`FOR UPDATE`して直列化し、
   lock取得後にDBから1回だけ採った時刻の直前168時間に`settledAt`が入る購入order itemから
   `READ COMMITTED`で再検査する。transaction開始時刻、古いsnapshot、クライアント時計は使わない
+- 全市場注文をaccount guardで直列化し、lock順をaccount guard→方向別limit→
+  global budget→account budget→
+  Printing別stock guard昇順→wallet→instance ID昇順に固定する
+- 購入/売却/seed/archiveはPrinting別stock guardを共有する。購入はguard取得後にFIFO個体を
+  `LIMIT quantity FOR UPDATE`で全量再取得し、lock競合だけによる偽の在庫不足を出さない
 - 最後の1個体を並行購入しても成功は1件だけ。同じ注文の再送は同じ結果を返す
 - 期限切れ、在庫不足、価格version変更、残高不足、個体lockでは何も部分更新せず、再見積り理由を返す
 - 応答前に注文結果を保存し、リロード後に購入/売却結果と新残高を再表示する
@@ -592,7 +607,10 @@ P1 exit:
   `pricing_policy_version`として承認する。承認前は候補価格を計算しない
 - 初期標本下限はOracleごとのqualified unique購入者/売却者の和集合20アカウントとし、
   未満なら在庫補正を含め価格を動かさない
+- 在庫0で拒否したqualified購入quoteを同一account/Oracle/営業日1回まで未充足需要として別集計し、
+  policyでweight/capを明示する。初期weightは0
 - 勝率、デッキ採用率、個人属性は価格入力に使わない
+- factor上下、clamp、丸め、標本不足、未充足需要capのgolden inputを承認条件にする
 
 ### OLG-213 承認済みpolicyのshadow計算とreview
 
@@ -600,6 +618,9 @@ P1 exit:
 - 計算順を`基準×factor`→基準80〜120% clamp→前日±5% clamp→承認済み丸め→経済検査に固定
 - 最低14日、原則2〜4週間、固定価格とshadow価格、成立数、売り切れ時間、BP流入出、
   不正候補、clamp発生を比較する
+- G8合格用windowはG4開放後の実データだけで14日連続とし、対象Oracleごとに
+  qualified unique和集合20、購入者5、売却者5、成立営業日5を初期下限にする
+- policy version変更時は連続日数をresetし、下限未達Oracleは固定価格scopeに残す
 - 同じ入力snapshotとpolicy versionから同じ価格を再計算でき、運営画面で差分と根拠を確認できる
 - Phase 2では候補価格を表示/quote/注文へ適用せず、動的価格feature flagをONにできない
 
@@ -610,6 +631,7 @@ P2 exit:
 
 を完走し、並行操作や再送でもBPとカード個体が増減しない。G2 Collection Closed Betaは
 固定価格＋raw集計で開始し、承認済みpolicyのshadowまでをP2とする。実価格への適用はG8まで禁止する。
+G2/G3のshadowは探索用であり、activation合格用windowはG4開放後に改めて計測する。
 
 ## 7. Milestone P3: ルームPvP
 
@@ -657,10 +679,12 @@ P2 exit:
 
 P7 交換:
 
-- NPC recipe
-- player offer/escrow
-- parallel accept/expiry/cancel
-- trust restriction/GM freeze
+- OLG-700 NPC recipeと版付き日次/週次更新
+- OLG-701 player offer/escrowと最終確認
+- OLG-702 parallel accept/expiry/cancelのatomic処理
+- OLG-703 trust restriction/GM freeze/補償
+- OLG-704 NPC購入個体の168時間交換lock
+- OLG-705 複数アカウント集約攻撃、cluster alert、Oracle単位kill switchの運用試験
 
 P8 Live Operations:
 
@@ -669,7 +693,11 @@ P8 Live Operations:
 - OLG-802 locale key、日本語fallback、翻訳QA、欠落文言検査
 - OLG-803 NPCシナリオ/解放グラフ/報酬contentの版管理
 - OLG-804 SLO、監視/alert、backup/restore、障害/rollback訓練
-- OLG-805 reviewed shadowを対象弾/レアリティ単位で動的価格へactivationし、kill switchを訓練
+- OLG-805 G4後14日連続・標本下限を満たすreviewed shadowだけをOracle allowlist単位で
+  DB activationし、last-good凍結/再開とkill switchを訓練
+  - G8 server gate、approved policy/review、golden test、経済/台帳検査、復旧訓練を
+    transaction内で再検査し、欠けた条件では汎用flagからも有効化できない
+  - 更新失敗時はlast-good実価格を凍結し、復旧後の±5% baselineにも使う
 - OLG-806 旧format replayと進行中match/tournamentの互換保持
 
 ## 12. 最初に着手する順

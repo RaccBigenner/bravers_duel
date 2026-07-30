@@ -886,7 +886,7 @@ bp_ledger
 
 追加:
 
-- 10パック以内にSR以上を1枚保証
+- 初期案は10パック以内にSR以上を1枚保証するが、閾値と保証分布は正式排出率と同時に承認する
 - 排出対象、各枠の確率、保証状況を購入前に表示
 - 抽選はサーバーのCSPRNGで行う
 - BP引落し、抽選結果、カード個体発行を1トランザクションで確定
@@ -894,6 +894,19 @@ bp_ledger
 - 開封演出を飛ばしても同じ結果を再表示する
 
 排出テーブルはコードへ埋め込まず、版付きの`pack_definition`として管理する。
+初期10パック保証は独立した`GUARANTEE` stateを作らず、`NORMAL`と保証カウンター到達時の
+`PITY`へ一本化する。UC以上枠/R以上枠は各state内の枠分布であり、購入回数で発火する
+別stateではない。`pack_definition`は両stateの5枠の条件付き確率、購入前counter、
+SR以上排出時と`PITY`確定時のreset条件を有限状態として列挙する。ここで「天井」は、
+購入前counterが版付き閾値へ達した時に`PITY`分布を使い、その結果確定後にresetする仕組みを
+指す。閾値だけを決め、`PITY`分布を未定義のまま実装しない。
+
+「期待清算額」は、各結果のNPC買取合計をその結果の条件付き確率で加重した値であり、
+1回の最大買取額ではない。LSRを引いた1パックの実現清算額が60 BPを超えること自体は違反に
+しない。`NORMAL`の条件付き期待清算額は45〜55 BPを目標帯、60 BPをhard capとする。
+`PITY`単体の条件付き期待清算額にも同じ60 BPのhard capを適用する。
+天井についてはcounter 0からresetまでの`NORMAL`/`PITY`遷移を含む1cycleの
+期待清算総額÷期待購入pack数を60 BP以下にする。版付き分布から厳密計算できないpackは公開しない。
 
 ### 6.5 カード売却
 
@@ -918,7 +931,10 @@ bp_ledger
 - 高レア複数売却は再確認
 - 「重複だけ選ぶ」機能
 
-売値は、150 BPパックの期待売却総額が45〜60 BP以下になるよう設定し、購入→即売却でBPが増えないことを自動テストする。
+売値は、150 BPパックの`NORMAL`期待売却総額を45〜55 BPの目標帯かつ60 BP以下にし、
+天井cycleを含む1pack平均も60 BP以下にする。幸運な単発結果ではなく、版付き確率分布と
+state遷移から期待値を自動計算し、確定的または期待値上の購入→即売却ループで
+BPが増えないことを検査する。
 
 ### 6.6 NPCシングルカード店
 
@@ -968,6 +984,16 @@ Steam Community Marketのcommodity itemは、同一アイテムをまとめて�
 数えず、同一Oracleの総所持数自体には上限を設けない。期間と上限は版付き設定にし、
 注文実行時はアカウントとOracleの組を直列化して並行注文による超過を防ぐ。
 
+この上限はアカウント単位であり、複数アカウントを同一人物だと完全には証明できない。
+P7のプレイヤー交換を開放する前に、NPCから購入した個体へ購入成立から168時間の
+`npc_purchase_trade_lock_until`を付け、期間中はプレイヤー交換へ出せないようにする。
+NPCへの再売却は許可するが、別プレイヤーがNPCから買い直した時は新しい168時間lockを付ける。
+同じ期間中はNPC交換recipeの入力にも使えず、別個体へ変換してlockを洗浄できないようにする。
+交換利用は保護済み、チュートリアル完了、作成7日以上のアカウントに限定し、同一端末/回線等の
+cluster signalは価格には使わず、不正調査、購入停止、交換停止の判断材料だけに使う。
+これはSybilを完全防止する保証ではないため、Printingごとの有限在庫、seed hard cap、
+異常購入clusterのalert、Oracle単位の購入/交換kill switchを併用する。
+
 #### 初期β価格と在庫
 
 用語の混同を避け、プレイヤーがNPCへ払う額を「販売価格」、NPCからプレイヤーへ払う額を
@@ -985,8 +1011,8 @@ Steam Community Marketのcommodity itemは、同一アイテムをまとめて�
 
 正式な排出率が確定するまでは仮値とし、次の経済不変条件を価格公開の必須ゲートにする。
 
-- 150 BPブースターの通常時、保証時、天井到達時を含む全排出状態で、現在の買取価格による
-  期待清算額を60 BP以下にする
+- 150 BPブースターの`NORMAL`期待清算額は45〜55 BPの目標帯かつ60 BP以下にし、
+  天井はcounter 0からresetまでの`NORMAL`/`PITY` cycleを1pack平均60 BP以下にする
 - 1200 BPスターターは、売却可能な全個体を清算しても600 BP以下にする
 - 同じPrintingの買取価格は販売価格を常に下回る
 - 購入直後の同一個体を売却してBPが増える組合せを作らない
@@ -996,7 +1022,8 @@ Steam Community Marketのcommodity itemは、同一アイテムをまとめて�
 リセットする。全体の日次買取予算は
 `買取可能アカウント数 × 150 BP`と運営設定のhard capの小さい方にする。招待人数を増やす前に
 hard capも更新し、予算を使い切った場合は次のリセットまで新しい買取quoteを発行しない。
-確定済みquoteも注文実行時に予算を行ロックして消費し、予算を超える部分成立はさせない。
+確定済みquoteも注文実行時にOracle別個体数と予算を再検査し、上限を超える部分成立はさせない。
+営業日はDB時刻をJSTへ変換して04:00を境界に切り替え、アプリ時計を使わない。
 
 #### 価格更新
 
@@ -1008,7 +1035,15 @@ hard capも更新し、予算を使い切った場合は次のリセットまで
 3. **shadow計算**: 承認済みpolicyで最低14日、原則2〜4週間、候補価格を保存するが
    画面と注文には反映しない
 4. **日次動的価格**: G8 Live Operationsでのみ、経済テスト、shadow review、復旧訓練の
-   通過後に対象弾/レアリティ単位のfeature flagで有効化する
+   通過後に明示したOracle allowlist単位でDB activationする
+
+G2/G3中のshadowはpolicy調整用の参考にできるが、G8 activationの合格期間には数えない。
+activation対象Oracleごとに、G4 Public Online Betaへ遷移した後の`PRODUCTION`実取引だけを入力とし、
+同一release gate遷移、policy version、Oracle allowlistで**14 complete business dates**連続の
+正常な日次snapshotを作る。G4遷移を含む部分営業日は数えず、次の04:00 JSTから始まる完全な
+営業日を1日目とする。その14日窓では初期仮値として、qualified uniqueの和集合20以上、
+購入者5以上、売却者5以上、成立売買のある営業日5日以上をすべて満たす。対象外Oracleは
+固定価格のまま残す。policy version、allowlist、対象G4遷移を変えた場合は連続日数を0へ戻す。
 
 候補価格は、Printingの在庫補正とOracleの14日需要補正から求める。
 
@@ -1027,6 +1062,14 @@ candidate =
 - アカウント保護済み、チュートリアル完了、作成7日以上で、不正/凍結対象外の取引だけを
   qualified unique需要へ含める
 - seed、archive移動、取消、失敗注文、運営アカウントは需要観測へ含めない
+- 売り切れで成立売買だけが途切れる偏りを測るため、資格条件を満たす購入確定操作が
+  stock guard後の再検査で在庫0を理由に拒否された時だけ`qualified_unmet_demand`へ記録する。
+  商品閲覧、自動refresh、取消、残高/quote期限等の別理由による拒否は数えない
+- 観測行は同一account/Oracle/営業日1回までとし、価格入力時は直近14日のaccount集合を
+  `DISTINCT`で再構成する。同じアカウントの日次反復を14票として単純加算しない
+- 未充足需要を価格へ使うか、重み、上限、bot除外をpolicy承認時に必ず決める。
+  `unmet_demand_weight`と`unmet_demand_cap`はnullable不可の承認済みpolicy値とし、
+  初期weightは0で、shadow比較を通さず成立需要へ混ぜない
 - Oracleごとに直近14日のqualified unique購入者/売却者の和集合が20アカウント未満なら、
   在庫補正を含め候補価格を直前価格から動かさない。20はpolicy version内の初期仮値とする
 - 04:00 JSTは、前営業日の需要集計確定 → archive復帰 → 復帰後`SELLABLE`在庫snapshot →
@@ -1036,6 +1079,8 @@ candidate =
   直前価格の±5% clamp → 承認済み整数丸め → 経済不変条件検査とする
 - 丸め後も両clampの共通範囲を出ない丸め規則をpolicyで必須にする
 - 端数処理、補正係数、需要期間、標本下限は版付き設定にし、管理画面から無監査で変更できなくする
+- factor上昇/下降、両clamp、丸め境界、標本不足、未充足需要上限はgolden inputでも検証し、
+  実市場で偶然その分岐が起きなくても未試験のpolicyを承認しない
 
 価格へ勝率、デッキ採用率、プレイヤーのBP残高、購入履歴、端末、地域を直接使わない。
 「よく勝つカードだから高い」「この人なら払えそうだから高い」という不公平を避ける。
@@ -1075,6 +1120,7 @@ single_market_order_item
   printing_id
   instance_id
   quantity
+  business_date
   settled_at
 ```
 
@@ -1086,51 +1132,116 @@ single_market_inventory
 
 single_market_price_snapshot
   price_version, printing_id, sale_price, buyback_price,
-  base prices, factors, valid_from, calculation_input_hash
+  base prices, factors, valid_from, calculation_input_hash,
+  source_environment, release_gate_transition_id
 
 single_market_pricing_policy
   policy_version, inventory_factor_config, demand_factor_config,
   demand_window_days, qualified_sample_floor, rounding_rule,
-  daily_clamp, base_clamp, status, approved_by, approved_at
+  unmet_demand_weight, unmet_demand_cap, daily_clamp, base_clamp,
+  status, approved_by, approved_at
 
 single_market_demand_daily
   business_date, oracle_id, qualified_unique_buyers,
-  qualified_unique_sellers, excluded_observations
+  qualified_unique_sellers, excluded_observations,
+  source_environment, release_gate_transition_id
 
 single_market_demand_observation
   business_date, oracle_id, account_id, bought, sold,
-  qualified, exclusion_reason
+  qualified, exclusion_reason, source_environment,
+  release_gate_transition_id
+
+single_market_unmet_demand_observation
+  business_date, oracle_id, account_id, reason,
+  qualified, exclusion_reason, source_environment,
+  release_gate_transition_id
 
 single_market_daily_budget
-  business_date, account_id/null(global), limit_bp, consumed_bp, version
+  business_date, scope: GLOBAL | ACCOUNT, account_id: nullable,
+  limit_bp, consumed_bp, version
+
+single_market_account_guard
+  account_id, version
 
 single_market_purchase_guard
   account_id, oracle_id, version
 
+single_market_sell_guard
+  business_date, account_id, oracle_id, consumed_quantity, version
+
+single_market_stock_guard
+  printing_id, version
+
 single_market_seed_batch
   seed_batch_id, content_version, printing_id, quantity,
   reason, approved_by, executed_at
+
+single_market_shadow_review
+  review_id, policy_version, oracle_scope, oracle_scope_hash,
+  source_environment, release_gate_transition_id,
+  first_complete_business_date, last_complete_business_date,
+  successful_complete_business_dates, sample_metrics,
+  status, approved_by, approved_at
+
+single_market_dynamic_activation
+  activation_id, policy_version, oracle_scope, oracle_scope_hash,
+  review_id, release_gate_transition_id, golden_test_run_id,
+  economic_check_run_id, ledger_check_run_id, recovery_drill_id,
+  last_good_price_version, status, activated_by, activated_at
+
+single_market_price_control
+  oracle_scope_hash, active_price_version, last_good_price_version,
+  dynamic_enabled, activation_id, version, updated_at
 ```
+
+price snapshot、policy、検査run、reviewは公開/承認後に内容を更新しない。修正は新しいversionまたは
+runを作る。需要観測と日次集計には`source_environment = PRODUCTION`とG4へ遷移した
+`release_gate_transition_id`をDB由来で保存し、client入力を受け付けない。activation用reviewは、
+14の各complete business dateに使ったsnapshot/観測が同じG4遷移、policy、Oracle allowlistに
+属することをDBで検証し、staging、G4前、G4遷移日の部分営業日を混在させない。
 
 - quoteの初期有効期間は60秒
 - 購入quoteはPrinting、数量、価格だけを固定し、具体的な個体と在庫を予約しない。
   観測後に在庫が変わっても、同じPrintingの在庫が数量分あればquoteを継続できる
-- 購入実行時に同じPrintingの`SELLABLE`を`entered_stock_at`順でロックし、具体的な個体を割り当てる
 - 売却quoteだけが`sell_instance_ids`と価格を固定するが、match/escrowロックや日次予算を予約しない
-- 同一Oracleの購入注文は、`account_id + oracle_id`で一意な`single_market_purchase_guard`を
-  `INSERT ... ON CONFLICT`後に`FOR UPDATE`し、必ず同じ順序で直列化する
-- guard lock取得後の別statementでDBの`clock_timestamp()`を1回だけ取得して基準時刻とする。
-  直前168時間の半開区間`(基準時刻 - 168時間, 基準時刻]`に`settled_at`が入る
-  `BUY_FROM_NPC`のorder item数量と
-  今回の注文数量の合計を判定する
+- 冪等キーの保存済み終端結果を先に確認した後、購入/売却とも`single_market_account_guard`を
+  `FOR UPDATE`し、同一アカウントの市場注文を直列化する
+- 購入では対象Oracleの`account_id + oracle_id`で一意な`single_market_purchase_guard`を、
+  Oracle ID昇順で`INSERT ... ON CONFLICT`後に`FOR UPDATE`する。全guard取得後の別statementで
+  DBの`clock_timestamp()`を1回だけ`effective_at`として取得し、直前168時間の半開区間
+  `(effective_at - 168時間, effective_at]`に`settled_at`が入る`BUY_FROM_NPC` item数量と
+  今回数量の合計を判定する
 - NPCシングル注文transactionはPostgreSQL `READ COMMITTED`を使い、guard待機後の再集計で
   直前transactionのcommitを見えるようにする。`REPEATABLE READ`の古いsnapshotは使わない
-- 成立時のorder item `settled_at`もDBの`clock_timestamp()`で保存し、アプリ時計を使わない
+- 成立時の全order itemの`settled_at`には判定に使った同じ`effective_at`を保存し、
+  追加の時計読取りやアプリ時計を使わない
 - 売却/譲渡済みの購入個体も期間内は数え、失敗/取消注文は数えない。冪等キーが既に終端なら
   上限判定より先に保存済み結果を返す
+- 売却ではaccount guard取得後の別statementでDBの`clock_timestamp()`を1回だけ
+  `effective_at`として取得し、`business_date = date((effective_at AT TIME ZONE 'Asia/Tokyo')
+  - interval '4 hours')`を求める。対象Oracleの`sell_guard`をOracle ID昇順で
+  `INSERT ... ON CONFLICT`後に`FOR UPDATE`し、`consumed_quantity + 今回数量 <= 4`を再検査する。
+  transaction開始が04:00前でもaccount guard取得後の`effective_at`が04:00以降なら新営業日とする
+- 売却のBP予算は、`account_id = null`のglobal日次budget行を先、その後にaccount日次budget行を
+  必ず同じ順で`FOR UPDATE`し、全体hard capと1人150 BP/日の両方を再検査する。
+  成立transactionだけがsell guardの`consumed_quantity`と両budgetの`consumed_bp`を増やし、
+  全order itemへ同じ`effective_at`/`business_date`を保存する。取消・失敗・rollbackは消費しない
+- 在庫を変える購入、売却、seed、archive移動は、対象`printing_id`の
+  `single_market_stock_guard`を昇順で`FOR UPDATE`してから個体行を触る
+- 購入はstock guard取得後、同じPrintingの`SELLABLE`を
+  `ORDER BY entered_stock_at, instance_id LIMIT quantity FOR UPDATE`で再取得する。
+  stock guardで同一Printingの変更を直列化するため`SKIP LOCKED`は使わず、取得数不足だけを
+  真の在庫不足として全量拒否する
+- stock guardまたは個体lockの待機timeoutは在庫0と区別した再試行可能な`INVENTORY_BUSY`とする。
+  serverは同じidempotency keyで上限3回のcapped jitter再試行を行い、使い切った時も
+  `OUT_OF_STOCK`へ読み替えない
+- 市場注文のlock順を、account guard → 方向別limit guard → global budget →
+  account budget → stock guard（Printing昇順）→ BP wallet → card instance（ID昇順）へ固定する。
+  使わない段階は飛ばすが順序を逆転させない。購入の在庫個体だけはstock guardが同一Printingを
+  直列化した後にFIFO（`entered_stock_at, instance_id`）順で取得し、ID昇順は在庫割当て以外の
+  card instance lockへ適用する
 - 注文実行時にquote期限、価格版、BP残高、同一Oracleの直近7日購入上限、個体所有、
-  カードロック、在庫、日次予算をサーバーで再検査する
-- 購入は在庫個体とBP残高、売却は所持個体と日次予算をDBで行ロックする
+  カードロック、在庫、Oracle別買取数、日次予算をサーバーで再検査する
 - BP増減、個体移転、所有イベント、在庫bucket、注文完了を1トランザクションで確定する
 - 全部成功するか1つも変更しないかのどちらかとし、一部成立を禁止する
 - `account_id + idempotency_key`へ一意制約を付け、再送には最初の確定結果を返す
@@ -1148,7 +1259,8 @@ single_market_seed_batch
 - 購入確認では購入後の所持数、残高、割当て個体は自動選択であることを示す
 - 売却確認では影響を受ける保存デッキ、不足枚数、使用不能になるデッキを名前付きで示す
 - 売却後にデッキが使用不能になる場合は再確認し、該当デッキを自動で書き換えない
-- quote切れ、在庫競合、日次予算終了は、入力を失わせず再取得できるエラーにする
+- quote切れ、真の在庫切れ、`INVENTORY_BUSY`、日次予算終了は別の理由を表示し、
+  入力を失わせず再取得または再試行できるエラーにする
 - MVPでは相場ランキング、価格チャート、値上がり通知、シリアル指定を置かない
 
 #### 運用と停止
@@ -1161,10 +1273,38 @@ single_market_seed_batch
 - `single_market_dynamic_pricing`: G8だけで有効化できる日次動的価格
 - `single_market_seed`: seed batch実行
 
-異常時は、動的価格だけを止めて直前の正常な固定snapshotを使う、買取だけ止める、全注文を
-止めて閲覧だけ残す、の順に影響を限定する。価格更新が26時間以上失敗した場合は動的価格を
-自動停止し、直前の正常snapshotへ戻して運営へ通知する。停止前に完了した注文は巻き戻さず、
-未完了quoteは安全側で失効させる。
+動的価格は、汎用flagを直接書き換えて有効化しない。専用DB procedureだけが
+`single_market_dynamic_activation`を作成し、同じtransactionで次の参照行を`FOR SHARE`して
+再検査できた時だけ`ACTIVE`にする。その有効なOracle allowlistから実効flagを導出する。
+
+- `release_gate_transition_id`が現在のserver側G8遷移で、statusが`CURRENT`
+- policyが`APPROVED`で、reviewとactivationの`policy_version`が完全一致
+- reviewが`APPROVED`で、G4後`PRODUCTION`の14 complete business dates、標本条件、
+  Oracle allowlistと`oracle_scope_hash`がactivationと完全一致
+- review終了後に実行されたgolden/economic/ledger各runが`PASS`で、policy version、
+  input hash、Oracle scope hashが一致
+- review終了後にlast-good価格で凍結/再開した`recovery_drill_id`が`PASS`
+- `last_good_price_version`がimmutableな安全snapshotで、activation scope全体を欠落なく覆う
+- 承認者と実行者が監査ログへ残る
+
+procedureは検査したrun ID、G8遷移ID、last-good版、正規化済みallowlist/hashをactivation行へ
+固定し、`single_market_price_control`のpointerと`dynamic_enabled`を同じtransactionで更新する。
+service roleからactivationへの直接`INSERT/UPDATE`と汎用flag更新権限を剥奪する。DB制約/triggerと
+service認可の両方で、有効なactivationがないOracleの動的snapshotを`ACTIVE`にできなくする。
+review、policy、allowlistまたはG8遷移を差し替えた時は新しいactivationを必須にする。
+
+`last_good_applied_price_snapshot`（activation行と`single_market_price_control`の
+`last_good_price_version`が指す版）は、全経済不変条件と台帳整合検査を通過し、全員へ完全公開された
+直近のimmutableな実価格版と定義する。日次更新に失敗した候補は公開せず、active pointerを
+last-goodのまま維持する。最後の成功公開から26時間を超えたら、比較更新で
+`dynamic_enabled = false`、activationを`SUSPENDED`へ原子的に変更するが、
+active price pointerは同じlast-goodから動かさない。販売基準価格へ自動で飛ばさない。
+復旧時は専用activation procedureで全条件を再検査し、±5% baselineにも同じlast-goodを使う。
+停止中の日数分をまとめて追いつかせない。
+
+直近snapshot自体がpack定義変更等で経済不変条件を満たさなくなった場合は、価格を自動選択せず
+購入/買取を停止して閲覧だけ残す。運営が新しい固定snapshotを承認した場合だけ全quoteを失効し、
+変更理由と価格を表示して再開する。停止前に完了した注文は巻き戻さない。
 
 ---
 
@@ -1207,8 +1347,9 @@ single_market_seed_batch
 
 - 登録済みアカウントのみ
 - チュートリアル完了
-- アカウント作成から一定期間経過
+- アカウント作成から7日以上経過（初期仮値）
 - `onboarding_bound`の初回スターター個体は不可
+- `npc_purchase_trade_lock_until`前のNPC購入個体は不可
 - BPを交換条件にできない
 - 自由記述欄なし
 - 認証手段追加/復旧直後は高価値交換を一時停止
@@ -1808,7 +1949,7 @@ P5の通報/moderationへ倣った検知（同一相手への反復パターン�
 | 所持 | `card_instance`, `ownership_event`, `card_lock` |
 | BP | `bp_wallet`, `bp_ledger` |
 | デッキ | `deck`, `deck_revision`, `deck_entry`, `deck_draft` |
-| ショップ | `starter_definition`, `pack_definition`, `shop_order`, `pack_result`, `single_market_inventory`, `single_market_pricing_policy`, `single_market_price_snapshot`, `single_market_demand_observation`, `single_market_demand_daily`, `single_market_quote`, `single_market_order`, `single_market_order_item`, `single_market_daily_budget`, `single_market_purchase_guard`, `single_market_seed_batch` |
+| ショップ | `starter_definition`, `pack_definition`, `shop_order`, `pack_result`, `single_market_inventory`, `single_market_pricing_policy`, `single_market_price_snapshot`, `single_market_demand_observation`, `single_market_unmet_demand_observation`, `single_market_demand_daily`, `single_market_quote`, `single_market_order`, `single_market_order_item`, `single_market_daily_budget`, `single_market_account_guard`, `single_market_purchase_guard`, `single_market_sell_guard`, `single_market_stock_guard`, `single_market_seed_batch`, `single_market_shadow_review`, `single_market_dynamic_activation`, `single_market_price_control` |
 | 交換 | `trade_offer`, `trade_escrow_item`, `trade_acceptance` |
 | マッチ | `match`, `match_player`, `match_result`, `match_reward` |
 | レート | `rating`, `rating_history` |
@@ -1844,6 +1985,14 @@ P5の通報/moderationへ倣った検知（同一相手への反復パターン�
     プレイヤー所有中は`current_owner_account_id`が必須
 20. 需要観測は`business_date + oracle_id + account_id`につき1行で、14日unique数を日別件数の
     単純加算で水増ししない
+21. NPCへの成立売却は、1アカウント・同一Oracle・同一営業日につき4個体以下
+22. NPC買取はaccount日次150 BPとglobal日次hard capのどちらも超えない
+23. G8、approved policy、合格済みshadow review、復旧訓練を参照する`ACTIVE`なactivationが
+    ないOracleでは動的価格を実注文へ使えない
+24. `npc_purchase_trade_lock_until`以前の個体をプレイヤー交換escrowへ移せない
+25. 同じPrintingの在庫変更はstock guardで直列化し、購入は要求数量を全量取得するか0件かにする
+26. 日次budgetは営業日ごとにGLOBAL 1行、各ACCOUNT 1行だけとし、account IDは
+    scopeがACCOUNTの時だけ必須。partial `UNIQUE`または`UNIQUE NULLS NOT DISTINCT`で守る
 
 これらはアプリコードだけでなく、`UNIQUE`、`FOREIGN KEY`、`CHECK`、行ロック、DBトランザクションで守る。
 
@@ -2117,20 +2266,23 @@ battle.event.damage
 - match lock中の交換不可
 - BP台帳合計と残高一致
 - 発行個体数と所有/システム状態の合計一致
-- パック期待売却額が価格未満
+- `NORMAL`/`PITY`各stateの条件付き期待売却額と天井cycleの1pack平均が60 BP以下
 - 場と40枚側へ同じ個体を割り当てられない
 - 報酬/離脱保証を100回再送しても1回だけ付与
 - 同一ペア逓減と04:00 JSTの日次切替
 - 初回無償スターターを売却/交換できない
 - シングル購入を並列実行しても在庫個体を二重販売しない
 - シングル売却を並列実行しても同じ個体と買取予算を二重消費しない
+- 同一Oracleの売却を並列実行しても営業日4個体を超えず、04:00 JST境界だけでresetする
+- account/global予算を逆順に要求する負荷試験でもdeadlockせず、常にglobal→account順になる
 - quote期限切れ、価格版切替、在庫競合、デッキ/match/escrowロックを安全に拒否する
 - 同じシングル注文を100回再送しても、BPと個体を1回だけ移転する
 - 再録Printingを混ぜた並行注文でも、同一Oracleの直近7日NPC購入数が5個体を超えない
 - 168時間境界の直前/一致/直後と、先にtransaction開始してguard待機した注文を含む
   同一Oracleの並行初回注文で購入上限を一貫して判定する
 - パック等で同一Oracleを6個体以上所持していても総所持上限として誤拒否しない
-- 通常/保証/天井を含む全pack状態の期待清算額が60 BP以下
+- `NORMAL`/`PITY`各stateの条件付き期待清算額と、天井cycleの1pack平均期待清算額が60 BP以下。
+  高レアを含む単発実現値を期待値と誤判定しない
 - 全starter definitionの最大清算額が600 BP以下
 - 価格更新が直前±5%、基準価格の80〜120%、1日1回、全員同価格を破れない
 - Oracleごとのqualified unique和集合20未満、同一人物反復、不適格アカウント、
@@ -2138,6 +2290,11 @@ battle.event.damage
 - seed → 売買 → archive → 復帰後も、発行数と個体状態の総和が一致する
 - 各シングル市場kill switchを注文途中で切っても部分成立しない
 - DB commit前後の障害注入と再試行でBP/個体/注文の整合が崩れない
+- 同じPrintingを並行購入/売却/archiveしても、在庫が実在する時にlock競合だけを理由とした
+  偽の在庫不足を返さず、FIFOと全量成立を守る
+- G4前データ、14日未満、標本不足、未承認policy、未実施復旧訓練の各条件でG8 activationを拒否する
+- 更新失敗中はlast-good価格を凍結し、復旧後も停止日数分の価格変動をまとめて適用しない
+- NPC購入直後の個体を別アカウントへ交換して購入上限を迂回できない
 
 ### 17.5 Web
 
@@ -2238,9 +2395,11 @@ CIはrootでengineだけでなく、web、server、migration、E2E、漏洩検�
 - Printing別の`SELLABLE`/`ARCHIVE`在庫、売切れ時間、補充までの時間
 - シングル販売によるBP消費とNPC買取によるBP発行、日次予算消化率
 - Oracle別のqualified unique購入者/売却者と、除外された需要観測数
+- Oracle別のqualified在庫切れ購入希望者、未充足需要weight適用前後の候補価格差
 - 販売/買取spread、pack期待清算額、starter最大清算額
-- 直近7日の同一Oracle購入上限、個体ロック、日次上限、不正検知による注文拒否率
-- 価格候補と実価格の差、±5%/±20% clamp発生数、価格更新失敗時間
+- 直近7日の同一Oracle購入上限、同一Oracle日次買取上限、交換lock、日次予算による注文拒否率
+- 価格候補と実価格の差、±5%/±20% clamp発生数、価格更新失敗/凍結時間
+- shadow連続成功日、eligible Oracle数、activation拒否理由、last-goodからの復旧回数
 - seed/archive移動量、台帳不一致、二重所有、在庫不足アラート
 
 初期目標:
@@ -2256,7 +2415,8 @@ CIはrootでengineだけでなく、web、server、migration、E2E、漏洩検�
 - 日次BP上限到達者1〜3%
 - シングル注文の二重移転/部分成立 0件
 - シングル市場由来のBP台帳不一致/個体在庫不一致 0件
-- pack期待清算額 全状態60 BP以下、starter最大清算額600 BP以下
+- pack期待清算額は`NORMAL`/`PITY`各stateと天井cycleで1pack平均60 BP以下、
+  starter最大清算額600 BP以下
 
 サンプル数が少ない間は率だけで断定せず、実際の離脱画面とレビューを一緒に見る。
 
@@ -2297,7 +2457,8 @@ CIはrootでengineだけでなく、web、server、migration、E2E、漏洩検�
 完了条件:
 
 - ブラウザを閉じ、別画面から戻っても同じNPC戦を続けられる
-- クライアント改変で結果/BPを作れない
+- 改変した勝敗/報酬payload、期限切れsession、重複command、古いrevision、複数タブ競合、
+  match未参加者の直接API要求をE2Eで拒否し、不正な`match_result`/`bp_ledger`/所有行が0件
 
 ### Phase 2: 所持とショップ
 
@@ -2312,14 +2473,14 @@ CIはrootでengineだけでなく、web、server、migration、E2E、漏洩検�
 - NPCシングル店の有限在庫、個体実移転、固定価格、quote/注文
 - seed/archive台帳、日次買取予算、同一Oracleの直近7日5個体購入上限
 - 固定価格でraw売買/在庫データを集計し、価格policyを承認
-- 承認後、最低14日・原則2〜4週間のshadow価格計算
+- 承認後、探索用shadow価格を計算。G8合格用の14日連続windowはG4開放後に別計測
 
 完了条件:
 
 - すべての個体の発生源と現在状態を追跡できる
 - 注文再送で二重発行されない
 - シングル店の並列購入/売却、在庫切れ、再送、障害復帰でBPと個体台帳が崩れない
-- 全pack/天井の期待清算額と全starter清算額が上限内
+- 通常/定期保証pack stateと天井cycleの期待清算額、全starter清算額が上限内
 - 全ユーザー同一価格、日次変動幅、薄い需要データの固定をshadowで自動検査できる
 - Phase 2では動的価格を実注文へ適用できず、G8用feature flagはOFF固定
 
@@ -2373,7 +2534,9 @@ CIはrootでengineだけでなく、web、server、migration、E2E、漏洩検�
 
 - ブロック/通報/制裁/全体停止を運営画面だけで完結
 - 観戦者へ両者の手札と遅延前情報が漏れない
-- 日次の通報確認担当と重大案件の連絡経路が稼働
+- blockは再読込/複数タブを含め即時反映し、report受付番号と異議申立て状態を本人が確認できる
+- NG投稿、証跡保存、警告、停止、解除、異議申立てを含むfixture 20件を欠落0件で処理し、
+  公開した運営時間内の初回確認SLO 24時間、重大案件alert 5分、全体停止訓練5分以内を達成
 
 ### Phase 6: トーナメント
 
@@ -2397,11 +2560,13 @@ CIはrootでengineだけでなく、web、server、migration、E2E、漏洩検�
 - escrow
 - プレイヤー交換
 - 取引制限
+- NPC購入個体の168時間交換lock
 - GM凍結/補償
 
 完了条件:
 
 - 並列accept、取消、期限切れ、障害復帰で台帳が崩れない
+- 複数アカウントでNPC購入個体を即時集約する攻撃を拒否し、残余リスクを運営確認できる
 
 ### Phase 8: Live Operations
 
@@ -2412,14 +2577,14 @@ CIはrootでengineだけでなく、web、server、migration、E2E、漏洩検�
 - locale key、日本語fallback、翻訳QA、欠落文言検査
 - NPCシナリオ/解放グラフ/報酬contentの版管理
 - SLO、監視/alert、backup/restore、障害/rollback訓練
-- reviewed shadowの対象弾/レアリティ限定activationと動的価格kill switch
+- G4後の合格済みshadowを参照するOracle allowlist限定activationと動的価格kill switch
 
 完了条件:
 
 - 弾追加/ローテーション時に保存デッキの合法性を正しく再判定
 - 進行中試合/大会は開始時の旧フォーマットを維持
 - 新弾、翻訳、NPC contentを既存進行へ影響させずrollbackできる
-- 復旧訓練を通し、動的価格を止めて固定価格へ戻せる
+- DB activation gateと復旧訓練を通し、動的価格をlast-good実価格で凍結/再開できる
 
 ---
 
@@ -2463,11 +2628,14 @@ CIはrootでengineだけでなく、web、server、migration、E2E、漏洩検�
 | シングル価格更新 | 決定 | 固定raw集計→policy承認→最低14日・原則2〜4週間shadow→G8だけ日次動的 |
 | 価格変動幅 | 決定 | 直前価格±5%/日、基準価格の80〜120% |
 | シングル購入上限 | 仮値 | NPC成立購入は同一Oracleごとに直近7日5個体。総所持数は制限しない |
+| NPC購入個体の交換lock | 仮値 | 購入成立から168時間。P7前に複アカ攻撃テストで再評価 |
 | NPC買取上限 | 仮値 | 1人150 BP/日、同一Oracle 4個体/日、全体hard cap |
 | 全体買取hard cap | 要決定 | 招待人数とβのBP発行量を基に公開前に設定 |
-| 正式排出率/天井 | 要決定 | pack全状態の期待清算額60 BP以下を検証できる値 |
+| 正式排出率/天井 | 要決定 | state遷移と天井cycleを定義し、1pack平均期待清算額60 BP以下を検証できる値 |
 | 特殊加工のシングル売買 | 要決定 | 初期は対象外。価格単位と買占め上限への算入方法を決める |
 | 動的価格係数/端数 | 要決定 | rawログで決め、OLG-213のshadow開始前に版付きpolicyとして承認する |
+| 未充足需要の価格利用 | 要決定 | 売切れquote失敗をraw集計。初期weight 0、policyでweight/capを承認 |
+| 動的価格fallback | 決定 | last-good実価格を凍結し、復旧baselineにも使用。unsafeなら売買停止 |
 | シングル市場の価格入力 | 決定 | qualified unique需要と在庫だけ。勝率/個人属性は不使用 |
 | P2P注文板/オークション | 決定 | 導入しない。Phase 7もカード同士の構造化交換だけ |
 | 個別/リアルタイム価格 | 決定 | 導入しない。全員共通の日次snapshot |
@@ -2504,6 +2672,14 @@ CIはrootでengineだけでなく、web、server、migration、E2E、漏洩検�
 複数アカウントで売却を繰り返すと、BP発行と需要観測の両方を歪められる。アカウント保護、
 作成7日、qualified unique集計、1人150 BP/日、Oracle別上限、全体予算、買取kill switchを
 同時に入れる。価格へ反映する観測と、不正検知用の生イベントを分けて保存する。
+
+### High: 複数アカウントと交換でNPC購入枠を迂回される
+
+アカウント単位の直近7日5個体はSybil耐性を保証しない。特に目標在庫1枚のLSRは少数の
+複数アカウントで占有され得る。NPC購入個体の168時間交換lock、交換アカウントの保護/経過日数、
+有限在庫/seed hard cap、cluster alert、Oracle単位kill switchを同時に入れる。P7前に
+複数アカウントから1アカウントへ集約する攻撃シナリオを実施し、完全防止できない残余リスクを
+運営判断として記録する。
 
 ### Medium: 有限在庫が初心者の必要カード入手を妨げる
 
