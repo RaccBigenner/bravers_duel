@@ -507,9 +507,34 @@ engine/admin typecheck、Web/Admin production build、未公開データ漏洩�
 
 ### Epic OLG-100 環境とserver基盤
 
-- OLG-101 `server`, `protocol`, `supabase` workspace scaffold
-- OLG-102 local Supabase/Worker/DO
-- OLG-103 development/staging/production bindings
+#### OLG-101 `server`, `protocol`, `supabase` workspace scaffold
+
+状態: 設計完了・実装未着手（2026-07-31）
+
+G1 Internal Alphaの土台。設計: `docs/ONLINE_SERVICE_DESIGN_2026-07-29.md` 10.7
+
+- **範囲はローカルの雛形だけ**。実在のCloudflareリソース・Supabase project・secretは作らない
+  （それらはOLG-102〜105）。OLG-101の完了だけでは何も稼働しない
+- `server`/`protocol`を`@bravers/server`/`@bravers/protocol`として`engine`/`web`/`admin`と
+  同じ形のnpm workspaceにし、ルート`package.json`の`workspaces`へ追加する
+- `protocol`は中身を埋めない（Command/Event/Snapshotの実型はOLG-121/122）。workspaceとして
+  解決できることをプレースホルダ型1つ・テスト1本で示すだけ
+- `supabase/`はnpm workspaceにしない。`supabase init`相当の`config.toml`と、PostgreSQL正本の
+  置き場になる空の`migrations/`を用意する（マイグレーションはORMを使わず生SQL。理由は10.7）
+- ルート`npm test`へ`server`/`protocol`のworkspace testを追加する
+
+受入:
+
+- `npm --workspace server run test` / `npm --workspace protocol run test`が通る
+  （中身はプレースホルダでよい。ビルド設定・型検査が通ることが目的）
+- ルート`npm test`が`server`/`protocol`を含めて全部緑
+- `supabase/`に`config.toml`と空の`migrations/`があり、Supabase CLIがプロジェクトとして認識する
+- 実在のCloudflareリソース、実在のSupabase project、実在のsecretを一切作っていない
+
+- OLG-102 local Supabase/Worker/DO（OLG-101の雛形を実際にローカルで起動する。Supabase CLI/
+  Wranglerのローカル実行、`MatchDO`等の最小スタブ）
+- OLG-103 development/staging/production bindings（実在のCloudflare/Supabase project作成を含む。
+  社長のアカウント・課金判断が要る）
 - OLG-104 migration CIとenvironment marker
 - OLG-105 production昇格workflow
 
