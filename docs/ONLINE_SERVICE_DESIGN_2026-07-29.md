@@ -1694,13 +1694,13 @@ server/
   src/durable/TournamentDO.ts
   src/economy/
   src/projections/
+  migrations/（PostgreSQLの正本。10.7参照）
 
 protocol/
   command/event/snapshotの共有型
 
 supabase/
-  config.toml（Supabase CLIのローカル設定）
-  migrations/（PostgreSQLの正本。10.7参照）
+  config.toml（Supabase CLIのローカル設定。マイグレーション本体はserver/migrations/を参照する）
 
 i18n/
   ja-JP/
@@ -1789,16 +1789,17 @@ secretを用意するのはOLG-103以降（社長の手番を含む）。OLG-101
   adapter、`commandId`+`expectedRevision`）で埋める。OLG-101の時点では、workspaceとして
   解決できることを1つのプレースホルダ型と1本のテストで示すだけでよい
 - `supabase/`はnpm workspaceにしない（JS/TSパッケージではないため）。`supabase init`が作る
-  `config.toml`と、PostgreSQLの正本になる`migrations/`（生SQL）を置く場所として使う。
-  10.4のリポジトリ構成案にあった`server/migrations/`は、Supabase CLIの既定構成に合わせて
-  `supabase/migrations/`へ変更した（サブディレクトリを勝手に増やすと、後で「正本はどっちか」の
-  混乱を生むため、CLIの既定に寄せて1か所にする）
+  `config.toml`（Supabase CLIのローカル設定）だけを置く。PostgreSQLの正本になるマイグレーション
+  （生SQL）は10.4のリポジトリ構成案どおり`server/migrations/`に置く（`config.toml`の
+  migrationsパスを`../server/migrations`へ向ける）。理由: 実際のマイグレーションを書き・読むのは
+  サーバー側の実装者であり、`server/`から見て自分のテーブル定義が別workspace配下にあると探しにくい。
+  Supabase CLIの既定パスより「正本を1か所（`server/`）にまとめる」ことを優先する
 - マイグレーションツールはORMを使わず、Supabase CLIのネイティブなSQLマイグレーション
-  （`supabase migration new` → 生SQLを書く → `supabase db push`）にする。理由: 10.3が要求する
-  行ロック・制約・短いトランザクションは生SQLの方が確実に書け、ORMの抽象化がBP/カード個体という
-  お金に近いテーブルの挙動を隠すリスクを避けたい。マイグレーションCI（lintと`environment_marker`
-  検査）自体はOLG-104で作る。OLG-101はマイグレーションの置き場と最初の1本（雛形テーブル無しの
-  空マイグレーションで動作確認するだけ）を用意する
+  （`supabase migration new` → 生SQLを`server/migrations/`へ書く → `supabase db push`）にする。
+  理由: 10.3が要求する行ロック・制約・短いトランザクションは生SQLの方が確実に書け、ORMの抽象化が
+  BP/カード個体というお金に近いテーブルの挙動を隠すリスクを避けたい。マイグレーションCI
+  （lintと`environment_marker`検査）自体はOLG-104で作る。OLG-101はマイグレーションの置き場と
+  最初の1本（雛形テーブル無しの空マイグレーションで動作確認するだけ）を用意する
 - ルート`package.json`の`npm test`へ`server`/`protocol`のworkspace testを追加する
   （既存の`engine`/`web`/`admin`と同じ並び）。CIワークフロー（`.github/workflows/deploy.yml`相当）
   への配線は、実際にserverが何かをする段階（OLG-102以降）で見直す
@@ -1808,8 +1809,8 @@ secretを用意するのはOLG-103以降（社長の手番を含む）。OLG-101
 - `npm --workspace server run test`と`npm --workspace protocol run test`が通る
   （中身はプレースホルダでよい。ビルド設定・型検査が通ることが目的）
 - ルート`npm test`が`server`/`protocol`を含めて全部緑
-- `supabase/`に`config.toml`と空の`migrations/`があり、`supabase db push`相当のコマンドが
-  ローカルのSupabase CLIで実行できる形になっている（実行そのものはOLG-102の範囲。
+- `supabase/`に`config.toml`があり、`server/migrations/`を向いた状態で`supabase db push`相当の
+  コマンドがローカルのSupabase CLIで実行できる形になっている（実行そのものはOLG-102の範囲。
   ディレクトリと設定ファイルが存在し、CLIがプロジェクトとして認識することまでがOLG-101）
 - 実在のCloudflareリソース、実在のSupabase project、実在のsecretは一切作らない
   （それらはOLG-102〜105の範囲。OLG-101はローカルの雛形だけ）

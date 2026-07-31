@@ -519,8 +519,9 @@ G1 Internal Alphaの土台。設計: `docs/ONLINE_SERVICE_DESIGN_2026-07-29.md` 
   同じ形のnpm workspaceにし、ルート`package.json`の`workspaces`へ追加する
 - `protocol`は中身を埋めない（Command/Event/Snapshotの実型はOLG-121/122）。workspaceとして
   解決できることをプレースホルダ型1つ・テスト1本で示すだけ
-- `supabase/`はnpm workspaceにしない。`supabase init`相当の`config.toml`と、PostgreSQL正本の
-  置き場になる空の`migrations/`を用意する（マイグレーションはORMを使わず生SQL。理由は10.7）
+- `supabase/`はnpm workspaceにしない。`supabase init`相当の`config.toml`だけを置き、
+  マイグレーション（PostgreSQL正本）は`server/migrations/`に置く（10.4のリポジトリ構成案どおり。
+  ORMは使わず生SQL。理由は10.7）
 - ルート`npm test`へ`server`/`protocol`のworkspace testを追加する
 
 受入:
@@ -528,7 +529,7 @@ G1 Internal Alphaの土台。設計: `docs/ONLINE_SERVICE_DESIGN_2026-07-29.md` 
 - `npm --workspace server run test` / `npm --workspace protocol run test`が通る
   （中身はプレースホルダでよい。ビルド設定・型検査が通ることが目的）
 - ルート`npm test`が`server`/`protocol`を含めて全部緑
-- `supabase/`に`config.toml`と空の`migrations/`があり、Supabase CLIがプロジェクトとして認識する
+- `supabase/`の`config.toml`が`server/migrations/`を向いており、Supabase CLIがプロジェクトとして認識する
 - 実在のCloudflareリソース、実在のSupabase project、実在のsecretを一切作っていない
 
 - OLG-102 local Supabase/Worker/DO（OLG-101の雛形を実際にローカルで起動する。Supabase CLI/
