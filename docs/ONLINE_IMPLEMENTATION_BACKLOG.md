@@ -494,7 +494,7 @@ Web/Admin production build、未公開データ漏洩検査を通過
 - 検査器自身のテストで、行印・節印・雛形・テストファイル除外の動きを固定
 - リポジトリ全体（140ファイル）に古くなった記述が0件
 
-検証: 2026-07-29にengine 225 tests、stale検査 13 tests、npm test 306件、
+検証: 2026-07-31にengine 225 tests、stale検査 17 tests、npm test 349件、
 engine/admin typecheck、Web/Admin production build、未公開データ漏洩検査を通過
 
 要確認（社長の採決待ち）:

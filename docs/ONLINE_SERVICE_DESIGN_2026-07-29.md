@@ -2,7 +2,7 @@
 
 - 版: v0.3
 - 作成日: 2026-07-29
-- 状態: P0実装中（OLG-003完了、以降は設計）
+- 状態: P0完了（OLG-001〜006完了。OLG-003PはCloudflare側のみ残、G0 gateはsmoke test完了まで未クローズ）
 - 対象: 無料のブラウザゲームとして常設公開する次フェーズ
 - ルールの正本: `docs/GAME_RULES.md`
 - この文書の役割: プロダクト、オンライン機能、永続化、運用の基本設計
@@ -1458,15 +1458,28 @@ G2 Collection Closed Betaは招待制。`docs/MARKETING-001_招待βの集客計
 - `admin_batch`は、waveごとに計画人数（例: 第1波10）を上限としたバッチ発行APIから作る。
   上限は運営が設定した`wave_definition`（wave番号・計画人数・発行期限）を必ず参照し、
   計画人数を超える追加発行はAPIレベルで拒否する。人数を増やしたい場合は
-  `wave_definition`を先に更新する（6.6のNPC買取hard cap更新と同じ「先に上限を上げる」順序）
-- `referral`コードは、後述（8.6.4）の条件を満たした招待済みアカウントへ**自動で2枠**発行する。
-  未使用の2枠を使い切らない限り追加発行はしない（自己増殖を防ぐ）
+  `wave_definition`を先に更新する（6.6のNPC買取hard cap更新と同じ「先に上限を上げる」順序）。
+  2つの上限は判定する場所が違う: 計画人数（`planned_count`）は現在時刻を持たない純粋ロジックで
+  判定できる（発行済み数＋今回の要求数が計画人数を超えないか）。発行期限（`issue_deadline`）は
+  現在時刻が要るためAPI層で判定する（`now > issue_deadline`なら以後の発行を拒否）。どちらも
+  独立して効く上限で、片方だけ満たしても発行は成立しない
+- `referral`コードは、後述（8.6.4）の条件を満たした招待済みアカウントへ、**1アカウント生涯1回だけ**
+  2枠を自動発行する。発行済みの2枠を使い切ったかどうかに関わらず、一度発行した後は同じアカウントへ
+  再発行しない（自己増殖を防ぐ）。「未使用の2枠を使い切ったら追加発行する」という運用ではない
 
 #### 8.6.4 消費（redemption）のルール
 
 1回の消費は次の状態遷移を、対象`invite_code`行を**行ロックしたトランザクション**の中で行う
 （6.6 atomic quote/orderの`FOR UPDATE`パターンと同じ。ロックなしで並行実行すると
 `max_uses=1`のコードが2人に同時成立してしまう）。
+
+**`invite_code`行のロックだけでは「1アカウント生涯1回」は守れない。** `ALREADY_INVITED`はコード側
+ではなくaccount側の状態なので、同一accountが**別々の**コードを並行消費すると、ロックする行が
+別なので両方成立してしまう（12章の不変条件「1つの`account_id`は`invite_redemption.redeemed_by`に
+高々1回しか出現しない」が破れる）。これは`invite_redemption.redeemed_by`へのUNIQUE制約で担保する
+（ロック順に関係なく不変条件が立つ）。account行も同一トランザクションでロックする場合は、
+ロック順をaccount → invite_codeに固定すること（デッドロック防止。行ロックの対象は複数テーブルに
+またがるため、常に同じ順で獲得する）。
 
 受理条件（1つでも満たさなければ拒否し、どれにも当てはまらなければ成立）:
 
@@ -1477,7 +1490,7 @@ G2 Collection Closed Betaは招待制。`docs/MARKETING-001_招待βの集客計
 | `EXPIRED` | `now > expires_at` |
 | `EXHAUSTED` | `use_count >= max_uses` |
 | `SELF_REDEEM` | `issued_by`が消費しようとしている本人と同じaccount_id（自分のコードは自分で使えない） |
-| `ALREADY_INVITED` | このaccountが既に別のコードを消費済み（1アカウント1回。コードを渡り歩いて`referral`枠を稼ぐのを防ぐ） |
+| `ALREADY_INVITED` | このaccountが既に別のコードを消費済み（1アカウント1回。並行消費でも`redeemed_by`のUNIQUE制約で1件だけ成立する。コードを渡り歩いて`referral`枠を稼ぐのを防ぐ） |
 
 成立したら:
 
@@ -1512,6 +1525,8 @@ G2 Collection Closed Betaは招待制。`docs/MARKETING-001_招待βの集客計
 
 1. `invite_code.use_count`は`max_uses`を超えない（行ロック下での加算のみ許す）
 2. 1つの`account_id`は`invite_redemption.redeemed_by`に高々1回しか出現しない
+   （`redeemed_by`へのUNIQUE制約で担保する。`invite_code`行の行ロックだけでは、
+   同一accountが別々のコードを並行消費するケースを防げない: 8.6.4）
 3. `referral`コードの`issued_by`は、外部ID連携済みのaccountのみ
 
 ---
@@ -1970,28 +1985,28 @@ P5の通報/moderationへ倣った検知（同一相手への反復パターン�
 8. 1アカウントは同時に1つのレートキューへだけ参加
 9. `invite_code.use_count`は`max_uses`を超えない
 10. 1つの`account_id`は`invite_redemption.redeemed_by`に高々1回しか出現しない
-9. 進行中試合のカード個体は交換/売却不可
-10. 1アカウントは同時に1つの進行中大会だけ
-11. 1つの`bracket_match`に確定結果は1つ
-12. 同じ所持個体をキャラクター枠と40枚側へ二重割当てしない
-13. 非本番serviceから本番DB/DOへ接続しない
-14. NPCシングル注文は、BP、全対象個体、所有イベント、在庫が全部移るか、1つも変わらないか
-15. `SYSTEM_STOCK`の実在個体と`single_market_inventory`行は双方向に必ず1対1で、
+11. 進行中試合のカード個体は交換/売却不可
+12. 1アカウントは同時に1つの進行中大会だけ
+13. 1つの`bracket_match`に確定結果は1つ
+14. 同じ所持個体をキャラクター枠と40枚側へ二重割当てしない
+15. 非本番serviceから本番DB/DOへ接続しない
+16. NPCシングル注文は、BP、全対象個体、所有イベント、在庫が全部移るか、1つも変わらないか
+17. `SYSTEM_STOCK`の実在個体と`single_market_inventory`行は双方向に必ず1対1で、
     `SELLABLE`/`ARCHIVE`のどちらか一方だけを持つ
-16. 1つの`account_id + idempotency_key`にシングル注文結果は1つ
-17. 1つの`price_version`では、同じPrintingの価格を全プレイヤーへ同一にする
-18. NPCからの成立購入は、1アカウント・同一Oracleにつき直近7日で5個体以下
-19. `SYSTEM_STOCK`以外の個体は`single_market_inventory`行を持たず、
+18. 1つの`account_id + idempotency_key`にシングル注文結果は1つ
+19. 1つの`price_version`では、同じPrintingの価格を全プレイヤーへ同一にする
+20. NPCからの成立購入は、1アカウント・同一Oracleにつき直近7日で5個体以下
+21. `SYSTEM_STOCK`以外の個体は`single_market_inventory`行を持たず、
     プレイヤー所有中は`current_owner_account_id`が必須
-20. 需要観測は`business_date + oracle_id + account_id`につき1行で、14日unique数を日別件数の
+22. 需要観測は`business_date + oracle_id + account_id`につき1行で、14日unique数を日別件数の
     単純加算で水増ししない
-21. NPCへの成立売却は、1アカウント・同一Oracle・同一営業日につき4個体以下
-22. NPC買取はaccount日次150 BPとglobal日次hard capのどちらも超えない
-23. G8、approved policy、合格済みshadow review、復旧訓練を参照する`ACTIVE`なactivationが
+23. NPCへの成立売却は、1アカウント・同一Oracle・同一営業日につき4個体以下
+24. NPC買取はaccount日次150 BPとglobal日次hard capのどちらも超えない
+25. G8、approved policy、合格済みshadow review、復旧訓練を参照する`ACTIVE`なactivationが
     ないOracleでは動的価格を実注文へ使えない
-24. `npc_purchase_trade_lock_until`以前の個体をプレイヤー交換escrowへ移せない
-25. 同じPrintingの在庫変更はstock guardで直列化し、購入は要求数量を全量取得するか0件かにする
-26. 日次budgetは営業日ごとにGLOBAL 1行、各ACCOUNT 1行だけとし、account IDは
+26. `npc_purchase_trade_lock_until`以前の個体をプレイヤー交換escrowへ移せない
+27. 同じPrintingの在庫変更はstock guardで直列化し、購入は要求数量を全量取得するか0件かにする
+28. 日次budgetは営業日ごとにGLOBAL 1行、各ACCOUNT 1行だけとし、account IDは
     scopeがACCOUNTの時だけ必須。partial `UNIQUE`または`UNIQUE NULLS NOT DISTINCT`で守る
 
 これらはアプリコードだけでなく、`UNIQUE`、`FOREIGN KEY`、`CHECK`、行ロック、DBトランザクションで守る。
@@ -2430,10 +2445,10 @@ CIはrootでengineだけでなく、web、server、migration、E2E、漏洩検�
 - `GAME_RULES.md` v0.11とデッキ検証を同期（完了）
 - キャラクター枠の同名複数選択を禁止（完了）
 - `oracle_id`導入（OLG-003、完了）
-- `format`定義
-- engine/content/format version
+- `format`定義（OLG-004、完了）
+- engine/content/format version（OLG-005、完了）
 - current branchとmainの統合基準を決定（OLG-002、完了）
-- 古い文書を現行仕様へ同期
+- 古い文書を現行仕様へ同期（OLG-006、完了）
 
 完了条件:
 

@@ -1,7 +1,8 @@
 # STATE — BRAVER'S DUEL
 
-- 最終更新: 2026-07-29
-- フェーズ: G0 Foundation / P0（OLG-001〜006完了、OLG-003P未完了、次はP0 exit review）
+- 最終更新: 2026-07-30
+- フェーズ: G0 Foundation / P0（OLG-001〜006完了、OLG-003Pはgit側完了・Cloudflare側は社長待ちで未完了、
+  P0 exit reviewを依頼済み）
 
 
 ## この文書の読み方
@@ -64,7 +65,20 @@
   対象弾のprivate効果module/testを用意、`PUBLIC_PUBLISH_TOKEN` Actions secret、
   Cloudflareの`GITHUB_PRIVATE_TOKEN`（private write/Actions）と
   `GITHUB_PUBLIC_TOKEN`（public read）を設定して管理画面を再デプロイする必要がある。
-  設定実施は承認済みだが、token値の発行・同期・本番デプロイはまだ行っていない。
+- 2026-07-30、git側（社長のCloudflare作業を待たずに進められる範囲）を完了した。
+  - workflow・trusted scripts・decoderの実行bit同期は非公開リポで実測確認済み（内容一致・
+    `decode-webp-sandbox.sh`が`100755`）
+  - `PUBLIC_PUBLISH_TOKEN` Actions secretは設定済み（7/29）
+  - 非公開リポの`effects/vol2.ts`/`effects/vol2.test.ts`へ**テストバッチ3枚**
+    （クラシックカウンター/骸集め/帯電）を追加（commit `191fbef`）。公開パイプラインが
+    想定するファイル形式・相対import・`VOLN_EFFECTS`エクスポートが本物のengineで
+    動くことを、公開リポのengineへ一時配置してnpm test（vol2分4件・engine全体229件）と
+    型検査で確認済み（確認後は公開リポから削除し、公開物には一切残していない）。
+    vol2は全33枚中この3枚だけが実装済みで、**残り30枚は別項目**（OLG-003Pの一部としては数えない、
+    後続の「vol2本実装」で行う）
+  - 残るのは**Cloudflare側だけ**: `GITHUB_PRIVATE_TOKEN`/`GITHUB_PUBLIC_TOKEN`の発行・設定、
+    Access application-domain cookieのSameSite=Lax化、管理画面の本番再デプロイ、
+    実Actions公開のsmoke test。ここは社長のCloudflare操作待ち
 - 本番有効化作業は、OLG-003のコード完了と分けて`OLG-003P`として登録した。
 - OLG-004（version付きformatとデッキ合法性）は完了。`data/formats.json`をフォーマット版マスタにし、
   `formatId`＋`version`で版を固定した（公開済みの版は書き換えず、新しい版を足す）。
@@ -83,6 +97,11 @@
   古くなった記述を機械で落とす検査（`npm run check:stale`）を追加し、
   当時のまま残す履歴は見出しの`stale-ok`で現行の記述と区別する。
 - 次はP0 exit review（G0 Foundationの完了判断）。OLG-003Pはその前に必ず片付ける。
+  2026-07-30、Cloudflare側を除くP0の準備を完了しレビュー依頼を出した（reviews.json）:
+  `npm test`全件・型検査（engine/web/admin）・production build・`check:leak`が全部green
+  （直近の実行で確認）。OLG-003PはCloudflare側だけが残り、社長のトークン設定・再デプロイ待ち。
+  P0 exit reviewの対象は「OLG-003Pのgit側までの完了」で、Cloudflareの実Actions smoke testは
+  この審査の対象外（G0 gate自体はsmoke test完了まで閉じない）。
 - P2へNPCシングル市場を正式登録した。G2 Collection Closed Betaは固定買取/販売、有限な実在個体在庫、
   atomic quote/orderで開始する。固定価格のraw集計からpolicyを承認し、2〜4週間shadow計算する。
   日次±5%・基準80〜120%の動的価格を実注文へ使えるのはG8だけとし、G4以降の標本、
@@ -109,9 +128,11 @@
 - 作業ブランチ `feat/online-foundation`。P0（ルールと版管理）を上から順に進めている。
 - 完了: OLG-001 / OLG-001A / OLG-002 / OLG-003（カードID二層化）/ OLG-004（版付きフォーマットと
   デッキ合法性）/ OLG-005（engine・content・format versionとreplay header）/ OLG-006（現行文書とgolden deck同期）。
-- 未完了: **OLG-003P（本番カード公開パイプラインの有効化）**。社長のトークン設定と再デプロイ待ちで、
-  G0を終える前に必ず片付ける。
-- 次にやること: P0 exit review を通してG0 Foundationを完了にする。
+- 未完了: **OLG-003P（本番カード公開パイプラインの有効化）**。git側（workflow/trusted scripts同期・
+  テストバッチ3枚のeffects/test）は2026-07-30に完了。残るのはCloudflare側（社長のトークン設定と
+  再デプロイ）だけで、G0を終える前に必ず片付ける。
+- 次にやること: P0 exit review（依頼済み・reviews.json）の結果待ち。fix指摘が来たら文書修正で潰す。
+  通ったらCloudflare側の完了を待ってG0 Foundationを完了にする。
 - ここまでの経緯は一番下の「開発の記録」を見る。
 
 ## オープンβ要件 決定（2026-07-23）
