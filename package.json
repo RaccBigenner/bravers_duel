@@ -13,7 +13,7 @@
     "server"
   ],
   "scripts": {
-    "test": "npm run test:migration && npm run test:publish && npm run test:invites && npm run test:online-local && npm run test:online-schema && npm run test:stale && npm run check:stale && npm --workspace protocol run test && npm --workspace server run test && npm --workspace engine run test && npm --workspace web run test && npm --workspace admin run test",
+    "test": "npm run test:migration && npm run test:publish && npm run test:invites && npm run test:online-local && npm run test:online-schema && npm run test:stale && npm run test:server-boundary && npm run check:stale && npm --workspace protocol run test && npm --workspace server run test && npm --workspace engine run test && npm --workspace web run test && npm --workspace admin run test",
     "test:migration": "node --test scripts/migrate-card-identities.test.mjs",
     "test:publish": "node --test scripts/publish-card-set.test.mjs",
     "test:online-local": "node --test scripts/run-local-online.test.mjs scripts/verify-local-guest-account.test.mjs",
@@ -28,6 +28,7 @@
     "check:leak": "node scripts/check-no-wip-leak.mjs",
     "check:stale": "node scripts/check-stale-comments.mjs",
     "test:stale": "node --test scripts/check-stale-comments.test.mjs",
+    "test:server-boundary": "node --test scripts/check-server-engine-boundary.test.mjs",
     "test:invites": "node --test scripts/invites.test.mjs"
   },
   "devDependencies": {

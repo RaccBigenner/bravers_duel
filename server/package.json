@@ -11,6 +11,7 @@
     "test": "npm run typecheck && vitest run"
   },
   "dependencies": {
+    "@bravers/engine": "*",
     "@bravers/protocol": "*",
     "@supabase/supabase-js": "2.111.0"
   },
