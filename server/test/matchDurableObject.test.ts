@@ -2283,6 +2283,54 @@ describe('OLG-121 MatchDO authoritative NPC battle lifecycle', () => {
     });
   }, 20_000);
 
+  it('非terminalのaccepted commandは操作したsocketにmatchCommandUpdate、同一viewerの別タブにはmatchProjectionのみを配る', async () => {
+    const battle = await startReservedNpcBattle();
+    const [issued, otherTabIssued] = await Promise.all([
+      battle.stub.issueSeatToken(battle.session),
+      battle.stub.issueSeatToken(battle.session),
+    ]);
+    expect(issued.state).toBe('issued');
+    expect(otherTabIssued.state).toBe('issued');
+    if (issued.state !== 'issued' || otherTabIssued.state !== 'issued') {
+      throw new Error('Expected issued seat tokens');
+    }
+    const socket = await openPlayerSocket(battle.stub, battle.id, battle.session);
+    const otherTabSocket = await openPlayerSocket(battle.stub, battle.id, battle.session);
+    const initial = await authenticateBattle(socket, issued.seatToken);
+    await authenticateBattle(otherTabSocket, otherTabIssued.seatToken);
+
+    const action = initial.projection.legalActions[0];
+    if (!action) throw new Error('Expected a legal player action');
+    const command = npcCommand(battle.id, initial.projection.revision, action);
+
+    const updatePending = socketOutcome(socket);
+    const otherTabPending = socketOutcome(otherTabSocket);
+    socket.send(JSON.stringify({ type: 'matchCommand', command }));
+
+    const updateOutcome = await updatePending;
+    if (updateOutcome.kind !== 'message') throw new Error('Expected command update');
+    const update = parseMatchServerFrame(JSON.parse(updateOutcome.data) as unknown);
+    expect(update).toMatchObject({
+      type: 'matchCommandUpdate',
+      receipt: { state: 'accepted', baseRevision: initial.projection.revision, revision: 1 },
+      projection: { revision: 1, terminal: null },
+    });
+
+    const otherTabOutcome = await otherTabPending;
+    if (otherTabOutcome.kind !== 'message') throw new Error('Expected peer-tab projection');
+    const otherTabFrame = parseMatchServerFrame(JSON.parse(otherTabOutcome.data) as unknown);
+    expect(otherTabFrame).toEqual({
+      type: 'matchProjection',
+      projection: (update as Extract<MatchServerFrame, { type: 'matchCommandUpdate' }>).projection,
+    });
+    expect('receipt' in (otherTabFrame as Record<string, unknown>)).toBe(false);
+
+    expect(socket.readyState).toBe(WebSocket.OPEN);
+    expect(otherTabSocket.readyState).toBe(WebSocket.OPEN);
+    socket.close(1000, 'done');
+    otherTabSocket.close(1000, 'done');
+  });
+
   it('final ACK喪失相当でも既存owner socketのexact再送だけを保存ACKへ収束させる', async () => {
     const battle = await startReservedNpcBattle();
     const rolledBack = await runInDurableObject(battle.stub, (instance) =>
