@@ -210,7 +210,7 @@ describe('@bravers/protocol scaffold', () => {
     expect(rawRevision).toBeTruthy();
   });
 
-  it('command receiptはauthoritative transitionを含まないackだけに固定する', () => {
+  it('command receiptはerrorごとのexact fieldとackだけに固定する', () => {
     expect(MATCH_COMMAND_ERROR_CODES).toEqual([
       'MATCH_COMMAND_ID_CONFLICT',
       'MATCH_REVISION_MISMATCH',
@@ -224,7 +224,7 @@ describe('@bravers/protocol scaffold', () => {
     if (!matchId || !commandId || baseRevision === null || revision === null) {
       throw new Error('Expected valid result fixtures');
     }
-    const result = {
+    const accepted = {
       type: 'matchCommandResult',
       state: 'accepted',
       matchId,
@@ -232,7 +232,41 @@ describe('@bravers/protocol scaffold', () => {
       baseRevision,
       revision,
     } as const satisfies MatchCommandResult;
-    expect(result).toEqual({
+    const mismatch = {
+      type: 'matchCommandResult',
+      state: 'rejected',
+      matchId,
+      commandId,
+      errorCode: 'MATCH_REVISION_MISMATCH',
+      revision,
+      relation: 'stale',
+    } as const satisfies MatchCommandResult;
+    const invalidAction = {
+      type: 'matchCommandResult',
+      state: 'rejected',
+      matchId,
+      commandId,
+      errorCode: 'MATCH_ACTION_INVALID',
+      revision,
+    } as const satisfies MatchCommandResult;
+    const terminal = {
+      type: 'matchCommandResult',
+      state: 'rejected',
+      matchId,
+      commandId,
+      errorCode: 'MATCH_ALREADY_TERMINAL',
+      revision,
+    } as const satisfies MatchCommandResult;
+    const conflict = {
+      type: 'matchCommandResult',
+      state: 'rejected',
+      matchId,
+      commandId,
+      errorCode: 'MATCH_COMMAND_ID_CONFLICT',
+      originalRevision: revision,
+    } as const satisfies MatchCommandResult;
+
+    expect(accepted).toEqual({
       type: 'matchCommandResult',
       state: 'accepted',
       matchId: 'match_1',
@@ -240,7 +274,44 @@ describe('@bravers/protocol scaffold', () => {
       baseRevision: 0,
       revision: 1,
     });
-    expect('transition' in result).toBe(false);
-    expect('snapshot' in result).toBe(false);
+    expect(mismatch).toMatchObject({ relation: 'stale', revision: 1 });
+    expect(invalidAction).not.toHaveProperty('relation');
+    expect(terminal).not.toHaveProperty('relation');
+    expect(conflict).toMatchObject({ originalRevision: 1 });
+    expect(conflict).not.toHaveProperty('revision');
+    expect('transition' in accepted).toBe(false);
+    expect('snapshot' in accepted).toBe(false);
+
+    // @ts-expect-error revision mismatchにはstale/aheadが必須
+    const missingRelation: MatchCommandResult = {
+      type: 'matchCommandResult',
+      state: 'rejected',
+      matchId,
+      commandId,
+      errorCode: 'MATCH_REVISION_MISMATCH',
+      revision,
+    };
+    const invalidActionRelation: MatchCommandResult = {
+      type: 'matchCommandResult',
+      state: 'rejected',
+      matchId,
+      commandId,
+      errorCode: 'MATCH_ACTION_INVALID',
+      revision,
+      // @ts-expect-error action rejectへrevision relationを付けない
+      relation: 'ahead',
+    };
+    const conflictRevision: MatchCommandResult = {
+      type: 'matchCommandResult',
+      state: 'rejected',
+      matchId,
+      commandId,
+      errorCode: 'MATCH_COMMAND_ID_CONFLICT',
+      // @ts-expect-error ID conflictはrevisionでなくoriginalRevisionだけを返す
+      revision,
+    };
+    expect(missingRelation).toBeTruthy();
+    expect(invalidActionRelation).toBeTruthy();
+    expect(conflictRevision).toBeTruthy();
   });
 });

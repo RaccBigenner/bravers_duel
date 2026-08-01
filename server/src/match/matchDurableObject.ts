@@ -1,14 +1,24 @@
 import { DurableObject } from 'cloudflare:workers';
+import {
+  MATCH_ID_PATTERN,
+  MAX_MATCH_REVISION,
+  parseMatchAction,
+  parseMatchCommandCandidate,
+  parseMatchRevision,
+  type MatchCommandCandidate,
+  type MatchCommandResult,
+  type MatchRevision,
+} from '@bravers/protocol';
 import { createSessionRuntimeConfig } from '../auth/sessionRuntimeConfig';
 import type { TokenDigestCandidate } from '../auth/sessionCrypto';
 import {
   EngineBattleAdapter,
+  EngineBattleAdapterError,
   ENGINE_BATTLE_ADAPTER_VERSION,
   G1_NPC_POLICY_ID,
   HUMAN_PLAYER,
   NPC_PLAYER,
   g1NpcBattleInput,
-  type AppliedBattleTransition,
   type AuthoritativeBattleSnapshot,
   type EngineBattleVersions,
   type NpcBattleResult,
@@ -20,6 +30,13 @@ import {
   type SessionMatchReferenceInput,
 } from '../session/sessionCoordinatorDurableObject';
 import {
+  MatchCommandLedger,
+  MatchCommandLedgerError,
+  MatchCommandPayloadError,
+  identifyMatchCommandPayload,
+  type MatchCommandPayloadIdentity,
+} from './matchCommandLedger';
+import {
   generateSeatToken,
   parseSeatAuthFrame,
   seatTokenDigestCandidates,
@@ -27,7 +44,6 @@ import {
 } from './seatToken';
 
 const MATCH_PATH = /^\/matches\/([A-Za-z0-9_-]{1,64})\/ws$/;
-const MATCH_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 const PROBE_PREFIX = 'probe:';
@@ -121,16 +137,32 @@ export type StartNpcBattleResult =
   | { state: 'conflict' }
   | { state: 'unavailable' };
 
-export interface ApplyNpcBattleActionInput {
+export interface ApplyNpcBattleCommandInput {
   principal: MatchSessionPrincipal;
-  action: unknown;
+  command: unknown;
 }
 
-export interface ApplyNpcBattleActionResult {
-  state: 'applied';
-  transition: AppliedBattleTransition;
-  lifecycleState: 'active' | 'finished';
-}
+type AcceptedMatchCommandResult = Extract<MatchCommandResult, { state: 'accepted' }>;
+type RejectedMatchCommandResult = Extract<MatchCommandResult, { state: 'rejected' }>;
+type RevisionMismatchCommandResult = Extract<
+  RejectedMatchCommandResult,
+  { errorCode: 'MATCH_REVISION_MISMATCH' }
+>;
+type ActionOrTerminalCommandResult = Extract<
+  RejectedMatchCommandResult,
+  { errorCode: 'MATCH_ACTION_INVALID' | 'MATCH_ALREADY_TERMINAL' }
+>;
+type CommandIdConflictResult = Extract<
+  RejectedMatchCommandResult,
+  { errorCode: 'MATCH_COMMAND_ID_CONFLICT' }
+>;
+type StoredMatchCommandResult =
+  | AcceptedMatchCommandResult
+  | RevisionMismatchCommandResult
+  | ActionOrTerminalCommandResult;
+
+/** browserへ返してよいACKだけ。authoritative transitionはOLG-124 projection経由に限定する。 */
+export type ApplyNpcBattleCommandResult = MatchCommandResult;
 
 export type MatchBattleErrorCode =
   | 'MATCH_BATTLE_INPUT_INVALID'
@@ -138,6 +170,7 @@ export type MatchBattleErrorCode =
   | 'MATCH_BATTLE_ACCESS_DENIED'
   | 'MATCH_BATTLE_ALREADY_TERMINAL'
   | 'MATCH_BATTLE_STATE_INVALID'
+  | 'MATCH_COMMAND_CAPACITY_EXCEEDED'
   | 'MATCH_STATE_UNAVAILABLE';
 
 export class MatchBattleError extends Error {
@@ -353,12 +386,12 @@ function validateStartNpcBattleInput(value: unknown): asserts value is StartNpcB
   }
 }
 
-function validateApplyNpcBattleActionInput(
+function validateApplyNpcBattleCommandInput(
   value: unknown,
-): asserts value is ApplyNpcBattleActionInput {
+): asserts value is ApplyNpcBattleCommandInput {
   if (
     !plainObject(value) ||
-    !hasExactKeys(value, ['principal', 'action']) ||
+    !hasExactKeys(value, ['principal', 'command']) ||
     !isExactPrincipal(value.principal)
   ) {
     throw new MatchBattleError('MATCH_BATTLE_INPUT_INVALID');
@@ -472,6 +505,8 @@ export function matchIdFromPath(pathname: string): string | null {
 export class MatchDO extends DurableObject<Env> {
   private operationTail: Promise<void> = Promise.resolve();
   private battleRuntime: EngineBattleAdapter | null = null;
+  private battleRevision: MatchRevision | null = null;
+  private readonly battleCommands = new MatchCommandLedger<StoredMatchCommandResult>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -640,39 +675,148 @@ export class MatchDO extends DurableObject<Env> {
     return this.withOperationLock(() => this.startNpcBattleExclusive(input));
   }
 
-  /** OLG-123のstable MatchActionを内部RPCで扱う。browser wireはOLG-122/125/124まで開かない。 */
-  async applyNpcBattleAction(
-    input: ApplyNpcBattleActionInput,
-  ): Promise<ApplyNpcBattleActionResult> {
-    validateApplyNpcBattleActionInput(input);
+  /** OLG-122 commandを内部RPCで扱う。browser wireはOLG-125/124まで開かない。 */
+  async applyNpcBattleCommand(
+    input: ApplyNpcBattleCommandInput,
+  ): Promise<ApplyNpcBattleCommandResult> {
+    validateApplyNpcBattleCommandInput(input);
     return this.withOperationLock(async () => {
       let lifecycle = this.requireBattleLifecycle(input.principal, true);
+      const command = parseMatchCommandCandidate(input.command);
+      if (!command) throw new MatchBattleError('MATCH_BATTLE_INPUT_INVALID');
+      const matchId = this.ctx.id.name;
+      if (!matchId || command.matchId !== matchId) {
+        throw new MatchBattleError('MATCH_BATTLE_INPUT_INVALID');
+      }
+      const revision = this.requireBattleRevision();
+      let identity: MatchCommandPayloadIdentity;
+      try {
+        identity = await identifyMatchCommandPayload(command, 'player-1');
+      } catch (error) {
+        if (error instanceof MatchCommandPayloadError) {
+          throw new MatchBattleError('MATCH_BATTLE_INPUT_INVALID');
+        }
+        throw error;
+      }
+
+      // active runtimeとcommand revisionのdriftをcached ACKでも隠さない。terminal lifecycleは
+      // OLG-125永続化前なので、同一DO内のledger replayだけruntime無しを許す。
+      let runtime: EngineBattleAdapter | null = null;
+      if (lifecycle.lifecycle_state === 'active') {
+        runtime = this.requireBattleRuntime();
+        if (runtime.commandRevision() !== revision) {
+          throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+        }
+        const finished = runtime.result();
+        if (finished) {
+          lifecycle = await this.persistBattleTerminal(
+            lifecycle,
+            this.finishedTerminalResult(finished),
+          );
+          runtime = null;
+        }
+      }
+
+      const known = this.battleCommands.lookup(command.commandId, identity);
+      if (known.state === 'replay') {
+        return known.result;
+      }
+      if (known.state === 'conflict') {
+        return this.commandIdConflictResult(command, known.originalRevision);
+      }
+      if (!this.battleCommands.hasCapacity()) {
+        throw new MatchBattleError('MATCH_COMMAND_CAPACITY_EXCEEDED');
+      }
+
+      if (command.expectedRevision !== revision) {
+        return this.rememberCommandResult(
+          command,
+          identity,
+          this.revisionMismatchCommandResult(
+            command,
+            revision,
+            command.expectedRevision < revision ? 'stale' : 'ahead',
+          ),
+        );
+      }
       if (lifecycle.lifecycle_state === 'provisioning') {
         throw new MatchBattleError('MATCH_STATE_UNAVAILABLE');
       }
       if (lifecycle.lifecycle_state !== 'active') {
-        throw new MatchBattleError('MATCH_BATTLE_ALREADY_TERMINAL');
+        return this.rememberCommandResult(
+          command,
+          identity,
+          this.actionOrTerminalCommandResult(command, 'MATCH_ALREADY_TERMINAL', revision),
+        );
       }
-      const runtime = this.requireBattleRuntime();
+      runtime ??= this.requireBattleRuntime();
+      if (runtime.commandRevision() !== revision) {
+        throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+      }
       const alreadyFinished = runtime.result();
       if (alreadyFinished) {
-        lifecycle = await this.persistBattleTerminal(
+        await this.persistBattleTerminal(
           lifecycle,
           this.finishedTerminalResult(alreadyFinished),
         );
-        throw new MatchBattleError('MATCH_BATTLE_ALREADY_TERMINAL');
+        return this.rememberCommandResult(
+          command,
+          identity,
+          this.actionOrTerminalCommandResult(command, 'MATCH_ALREADY_TERMINAL', revision),
+        );
       }
 
-      const transition = runtime.applyHumanAction(input.action);
-      const result = runtime.result();
+      if (revision >= MAX_MATCH_REVISION) {
+        throw new MatchBattleError('MATCH_COMMAND_CAPACITY_EXCEEDED');
+      }
+      const action = parseMatchAction(command.action);
+      if (!action) {
+        return this.rememberCommandResult(
+          command,
+          identity,
+          this.actionOrTerminalCommandResult(command, 'MATCH_ACTION_INVALID', revision),
+        );
+      }
+      let transition: ReturnType<EngineBattleAdapter['applyHumanAction']>;
+      try {
+        transition = runtime.applyHumanAction(action);
+      } catch (error) {
+        if (error instanceof EngineBattleAdapterError && error.code === 'BATTLE_ACTION_INVALID') {
+          return this.rememberCommandResult(
+            command,
+            identity,
+            this.actionOrTerminalCommandResult(command, 'MATCH_ACTION_INVALID', revision),
+          );
+        }
+        throw error;
+      }
+      const nextRevision = parseMatchRevision(revision + 1);
+      if (nextRevision === null || runtime.commandRevision() !== nextRevision) {
+        throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+      }
+      const result = transition.status.phase === 'finished' && transition.status.endReason !== null
+        ? {
+            winner: transition.status.winner,
+            endReason: transition.status.endReason,
+            turns: transition.status.turn,
+            finalStateHash: transition.status.stateHash,
+            finalIdentityHash: transition.status.identityHash,
+            appliedActions: transition.status.appliedActions,
+          }
+        : null;
+      const applied = this.rememberCommandResult(command, identity, {
+        type: 'matchCommandResult',
+        state: 'accepted',
+        matchId: command.matchId,
+        commandId: command.commandId,
+        baseRevision: revision,
+        revision: nextRevision,
+      });
+      this.battleRevision = nextRevision;
       if (result) {
         await this.persistBattleTerminal(lifecycle, this.finishedTerminalResult(result));
       }
-      return {
-        state: 'applied',
-        transition,
-        lifecycleState: result ? 'finished' : 'active',
-      };
+      return applied;
     });
   }
 
@@ -1663,7 +1807,12 @@ export class MatchDO extends DurableObject<Env> {
           }
           throw error;
         }
-        if (!this.battleRuntime) return { state: 'unavailable' };
+        if (!this.battleRuntime || this.battleRevision === null) {
+          return { state: 'unavailable' };
+        }
+        if (this.battleRuntime.commandRevision() !== this.battleRevision) {
+          throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+        }
         const finished = this.battleRuntime.result();
         if (finished) {
           await this.persistBattleTerminal(current, this.finishedTerminalResult(finished));
@@ -1745,7 +1894,13 @@ export class MatchDO extends DurableObject<Env> {
     if (activated.length !== 1) {
       throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
     }
+    const initialRevision = parseMatchRevision(0);
+    if (initialRevision === null || runtime.commandRevision() !== initialRevision) {
+      throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+    }
     this.battleRuntime = runtime;
+    this.battleRevision = initialRevision;
+    this.battleCommands.clear();
 
     const immediateResult = runtime.result();
     if (immediateResult) {
@@ -1961,6 +2116,79 @@ export class MatchDO extends DurableObject<Env> {
   private requireBattleRuntime(): EngineBattleAdapter {
     if (!this.battleRuntime) throw new MatchBattleError('MATCH_STATE_UNAVAILABLE');
     return this.battleRuntime;
+  }
+
+  private requireBattleRevision(): MatchRevision {
+    if (this.battleRevision === null) {
+      throw new MatchBattleError('MATCH_STATE_UNAVAILABLE');
+    }
+    return this.battleRevision;
+  }
+
+  private revisionMismatchCommandResult(
+    command: MatchCommandCandidate,
+    revision: MatchRevision,
+    relation: RevisionMismatchCommandResult['relation'],
+  ): RevisionMismatchCommandResult {
+    return {
+      type: 'matchCommandResult',
+      state: 'rejected',
+      matchId: command.matchId,
+      commandId: command.commandId,
+      errorCode: 'MATCH_REVISION_MISMATCH',
+      revision,
+      relation,
+    };
+  }
+
+  private actionOrTerminalCommandResult(
+    command: MatchCommandCandidate,
+    errorCode: ActionOrTerminalCommandResult['errorCode'],
+    revision: MatchRevision,
+  ): ActionOrTerminalCommandResult {
+    return {
+      type: 'matchCommandResult',
+      state: 'rejected',
+      matchId: command.matchId,
+      commandId: command.commandId,
+      errorCode,
+      revision,
+    };
+  }
+
+  private commandIdConflictResult(
+    command: MatchCommandCandidate,
+    originalRevision: MatchRevision,
+  ): CommandIdConflictResult {
+    return {
+      type: 'matchCommandResult',
+      state: 'rejected',
+      matchId: command.matchId,
+      commandId: command.commandId,
+      errorCode: 'MATCH_COMMAND_ID_CONFLICT',
+      originalRevision,
+    };
+  }
+
+  private rememberCommandResult(
+    command: MatchCommandCandidate,
+    identity: MatchCommandPayloadIdentity,
+    result: StoredMatchCommandResult,
+  ): StoredMatchCommandResult {
+    try {
+      return this.battleCommands.remember(command.commandId, identity, result);
+    } catch (error) {
+      if (error instanceof MatchCommandLedgerError) {
+        if (
+          error.code === 'MATCH_COMMAND_CAPACITY_EXCEEDED' ||
+          error.code === 'MATCH_COMMAND_REJECTION_CAPACITY_EXCEEDED'
+        ) {
+          throw new MatchBattleError('MATCH_COMMAND_CAPACITY_EXCEEDED');
+        }
+        throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+      }
+      throw error;
+    }
   }
 
   private finishedTerminalResult(result: NpcBattleResult): NpcBattleTerminalResult {

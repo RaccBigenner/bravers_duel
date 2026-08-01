@@ -237,21 +237,40 @@ export const MATCH_COMMAND_ERROR_CODES = [
 
 export type MatchCommandErrorCode = (typeof MATCH_COMMAND_ERROR_CODES)[number];
 
+interface MatchCommandResultBase {
+  type: 'matchCommandResult';
+  matchId: MatchId;
+  commandId: MatchCommandId;
+}
+
+export interface MatchCommandAcceptedResult extends MatchCommandResultBase {
+  state: 'accepted';
+  baseRevision: MatchRevision;
+  revision: MatchRevision;
+}
+
+export interface MatchCommandRevisionMismatchResult extends MatchCommandResultBase {
+  state: 'rejected';
+  errorCode: 'MATCH_REVISION_MISMATCH';
+  revision: MatchRevision;
+  relation: 'stale' | 'ahead';
+}
+
+export interface MatchCommandActionOrTerminalRejectedResult extends MatchCommandResultBase {
+  state: 'rejected';
+  errorCode: 'MATCH_ACTION_INVALID' | 'MATCH_ALREADY_TERMINAL';
+  revision: MatchRevision;
+}
+
+export interface MatchCommandIdConflictResult extends MatchCommandResultBase {
+  state: 'rejected';
+  errorCode: 'MATCH_COMMAND_ID_CONFLICT';
+  originalRevision: MatchRevision;
+}
+
+/** error codeごとに許可fieldを分け、relation/revisionの意味を曖昧にしないreceipt。 */
 export type MatchCommandResult =
-  | {
-      type: 'matchCommandResult';
-      state: 'accepted';
-      matchId: MatchId;
-      commandId: MatchCommandId;
-      baseRevision: MatchRevision;
-      revision: MatchRevision;
-    }
-  | {
-      type: 'matchCommandResult';
-      state: 'rejected';
-      matchId: MatchId;
-      commandId: MatchCommandId;
-      errorCode: MatchCommandErrorCode;
-      revision: MatchRevision;
-      relation?: 'stale' | 'ahead';
-    };
+  | MatchCommandAcceptedResult
+  | MatchCommandRevisionMismatchResult
+  | MatchCommandActionOrTerminalRejectedResult
+  | MatchCommandIdConflictResult;

@@ -1144,6 +1144,7 @@ export class EngineBattleAdapter {
     const trialBattleCards = structuredClone(this.battleCardsValue);
     const trialSteps = structuredClone(this.stepsValue);
     const firstNewStep = trialSteps.length;
+    let preparedTransition: AppliedBattleTransition;
     try {
       this.applyStep(
         trialState,
@@ -1155,6 +1156,10 @@ export class EngineBattleAdapter {
         action.engineAction,
       );
       this.pumpNpc(trialState, trialBattleCards, trialSteps);
+      preparedTransition = {
+        steps: structuredClone(trialSteps.slice(firstNewStep)),
+        status: statusOf(trialState, trialBattleCards, trialSteps),
+      };
     } catch (error) {
       if (error instanceof EngineBattleAdapterError) throw error;
       throw new EngineBattleAdapterError('BATTLE_ENGINE_FAILURE');
@@ -1163,10 +1168,7 @@ export class EngineBattleAdapter {
     this.stateValue = trialState;
     this.battleCardsValue = trialBattleCards;
     this.stepsValue = trialSteps;
-    return {
-      steps: structuredClone(trialSteps.slice(firstNewStep)),
-      status: statusOf(trialState, trialBattleCards, trialSteps),
-    };
+    return preparedTransition;
   }
 
   authoritativeSnapshot(): AuthoritativeBattleSnapshot {
@@ -1187,6 +1189,15 @@ export class EngineBattleAdapter {
   status(): NpcBattleStatus {
     this.assertRuntime();
     return statusOf(this.stateValue, this.battleCardsValue, this.stepsValue);
+  }
+
+  /** player command単位のrevision。NPC pump内のstep数とは分離する。 */
+  commandRevision(): number {
+    this.assertRuntime();
+    return this.stepsValue.reduce(
+      (revision, step) => revision + (step.source === 'human' ? 1 : 0),
+      0,
+    );
   }
 
   result(): NpcBattleResult | null {

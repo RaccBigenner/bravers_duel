@@ -7,6 +7,13 @@ import {
   type BattleState,
 } from '@bravers/engine';
 import {
+  parseMatchCommandId,
+  parseMatchId,
+  parseMatchRevision,
+  type MatchCommandCandidate,
+  type MatchCommandId,
+} from '@bravers/protocol';
+import {
   evictDurableObject,
   runDurableObjectAlarm,
   runInDurableObject,
@@ -54,10 +61,37 @@ interface TestPendingAttachment extends MatchSessionPrincipal {
 }
 
 let matchSequence = 0;
+let commandSequence = 0;
 
 function matchId(label: string): string {
   matchSequence += 1;
   return `olg113-${label}-${matchSequence}-${crypto.randomUUID().slice(0, 8)}`;
+}
+
+function nextCommandId(): MatchCommandId {
+  commandSequence += 1;
+  const commandId = parseMatchCommandId(`cmd_${commandSequence.toString(16).padStart(32, '0')}`);
+  if (!commandId) throw new Error('Expected valid test command ID');
+  return commandId;
+}
+
+function npcCommand(
+  matchIdValue: string,
+  expectedRevisionValue: number,
+  action: unknown,
+  commandId = nextCommandId(),
+): MatchCommandCandidate {
+  const parsedMatchId = parseMatchId(matchIdValue);
+  const expectedRevision = parseMatchRevision(expectedRevisionValue);
+  if (!parsedMatchId || expectedRevision === null) {
+    throw new Error('Expected valid test command metadata');
+  }
+  return {
+    matchId: parsedMatchId,
+    commandId,
+    expectedRevision,
+    action,
+  };
 }
 
 function principal(overrides: Partial<MatchSessionPrincipal> = {}): MatchSessionPrincipal {
@@ -144,13 +178,18 @@ function stableHumanAction(
 async function leaveFinishedRuntimeBeforeTerminalCommit(
   instance: MatchDO,
   session: MatchSessionPrincipal,
-): Promise<{ currentStateHash: string; steps: unknown[] }> {
+  matchIdValue: string,
+): Promise<{
+  currentStateHash: string;
+  steps: unknown[];
+  finalCommand: MatchCommandCandidate;
+}> {
   const target = instance as unknown as {
     battleRuntime: {
       authoritativeSnapshot(): AuthoritativeBattleSnapshot;
     } | null;
     persistBattleTerminal: (...args: unknown[]) => Promise<unknown>;
-    applyNpcBattleAction: MatchDO['applyNpcBattleAction'];
+    applyNpcBattleCommand: MatchDO['applyNpcBattleCommand'];
   };
   const originalPersist = target.persistBattleTerminal;
   const injectedError = 'INJECTED_TERMINAL_COMMIT_FAILURE';
@@ -158,21 +197,28 @@ async function leaveFinishedRuntimeBeforeTerminalCommit(
     throw new Error(injectedError);
   };
   let errorMessage: string | null = null;
+  let revision = 0;
+  let finalCommand: MatchCommandCandidate | null = null;
   try {
     const human = searchAi({ keepHand: 2 });
     for (let safety = 0; safety < 1_000; safety += 1) {
       const runtime = target.battleRuntime;
       if (!runtime) throw new Error('Expected active battle runtime');
       const snapshot = runtime.authoritativeSnapshot();
+      const command = npcCommand(
+        matchIdValue,
+        revision,
+        stableHumanAction(snapshot, human.choose(snapshot.state, HUMAN_PLAYER)),
+      );
       try {
-        await target.applyNpcBattleAction({
+        const result = await target.applyNpcBattleCommand({
           principal: session,
-          action: stableHumanAction(
-            snapshot,
-            human.choose(snapshot.state, HUMAN_PLAYER),
-          ),
+          command,
         });
+        if (result.state !== 'accepted') throw new Error(result.errorCode);
+        revision = result.revision;
       } catch (error) {
+        finalCommand = command;
         errorMessage = error instanceof Error ? error.message : String(error);
         break;
       }
@@ -183,12 +229,14 @@ async function leaveFinishedRuntimeBeforeTerminalCommit(
   if (errorMessage !== injectedError) {
     throw new Error(`Expected injected terminal failure, received: ${errorMessage}`);
   }
+  if (!finalCommand) throw new Error('Expected final command fixture');
   const runtime = target.battleRuntime;
   if (!runtime) throw new Error('Expected finished in-memory battle runtime');
   const snapshot = runtime.authoritativeSnapshot();
   return {
     currentStateHash: snapshot.currentStateHash,
     steps: snapshot.steps,
+    finalCommand,
   };
 }
 
@@ -1341,6 +1389,26 @@ describe('OLG-121 MatchDO authoritative NPC battle lifecycle', () => {
     );
   });
 
+  it('startNpcBattle前のstate RPCはMATCH_BATTLE_NOT_STARTEDで拒否する', async () => {
+    const reserved = await reserveNpcBattle();
+
+    await expectMatchInstanceError(
+      reserved.stub,
+      (instance) => instance.getNpcBattleLifecycle(reserved.session),
+      'MATCH_BATTLE_NOT_STARTED',
+    );
+    await expectMatchInstanceError(
+      reserved.stub,
+      (instance) => instance.getNpcBattleSnapshot(reserved.session),
+      'MATCH_BATTLE_NOT_STARTED',
+    );
+    await expectMatchInstanceError(
+      reserved.stub,
+      (instance) => instance.getNpcBattleResult(reserved.session),
+      'MATCH_BATTLE_NOT_STARTED',
+    );
+  });
+
   it('改変actionを盤面不変で拒否し、合法actionだけをNPC応答まで適用する', async () => {
     const battle = await startReservedNpcBattle();
     const before = await battle.stub.getNpcBattleSnapshot(battle.session);
@@ -1351,38 +1419,42 @@ describe('OLG-121 MatchDO authoritative NPC battle lifecycle', () => {
     );
     const action = stableHumanAction(before, engineAction);
 
-    await expectMatchInstanceError(
-      battle.stub,
-      (instance) => instance.applyNpcBattleAction({
+    await expect(
+      battle.stub.applyNpcBattleCommand({
         principal: battle.session,
-        action: { ...action, browserInjected: true },
+        command: npcCommand(battle.id, 0, { ...action, browserInjected: true }),
       }),
-      'BATTLE_ACTION_INVALID',
-    );
+    ).resolves.toMatchObject({
+      state: 'rejected',
+      errorCode: 'MATCH_ACTION_INVALID',
+      revision: 0,
+    });
     await expect(battle.stub.getNpcBattleSnapshot(battle.session)).resolves.toEqual(before);
 
-    const applied = await battle.stub.applyNpcBattleAction({
+    const applied = await battle.stub.applyNpcBattleCommand({
       principal: battle.session,
-      action,
+      command: npcCommand(battle.id, 0, action),
     });
-    expect(applied.state).toBe('applied');
-    expect(applied.transition.steps[0]).toMatchObject({
+    expect(applied.state).toBe('accepted');
+    if (applied.state !== 'accepted') throw new Error(applied.errorCode);
+    expect(applied.revision).toBe(1);
+    expect('transition' in applied).toBe(false);
+    expect('lifecycleState' in applied).toBe(false);
+    const after = await battle.stub.getNpcBattleSnapshot(battle.session);
+    expect(after.steps.slice(before.steps.length)[0]).toMatchObject({
       player: HUMAN_PLAYER,
       source: 'human',
     });
-    if (applied.lifecycleState === 'active') {
-      const after = await battle.stub.getNpcBattleSnapshot(battle.session);
-      expect(after.currentStateHash).toBe(applied.transition.status.stateHash);
-      expect(after.currentStateHash).not.toBe(before.currentStateHash);
-    }
+    expect(after.currentStateHash).not.toBe(before.currentStateHash);
   });
 
   it('battleCardIdを現在手札だけから解決し、index移動後も同じ個体へ当てる', async () => {
     const battle = await startReservedNpcBattle();
-    await battle.stub.applyNpcBattleAction({
+    const endedPlay = await battle.stub.applyNpcBattleCommand({
       principal: battle.session,
-      action: { type: 'endPlay' },
+      command: npcCommand(battle.id, 0, { type: 'endPlay' }),
     });
+    expect(endedPlay.state).toBe('accepted');
     const chargeSnapshot = await battle.stub.getNpcBattleSnapshot(battle.session);
     const chargeActions = legalActions(chargeSnapshot.state as BattleState).filter(
       (action): action is Extract<BattleAction, { type: 'charge' }> => action.type === 'charge',
@@ -1408,24 +1480,37 @@ describe('OLG-121 MatchDO authoritative NPC battle lifecycle', () => {
       { ...first, battleCardId: ownDeckId },
     ];
     for (const action of rejectedActions) {
-      await expectMatchInstanceError(
-        battle.stub,
-        (instance) => instance.applyNpcBattleAction({ principal: battle.session, action }),
-        'BATTLE_ACTION_INVALID',
-      );
+      await expect(
+        battle.stub.applyNpcBattleCommand({
+          principal: battle.session,
+          command: npcCommand(battle.id, 1, action),
+        }),
+      ).resolves.toMatchObject({
+        state: 'rejected',
+        errorCode: 'MATCH_ACTION_INVALID',
+        revision: 1,
+      });
       await expect(battle.stub.getNpcBattleSnapshot(battle.session)).resolves.toEqual(
         chargeSnapshot,
       );
     }
 
-    await battle.stub.applyNpcBattleAction({ principal: battle.session, action: first });
+    const firstApplied = await battle.stub.applyNpcBattleCommand({
+      principal: battle.session,
+      command: npcCommand(battle.id, 1, first),
+    });
+    expect(firstApplied).toMatchObject({ state: 'accepted', revision: 2 });
     const shifted = await battle.stub.getNpcBattleSnapshot(battle.session);
     const shiftedLast = shifted.battleCards.players[HUMAN_PLAYER].hand.find(
       (card) => card.battleCardId === last.battleCardId,
     );
     expect(shiftedLast?.printingId).toBe(lastPrintingId);
 
-    await battle.stub.applyNpcBattleAction({ principal: battle.session, action: last });
+    const lastApplied = await battle.stub.applyNpcBattleCommand({
+      principal: battle.session,
+      command: npcCommand(battle.id, 2, last),
+    });
+    expect(lastApplied).toMatchObject({ state: 'accepted', revision: 3 });
     const after = await battle.stub.getNpcBattleSnapshot(battle.session);
     expect(
       after.battleCards.players[HUMAN_PLAYER].ap.find(
@@ -1433,47 +1518,63 @@ describe('OLG-121 MatchDO authoritative NPC battle lifecycle', () => {
       )?.printingId,
     ).toBe(lastPrintingId);
 
-    await expectMatchInstanceError(
-      battle.stub,
-      (instance) => instance.applyNpcBattleAction({
+    await expect(
+      battle.stub.applyNpcBattleCommand({
         principal: battle.session,
-        action: last,
+        command: npcCommand(battle.id, 3, last),
       }),
-      'BATTLE_ACTION_INVALID',
-    );
+    ).resolves.toMatchObject({
+      state: 'rejected',
+      errorCode: 'MATCH_ACTION_INVALID',
+      revision: 3,
+    });
     await expect(battle.stub.getNpcBattleSnapshot(battle.session)).resolves.toEqual(after);
   });
 
   it('NPC戦を最後まで進め、engine結果を先に永続化してassignmentと予約を解除する', async () => {
     const battle = await startReservedNpcBattle();
     const human = searchAi({ keepHand: 2 });
-    let finalTransition: Awaited<ReturnType<MatchStub['applyNpcBattleAction']>> | null = null;
+    let finalReceipt: Extract<
+      Awaited<ReturnType<MatchDO['applyNpcBattleCommand']>>,
+      { state: 'accepted' }
+    > | null = null;
+    let finalCommand: MatchCommandCandidate | null = null;
+    let result: Awaited<ReturnType<MatchDO['getNpcBattleResult']>> = null;
+    let revision = 0;
 
     for (let safety = 0; safety < 1_000; safety += 1) {
       const snapshot = await battle.stub.getNpcBattleSnapshot(battle.session);
       expect(actingPlayer(snapshot.state as BattleState)).toBe(HUMAN_PLAYER);
       const engineAction = human.choose(snapshot.state as BattleState, HUMAN_PLAYER);
-      const applied = await battle.stub.applyNpcBattleAction({
+      const command = npcCommand(
+        battle.id,
+        revision,
+        stableHumanAction(snapshot, engineAction),
+      );
+      const applied = await battle.stub.applyNpcBattleCommand({
         principal: battle.session,
-        action: stableHumanAction(snapshot, engineAction),
+        command,
       });
-      if (applied.lifecycleState === 'finished') {
-        finalTransition = applied;
+      if (applied.state !== 'accepted') throw new Error(applied.errorCode);
+      revision = applied.revision;
+      result = await battle.stub.getNpcBattleResult(battle.session);
+      if (result) {
+        finalReceipt = applied;
+        finalCommand = command;
         break;
       }
     }
-    if (!finalTransition) throw new Error('NPC battle did not finish');
+    if (!finalReceipt || !finalCommand || !result || result.kind !== 'finished') {
+      throw new Error('NPC battle did not finish');
+    }
 
-    const result = await battle.stub.getNpcBattleResult(battle.session);
-    expect(result).toEqual({
-      kind: 'finished',
-      winner: finalTransition.transition.status.winner,
-      endReason: finalTransition.transition.status.endReason,
-      turns: finalTransition.transition.status.turn,
-      finalStateHash: finalTransition.transition.status.stateHash,
-      appliedActions: finalTransition.transition.status.appliedActions,
+    expect(result.endReason).toMatch(/^(wipeout|deckout)$/);
+    expect(finalReceipt).toMatchObject({
+      state: 'accepted',
+      baseRevision: finalReceipt.revision - 1,
+      revision,
     });
-    expect(result?.kind === 'finished' ? result.endReason : null).toMatch(/^(wipeout|deckout)$/);
+    expect('transition' in finalReceipt).toBe(false);
     const durable = await runInDurableObject(battle.stub, (_instance, state) => ({
       lifecycle: state.storage.sql.exec<SqlRow>(
         `SELECT lifecycle_state, final_state_hash FROM match_battle_lifecycle`,
@@ -1487,11 +1588,51 @@ describe('OLG-121 MatchDO authoritative NPC battle lifecycle', () => {
     expect(durable).toEqual({
       lifecycle: {
         lifecycle_state: 'finished',
-        final_state_hash: finalTransition.transition.status.stateHash,
+        final_state_hash: result.finalStateHash,
       },
       assignments: [],
       tokens: [],
       terminalRelease: [],
+    });
+
+    await expect(
+      battle.stub.applyNpcBattleCommand({ principal: battle.session, command: finalCommand }),
+    ).resolves.toEqual(finalReceipt);
+    await expect(
+      battle.stub.applyNpcBattleCommand({
+        principal: battle.session,
+        command: npcCommand(battle.id, finalReceipt.revision, { type: 'endPlay' }),
+      }),
+    ).resolves.toMatchObject({
+      state: 'rejected',
+      errorCode: 'MATCH_ALREADY_TERMINAL',
+      revision: finalReceipt.revision,
+    });
+    await expect(
+      battle.stub.applyNpcBattleCommand({
+        principal: battle.session,
+        command: npcCommand(battle.id, finalReceipt.baseRevision, { type: 'endPlay' }),
+      }),
+    ).resolves.toMatchObject({
+      state: 'rejected',
+      errorCode: 'MATCH_REVISION_MISMATCH',
+      relation: 'stale',
+      revision: finalReceipt.revision,
+    });
+    await expect(
+      battle.stub.applyNpcBattleCommand({
+        principal: battle.session,
+        command: npcCommand(
+          battle.id,
+          finalReceipt.revision,
+          finalCommand.action,
+          finalCommand.commandId,
+        ),
+      }),
+    ).resolves.toMatchObject({
+      state: 'rejected',
+      errorCode: 'MATCH_COMMAND_ID_CONFLICT',
+      originalRevision: finalReceipt.revision,
     });
 
     const next = await battle.coordinator.reserveNpcMatch({
@@ -1528,9 +1669,9 @@ describe('OLG-121 MatchDO authoritative NPC battle lifecycle', () => {
     );
     await expectMatchInstanceError(
       battle.stub,
-      (instance) => instance.applyNpcBattleAction({
+      (instance) => instance.applyNpcBattleCommand({
         principal: battle.session,
-        action: { type: 'endPlay' },
+        command: npcCommand(battle.id, 0, { type: 'endPlay' }),
       }),
       'MATCH_STATE_UNAVAILABLE',
     );
@@ -1650,9 +1791,9 @@ describe('OLG-121 MatchDO authoritative NPC battle lifecycle', () => {
     const rejected = await runInDurableObject(battle.stub, async (instance) => {
       let errorMessage: string | null = null;
       try {
-        await (instance as MatchDO).applyNpcBattleAction({
+        await (instance as MatchDO).applyNpcBattleCommand({
           principal: battle.session,
-          action,
+          command: npcCommand(battle.id, 0, action),
         });
       } catch (error) {
         errorMessage = error instanceof Error ? error.message : String(error);
@@ -1685,6 +1826,7 @@ describe('OLG-121 MatchDO authoritative NPC battle lifecycle', () => {
       const finished = await leaveFinishedRuntimeBeforeTerminalCommit(
         instance as MatchDO,
         battle.session,
+        battle.id,
       );
       const restart = await (instance as MatchDO).startNpcBattle({
         principal: battle.session,
@@ -1724,6 +1866,7 @@ describe('OLG-121 MatchDO authoritative NPC battle lifecycle', () => {
       const finished = await leaveFinishedRuntimeBeforeTerminalCommit(
         instance as MatchDO,
         battle.session,
+        battle.id,
       );
       let cancelError: string | null = null;
       try {
@@ -2083,4 +2226,280 @@ describe('OLG-121 MatchDO authoritative NPC battle lifecycle', () => {
       });
     });
   });
+});
+
+describe('OLG-122 MatchDO command idempotency and revision', () => {
+  it('同一commandの逐次・並行再送を同じ応答へ収束させ、1回だけ適用する', async () => {
+    const battle = await startReservedNpcBattle();
+    const before = await battle.stub.getNpcBattleSnapshot(battle.session);
+    const engineAction = searchAi({ keepHand: 2 }).choose(
+      before.state as BattleState,
+      HUMAN_PLAYER,
+    );
+    const command = npcCommand(
+      battle.id,
+      0,
+      stableHumanAction(before, engineAction),
+      nextCommandId(),
+    );
+
+    const [first, concurrentReplay] = await Promise.all([
+      battle.stub.applyNpcBattleCommand({ principal: battle.session, command }),
+      battle.stub.applyNpcBattleCommand({ principal: battle.session, command }),
+    ]);
+    expect(first).toEqual(concurrentReplay);
+    expect(first).toMatchObject({
+      state: 'accepted',
+      baseRevision: 0,
+      revision: 1,
+    });
+    const afterFirst = await battle.stub.getNpcBattleSnapshot(battle.session);
+
+    const sequentialReplay = await battle.stub.applyNpcBattleCommand({
+      principal: battle.session,
+      command,
+    });
+    expect(sequentialReplay).toEqual(first);
+    await expect(battle.stub.getNpcBattleSnapshot(battle.session)).resolves.toEqual(afterFirst);
+    expect(afterFirst.steps.length).toBeGreaterThan(before.steps.length);
+
+    await expectMatchInstanceError(
+      battle.stub,
+      (instance) => instance.applyNpcBattleCommand({
+        principal: { ...battle.session, accountId: crypto.randomUUID() },
+        command,
+      }),
+      'MATCH_BATTLE_ACCESS_DENIED',
+    );
+
+    const driftError = await runInDurableObject(battle.stub, async (instance) => {
+      const target = instance as unknown as {
+        battleRevision: ReturnType<typeof parseMatchRevision>;
+      };
+      const authoritativeRevision = target.battleRevision;
+      target.battleRevision = parseMatchRevision(0);
+      try {
+        await (instance as MatchDO).applyNpcBattleCommand({
+          principal: battle.session,
+          command,
+        });
+        return null;
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      } finally {
+        target.battleRevision = authoritativeRevision;
+      }
+    });
+    expect(driftError).toBe('MATCH_BATTLE_STATE_INVALID');
+
+    const counters = await runInDurableObject(battle.stub, (instance) => {
+      const target = instance as unknown as {
+        battleRevision: number | null;
+        battleCommands: { size: number };
+        battleRuntime: { commandRevision(): number } | null;
+      };
+      return {
+        revision: target.battleRevision,
+        records: target.battleCommands.size,
+        adapterRevision: target.battleRuntime?.commandRevision() ?? null,
+      };
+    });
+    expect(counters).toEqual({ revision: 1, records: 1, adapterRevision: 1 });
+  });
+
+  it('同じrevisionの異なるcommandを直列化し、一方だけ適用する', async () => {
+    const battle = await startReservedNpcBattle();
+    const before = await battle.stub.getNpcBattleSnapshot(battle.session);
+    const action = stableHumanAction(
+      before,
+      searchAi({ keepHand: 2 }).choose(before.state as BattleState, HUMAN_PLAYER),
+    );
+    const first = npcCommand(battle.id, 0, action);
+    const second = npcCommand(battle.id, 0, action);
+
+    const outcomes = await Promise.all([
+      battle.stub.applyNpcBattleCommand({ principal: battle.session, command: first }),
+      battle.stub.applyNpcBattleCommand({ principal: battle.session, command: second }),
+    ]);
+    expect(outcomes.filter((result) => result.state === 'accepted')).toHaveLength(1);
+    expect(outcomes.filter((result) => result.state === 'rejected')).toEqual([
+      expect.objectContaining({
+        errorCode: 'MATCH_REVISION_MISMATCH',
+        relation: 'stale',
+        revision: 1,
+      }),
+    ]);
+    const after = await battle.stub.getNpcBattleSnapshot(battle.session);
+    expect(after.steps.length).toBeGreaterThan(before.steps.length);
+    const adapterRevision = await runInDurableObject(battle.stub, (instance) => (
+      instance as unknown as { battleRuntime: { commandRevision(): number } }
+    ).battleRuntime.commandRevision());
+    expect(adapterRevision).toBe(1);
+  });
+
+  it('過去commandIdの改変は試合進行後もoriginalRevision付きconflictにする', async () => {
+    const battle = await startReservedNpcBattle();
+    const before = await battle.stub.getNpcBattleSnapshot(battle.session);
+    const commandId = nextCommandId();
+    const action = stableHumanAction(
+      before,
+      searchAi({ keepHand: 2 }).choose(before.state as BattleState, HUMAN_PLAYER),
+    );
+    const original = npcCommand(battle.id, 0, action, commandId);
+    const accepted = await battle.stub.applyNpcBattleCommand({
+      principal: battle.session,
+      command: original,
+    });
+    expect(accepted).toMatchObject({ state: 'accepted', revision: 1 });
+    const afterFirst = await battle.stub.getNpcBattleSnapshot(battle.session);
+    const nextAction = stableHumanAction(
+      afterFirst,
+      searchAi({ keepHand: 2 }).choose(afterFirst.state as BattleState, HUMAN_PLAYER),
+    );
+    await expect(
+      battle.stub.applyNpcBattleCommand({
+        principal: battle.session,
+        command: npcCommand(battle.id, 1, nextAction),
+      }),
+    ).resolves.toMatchObject({ state: 'accepted', revision: 2 });
+    const after = await battle.stub.getNpcBattleSnapshot(battle.session);
+
+    for (const changed of [
+      npcCommand(battle.id, 0, { type: 'endTurn' }, commandId),
+      npcCommand(battle.id, 2, action, commandId),
+    ]) {
+      const conflict = await battle.stub.applyNpcBattleCommand({
+        principal: battle.session,
+        command: changed,
+      });
+      expect(conflict).toMatchObject({
+        state: 'rejected',
+        errorCode: 'MATCH_COMMAND_ID_CONFLICT',
+        originalRevision: 1,
+      });
+      expect('revision' in conflict).toBe(false);
+      await expect(battle.stub.getNpcBattleSnapshot(battle.session)).resolves.toEqual(after);
+    }
+  });
+
+  it('future/stale/illegal拒否をcommandIdへ固定し、後のstateでも同じ結果を返す', async () => {
+    const battle = await startReservedNpcBattle();
+    const before = await battle.stub.getNpcBattleSnapshot(battle.session);
+    const future = npcCommand(battle.id, 1, { type: 'endPlay' });
+    const illegal = npcCommand(battle.id, 0, { type: 'endPlay', extra: true });
+    const futureResult = await battle.stub.applyNpcBattleCommand({
+      principal: battle.session,
+      command: future,
+    });
+    const illegalResult = await battle.stub.applyNpcBattleCommand({
+      principal: battle.session,
+      command: illegal,
+    });
+    expect(futureResult).toMatchObject({
+      state: 'rejected',
+      errorCode: 'MATCH_REVISION_MISMATCH',
+      relation: 'ahead',
+      revision: 0,
+    });
+    expect(illegalResult).toMatchObject({
+      state: 'rejected',
+      errorCode: 'MATCH_ACTION_INVALID',
+      revision: 0,
+    });
+    await expect(battle.stub.getNpcBattleSnapshot(battle.session)).resolves.toEqual(before);
+
+    const action = stableHumanAction(
+      before,
+      searchAi({ keepHand: 2 }).choose(before.state as BattleState, HUMAN_PLAYER),
+    );
+    const accepted = await battle.stub.applyNpcBattleCommand({
+      principal: battle.session,
+      command: npcCommand(battle.id, 0, action),
+    });
+    expect(accepted).toMatchObject({ state: 'accepted', revision: 1 });
+
+    await expect(
+      battle.stub.applyNpcBattleCommand({ principal: battle.session, command: future }),
+    ).resolves.toEqual(futureResult);
+    await expect(
+      battle.stub.applyNpcBattleCommand({ principal: battle.session, command: illegal }),
+    ).resolves.toEqual(illegalResult);
+
+    const stale = npcCommand(battle.id, 0, { type: 'endPlay' });
+    const staleResult = await battle.stub.applyNpcBattleCommand({
+      principal: battle.session,
+      command: stale,
+    });
+    expect(staleResult).toMatchObject({
+      state: 'rejected',
+      errorCode: 'MATCH_REVISION_MISMATCH',
+      relation: 'stale',
+      revision: 1,
+    });
+    await expect(
+      battle.stub.applyNpcBattleCommand({ principal: battle.session, command: stale }),
+    ).resolves.toEqual(staleResult);
+  });
+
+  it('壊れたpayloadはcommandIdを消費せず、同じIDの正しいcommandを受理する', async () => {
+    const battle = await startReservedNpcBattle();
+    const commandId = nextCommandId();
+    await expectMatchInstanceError(
+      battle.stub,
+      (instance) => instance.applyNpcBattleCommand({
+        principal: battle.session,
+        command: npcCommand(battle.id, 0, { type: 'endPlay', value: undefined }, commandId),
+      }),
+      'MATCH_BATTLE_INPUT_INVALID',
+    );
+
+    await expect(
+      battle.stub.applyNpcBattleCommand({
+        principal: battle.session,
+        command: npcCommand(battle.id, 0, { type: 'endPlay' }, commandId),
+      }),
+    ).resolves.toMatchObject({ state: 'accepted', revision: 1 });
+  });
+
+  it('最終commandの永続化失敗後、同一再送で再適用せずterminal確定する', async () => {
+    const battle = await startReservedNpcBattle();
+    const recovered = await runInDurableObject(battle.stub, async (instance) => {
+      const finished = await leaveFinishedRuntimeBeforeTerminalCommit(
+        instance as MatchDO,
+        battle.session,
+        battle.id,
+      );
+      const firstReplay = await (instance as MatchDO).applyNpcBattleCommand({
+        principal: battle.session,
+        command: finished.finalCommand,
+      });
+      const secondReplay = await (instance as MatchDO).applyNpcBattleCommand({
+        principal: battle.session,
+        command: finished.finalCommand,
+      });
+      const lifecycle = await (instance as MatchDO).getNpcBattleLifecycle(battle.session);
+      return { finished, firstReplay, secondReplay, lifecycle };
+    });
+
+    expect(recovered.firstReplay).toEqual(recovered.secondReplay);
+    expect(recovered.firstReplay).toMatchObject({
+      state: 'accepted',
+    });
+    expect(Object.keys(recovered.firstReplay).sort()).toEqual([
+      'baseRevision',
+      'commandId',
+      'matchId',
+      'revision',
+      'state',
+      'type',
+    ]);
+    expect(recovered.lifecycle).toMatchObject({
+      state: 'finished',
+      terminalResult: {
+        kind: 'finished',
+        finalStateHash: recovered.finished.currentStateHash,
+        appliedActions: recovered.finished.steps.length,
+      },
+    });
+  }, 20_000);
 });

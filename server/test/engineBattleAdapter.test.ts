@@ -101,6 +101,8 @@ function finishWithDirectEngine(
   const initialEvents = structuredClone(direct.events);
   let expectedSteps = pumpDirectNpc(direct);
   const initialSnapshot = adapter.authoritativeSnapshot();
+  let expectedRevision = 0;
+  expect(adapter.commandRevision()).toBe(expectedRevision);
   expect(initialSnapshot.initialEvents).toEqual(initialEvents);
   expect(initialSnapshot.steps).toHaveLength(expectedSteps);
   expect(initialSnapshot.state).toEqual(direct);
@@ -119,6 +121,8 @@ function finishWithDirectEngine(
     expectedSteps += 1;
     expectedSteps += pumpDirectNpc(direct);
     const transition = adapter.applyHumanAction(matchAction);
+    expectedRevision += 1;
+    expect(adapter.commandRevision()).toBe(expectedRevision);
     const snapshot = adapter.authoritativeSnapshot();
     expect(transition.steps).toHaveLength(expectedSteps - firstNewStep);
     expect(transition.steps[0]?.action).toEqual(matchAction);
@@ -302,6 +306,76 @@ describe('OLG-121 engine battle adapter', () => {
     expect(adapter.authoritativeSnapshot()).toEqual(before);
   });
 
+  it('transition返却値の生成に失敗してもtrialをcommitしない', () => {
+    const adapter = EngineBattleAdapter.create(g1NpcBattleInput(0));
+    const before = adapter.authoritativeSnapshot();
+    const engineAction = legalActions(before.state)[0];
+    if (!engineAction) throw new Error('Expected legal human action');
+    const action = stableHumanAction(adapter, engineAction);
+
+    const nativeStructuredClone = globalThis.structuredClone.bind(globalThis);
+    const cloneSpy = vi.spyOn(globalThis, 'structuredClone').mockImplementation((value) => {
+      if (
+        Array.isArray(value) &&
+        value.length > 0 &&
+        value.every((step) => (
+          step !== null &&
+          typeof step === 'object' &&
+          Object.hasOwn(step, 'source') &&
+          Object.hasOwn(step, 'sequence')
+        ))
+      ) {
+        throw new Error('injected while preparing transition');
+      }
+      return nativeStructuredClone(value);
+    });
+
+    let thrown: unknown;
+    try {
+      adapter.applyHumanAction(action);
+    } catch (error) {
+      thrown = error;
+    } finally {
+      cloneSpy.mockRestore();
+    }
+    expect(thrown).toBeInstanceOf(EngineBattleAdapterError);
+    expect((thrown as EngineBattleAdapterError).code).toBe('BATTLE_ENGINE_FAILURE');
+    expect(adapter.authoritativeSnapshot()).toEqual(before);
+    expect(adapter.commandRevision()).toBe(0);
+  });
+
+  it('1 human command内でNPCが複数step進んでもcommandRevisionは1だけ増える', () => {
+    const adapter = EngineBattleAdapter.create(g1NpcBattleInput(0));
+    const human = searchAi({ keepHand: 2 });
+    let witness: {
+      beforeRevision: number;
+      afterRevision: number;
+      npcSteps: number;
+    } | null = null;
+
+    for (let safety = 0; safety < 256 && adapter.result() === null; safety += 1) {
+      const snapshot = adapter.authoritativeSnapshot();
+      expect(actingPlayer(snapshot.state)).toBe(HUMAN_PLAYER);
+      const beforeRevision = adapter.commandRevision();
+      const engineAction = human.choose(snapshot.state, HUMAN_PLAYER);
+      const transition = adapter.applyHumanAction(stableHumanAction(adapter, engineAction));
+      const afterRevision = adapter.commandRevision();
+      const humanSteps = transition.steps.filter((step) => step.source === 'human');
+      const npcSteps = transition.steps.filter((step) => step.source === 'npc').length;
+
+      expect(humanSteps).toHaveLength(1);
+      expect(afterRevision).toBe(beforeRevision + 1);
+      if (npcSteps >= 2) {
+        witness = { beforeRevision, afterRevision, npcSteps };
+        break;
+      }
+    }
+
+    if (!witness) throw new Error('Expected deterministic multi-step NPC witness');
+    expect(witness.npcSteps).toBeGreaterThanOrEqual(2);
+    expect(witness.afterRevision).toBe(witness.beforeRevision + 1);
+  });
+
   it('全カードへ128-bit IDを一意に割り当て、重複printingも別個体として保持する', () => {
     const input = g1NpcBattleInput(0);
     const adapter = EngineBattleAdapter.create(input, sequentialBattleCardIds());
@@ -349,6 +423,7 @@ describe('OLG-121 engine battle adapter', () => {
       steps: saved.steps,
     });
     expect(restored.authoritativeSnapshot()).toEqual(saved);
+    expect(restored.commandRevision()).toBe(original.commandRevision());
     expect(saved.initialIdentityHash).toMatch(/^i1-[0-9a-f]{16}$/);
     expect(saved.initialBattleCards).toEqual(beforeAction.initialBattleCards);
   });
