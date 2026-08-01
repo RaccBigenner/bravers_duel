@@ -508,3 +508,120 @@ describe('OLG-121 SessionCoordinatorDO membership preflight', () => {
     await expect(snapshot()).resolves.toEqual(before);
   });
 });
+
+describe('OLG-121 server-owned NPC match reservation', () => {
+  it('並行・応答喪失再送をsessionごとの同じserver生成match IDとseedへ収束させる', async () => {
+    const sessionId = crypto.randomUUID();
+    const accountId = crypto.randomUUID();
+    const stub = coordinator(sessionId);
+    const input = { sessionId, accountId, sessionVersion: 7 };
+
+    const results = await Promise.all(
+      Array.from({ length: 6 }, () => stub.reserveNpcMatch(input)),
+    );
+    expect(results.filter((result) => result.state === 'reserved' && result.created)).toHaveLength(1);
+    expect(new Set(results.map((result) => JSON.stringify(result)))).toHaveLength(2);
+    const reservation = results.find((result) => result.state === 'reserved');
+    expect(reservation).toMatchObject({ state: 'reserved' });
+    if (!reservation || reservation.state !== 'reserved') {
+      throw new Error('Expected NPC reservation');
+    }
+    expect(reservation.matchId).toMatch(
+      /^npc-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    expect(reservation.seed).toBeGreaterThanOrEqual(0);
+    expect(reservation.seed).toBeLessThanOrEqual(0xffff_ffff);
+
+    await expect(stub.reserveNpcMatch(input)).resolves.toEqual({
+      ...reservation,
+      created: false,
+    });
+  });
+
+  it('別account/versionを同じsession予約へ混ぜず、logout workをmatch生成より先に遮断する', async () => {
+    const sessionId = crypto.randomUUID();
+    const accountId = crypto.randomUUID();
+    const stub = coordinator(sessionId);
+    await stub.reserveNpcMatch({ sessionId, accountId, sessionVersion: 1 });
+
+    await expect(stub.reserveNpcMatch({
+      sessionId,
+      accountId: crypto.randomUUID(),
+      sessionVersion: 1,
+    })).resolves.toEqual({ state: 'conflict' });
+    await expect(stub.reserveNpcMatch({
+      sessionId,
+      accountId,
+      sessionVersion: 2,
+    })).resolves.toEqual({ state: 'conflict' });
+
+    await stub.prepareLogout({
+      sessionId,
+      accountId,
+      sessionVersion: 1,
+      sessionDigestHex: 'cc'.repeat(32),
+      sessionDigestKeyVersion: 1,
+    });
+    await expect(stub.reserveNpcMatch({
+      sessionId,
+      accountId,
+      sessionVersion: 1,
+    })).resolves.toEqual({ state: 'invalidated', invalidatedVersion: 2 });
+  });
+
+  it('最後のexact registration解除まで予約を保持し、解除後は次のNPC戦を新規採番する', async () => {
+    const sessionId = crypto.randomUUID();
+    const accountId = crypto.randomUUID();
+    const sessionVersion = 3;
+    const stub = coordinator(sessionId);
+    const first = await stub.reserveNpcMatch({ sessionId, accountId, sessionVersion });
+    if (first.state !== 'reserved') throw new Error('Expected NPC reservation');
+    const older = reference(sessionId, first.matchId, sessionVersion);
+    const newer = reference(sessionId, first.matchId, sessionVersion);
+    await stub.registerMatch(older);
+    await stub.registerMatch(newer);
+
+    await stub.unregisterMatch(older);
+    await expect(stub.reserveNpcMatch({ sessionId, accountId, sessionVersion })).resolves.toEqual({
+      ...first,
+      created: false,
+    });
+
+    await stub.unregisterMatch(newer);
+    const next = await stub.reserveNpcMatch({ sessionId, accountId, sessionVersion });
+    expect(next).toMatchObject({ state: 'reserved', created: true });
+    if (next.state !== 'reserved') throw new Error('Expected next NPC reservation');
+    expect(next.matchId).not.toBe(first.matchId);
+  });
+
+  it('named identityとexact input schemaをfail closedに検証する', async () => {
+    const sessionId = crypto.randomUUID();
+    const otherSessionId = crypto.randomUUID();
+    const messages = await runInDurableObject(
+      coordinator(sessionId),
+      async (instance) => {
+        const outcomes: string[] = [];
+        for (const input of [
+          { sessionId: otherSessionId, accountId: crypto.randomUUID(), sessionVersion: 1 },
+          { sessionId, accountId: 'not-a-uuid', sessionVersion: 1 },
+          { sessionId, accountId: crypto.randomUUID(), sessionVersion: 0 },
+          { sessionId, accountId: crypto.randomUUID(), sessionVersion: 1, seed: 1 },
+        ]) {
+          try {
+            await (instance as SessionCoordinatorDO).reserveNpcMatch(input as never);
+            outcomes.push('accepted');
+          } catch (error) {
+            outcomes.push(error instanceof Error ? error.message : 'unknown');
+          }
+        }
+        return outcomes;
+      },
+    );
+    expect(messages).toEqual([
+      'SESSION_COORDINATOR_IDENTITY_INVALID',
+      'SESSION_NPC_MATCH_RESERVATION_INVALID',
+      'SESSION_NPC_MATCH_RESERVATION_INVALID',
+      'SESSION_NPC_MATCH_RESERVATION_INVALID',
+    ]);
+  });
+});

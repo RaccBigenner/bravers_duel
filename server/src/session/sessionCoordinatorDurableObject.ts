@@ -12,6 +12,7 @@ const LOGOUT_WORK_KEY = 'logout-work-v1';
 const INVALIDATION_FLOOR_KEY = 'invalidation-floor-v1';
 const MATCH_REFERENCES_KEY = 'match-references-v1';
 const CANCELLED_REGISTRATION_FLOOR_KEY = 'cancelled-match-registration-floor-v1';
+const ACTIVE_NPC_MATCH_RESERVATION_KEY = 'active-npc-match-reservation-v1';
 const LOGOUT_REASON = 'LOGOUT';
 
 export const MAX_SESSION_MATCH_REFERENCES = 16;
@@ -25,6 +26,14 @@ interface MatchReference {
   sessionVersion: number;
   registrationId: string;
   registrationEpochMs: number;
+}
+
+interface ActiveNpcMatchReservation {
+  accountId: string;
+  sessionVersion: number;
+  matchId: string;
+  seed: number;
+  createdAtEpochMs: number;
 }
 
 interface CancelledRegistrationFloor {
@@ -77,6 +86,11 @@ export type SessionMatchMembershipStatus =
   | { state: 'invalidated'; invalidatedVersion: number }
   | { state: 'missing' };
 
+export type SessionNpcMatchReservationResult =
+  | { state: 'reserved'; matchId: string; seed: number; created: boolean }
+  | { state: 'invalidated'; invalidatedVersion: number }
+  | { state: 'conflict' };
+
 export type SessionLogoutPreparationResult =
   | { state: 'prepared' }
   | { state: 'fanout_pending'; invalidatedVersion: number }
@@ -113,6 +127,12 @@ export interface SessionMatchMembershipInput {
   matchId: string;
 }
 
+export interface SessionNpcMatchReservationInput {
+  sessionId: string;
+  accountId: string;
+  sessionVersion: number;
+}
+
 export interface SessionCoordinatorPort {
   registerMatch(
     input: SessionMatchReferenceInput,
@@ -121,6 +141,9 @@ export interface SessionCoordinatorPort {
   checkMatchMembership(
     input: SessionMatchMembershipInput,
   ): Promise<SessionMatchMembershipStatus>;
+  reserveNpcMatch(
+    input: SessionNpcMatchReservationInput,
+  ): Promise<SessionNpcMatchReservationResult>;
   unregisterMatch(
     input: SessionMatchReferenceInput,
   ): Promise<{ state: 'acknowledged' }>;
@@ -188,6 +211,30 @@ function validateMembershipInput(input: SessionMatchMembershipInput): void {
   ) {
     throw new TypeError('SESSION_MATCH_MEMBERSHIP_INVALID');
   }
+}
+
+function validateNpcReservationInput(input: SessionNpcMatchReservationInput): void {
+  if (
+    typeof input !== 'object' ||
+    input === null ||
+    Object.keys(input).length !== 3 ||
+    !Object.hasOwn(input, 'sessionId') ||
+    !Object.hasOwn(input, 'accountId') ||
+    !Object.hasOwn(input, 'sessionVersion') ||
+    typeof input.sessionId !== 'string' ||
+    !UUID_PATTERN.test(input.sessionId) ||
+    typeof input.accountId !== 'string' ||
+    !UUID_PATTERN.test(input.accountId) ||
+    !positiveInteger(input.sessionVersion)
+  ) {
+    throw new TypeError('SESSION_NPC_MATCH_RESERVATION_INVALID');
+  }
+}
+
+function randomUint32(): number {
+  const value = new Uint32Array(1);
+  crypto.getRandomValues(value);
+  return value[0]!;
 }
 
 function validateLogoutIntent(input: SessionLogoutIntent): void {
@@ -373,15 +420,64 @@ export class SessionCoordinatorDO extends DurableObject<Env> {
     });
   }
 
+  /** Workerだけが呼ぶ、sessionごと1件のserver-owned NPC match予約。 */
+  async reserveNpcMatch(
+    input: SessionNpcMatchReservationInput,
+  ): Promise<SessionNpcMatchReservationResult> {
+    validateNpcReservationInput(input);
+    validateIdentity(this.ctx.id.name, input.sessionId);
+    return this.ctx.storage.transaction(async (transaction) => {
+      const [floor, work, reservation] = await Promise.all([
+        transaction.get<InvalidationFloor>(INVALIDATION_FLOOR_KEY),
+        transaction.get<LogoutWork>(LOGOUT_WORK_KEY),
+        transaction.get<ActiveNpcMatchReservation>(ACTIVE_NPC_MATCH_RESERVATION_KEY),
+      ]);
+      const invalidatedVersion = blockedVersion(floor, work);
+      if (invalidatedVersion !== null && invalidatedVersion > input.sessionVersion) {
+        if (reservation && reservation.sessionVersion < invalidatedVersion) {
+          await transaction.delete(ACTIVE_NPC_MATCH_RESERVATION_KEY);
+        }
+        return { state: 'invalidated', invalidatedVersion } as const;
+      }
+      if (reservation) {
+        return reservation.accountId === input.accountId &&
+          reservation.sessionVersion === input.sessionVersion
+          ? {
+              state: 'reserved',
+              matchId: reservation.matchId,
+              seed: reservation.seed,
+              created: false,
+            } as const
+          : { state: 'conflict' } as const;
+      }
+
+      const next: ActiveNpcMatchReservation = {
+        accountId: input.accountId,
+        sessionVersion: input.sessionVersion,
+        matchId: `npc-${crypto.randomUUID()}`,
+        seed: randomUint32(),
+        createdAtEpochMs: Date.now(),
+      };
+      await transaction.put(ACTIVE_NPC_MATCH_RESERVATION_KEY, next);
+      return {
+        state: 'reserved',
+        matchId: next.matchId,
+        seed: next.seed,
+        created: true,
+      } as const;
+    });
+  }
+
   async unregisterMatch(
     input: SessionMatchReferenceInput,
   ): Promise<{ state: 'acknowledged' }> {
     validateReferenceInput(input);
     validateIdentity(this.ctx.id.name, input.sessionId);
     await this.ctx.storage.transaction(async (transaction) => {
-      const [references, cancelledFloor] = await Promise.all([
+      const [references, cancelledFloor, reservation] = await Promise.all([
         transaction.get<MatchReference[]>(MATCH_REFERENCES_KEY),
         transaction.get<CancelledRegistrationFloor>(CANCELLED_REGISTRATION_FLOOR_KEY),
+        transaction.get<ActiveNpcMatchReservation>(ACTIVE_NPC_MATCH_RESERVATION_KEY),
       ]);
       const currentReferences = references ?? [];
       const next = currentReferences.filter(
@@ -405,6 +501,17 @@ export class SessionCoordinatorDO extends DurableObject<Env> {
       }
       if (next.length !== currentReferences.length) {
         await transaction.put(MATCH_REFERENCES_KEY, next);
+      }
+      if (
+        reservation?.matchId === input.matchId &&
+        reservation.sessionVersion === input.sessionVersion &&
+        !next.some(
+          (reference) =>
+            reference.matchId === reservation.matchId &&
+            reference.sessionVersion === reservation.sessionVersion,
+        )
+      ) {
+        await transaction.delete(ACTIVE_NPC_MATCH_RESERVATION_KEY);
       }
     });
     return { state: 'acknowledged' };
@@ -498,10 +605,11 @@ export class SessionCoordinatorDO extends DurableObject<Env> {
     validateIdentity(this.ctx.id.name, input.sessionId);
     const now = Date.now();
     const transition = await this.ctx.storage.transaction(async (transaction) => {
-      const [floor, work, references] = await Promise.all([
+      const [floor, work, references, reservation] = await Promise.all([
         transaction.get<InvalidationFloor>(INVALIDATION_FLOOR_KEY),
         transaction.get<LogoutWork>(LOGOUT_WORK_KEY),
         transaction.get<MatchReference[]>(MATCH_REFERENCES_KEY),
+        transaction.get<ActiveNpcMatchReservation>(ACTIVE_NPC_MATCH_RESERVATION_KEY),
       ]);
       if (
         work?.phase === 'revoke_pending' &&
@@ -530,6 +638,9 @@ export class SessionCoordinatorDO extends DurableObject<Env> {
         retryAttempt: 0,
         createdAtEpochMs: now,
       });
+      if (reservation && reservation.sessionVersion < version) {
+        await transaction.delete(ACTIVE_NPC_MATCH_RESERVATION_KEY);
+      }
       await ensureEarlierAlarm(transaction, now + INVALIDATION_RETRY_BASE_MS);
       return { state: 'promoted' as const };
     });
@@ -556,9 +667,10 @@ export class SessionCoordinatorDO extends DurableObject<Env> {
   ): Promise<'promoted' | 'completed' | 'conflict'> {
     const now = Date.now();
     return this.ctx.storage.transaction(async (transaction) => {
-      const [work, floor] = await Promise.all([
+      const [work, floor, reservation] = await Promise.all([
         transaction.get<LogoutWork>(LOGOUT_WORK_KEY),
         transaction.get<InvalidationFloor>(INVALIDATION_FLOOR_KEY),
+        transaction.get<ActiveNpcMatchReservation>(ACTIVE_NPC_MATCH_RESERVATION_KEY),
       ]);
       if (!work) {
         return floor && floor.invalidatedVersion >= input.invalidatedVersion
@@ -594,6 +706,9 @@ export class SessionCoordinatorDO extends DurableObject<Env> {
         retryAttempt: 0,
         createdAtEpochMs: work.createdAtEpochMs,
       });
+      if (reservation && reservation.sessionVersion < invalidatedVersion) {
+        await transaction.delete(ACTIVE_NPC_MATCH_RESERVATION_KEY);
+      }
       await ensureEarlierAlarm(transaction, now + INVALIDATION_RETRY_BASE_MS);
       return 'promoted';
     });
