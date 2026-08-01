@@ -588,10 +588,76 @@ describe('OLG-121 server-owned NPC match reservation', () => {
     });
 
     await stub.unregisterMatch(newer);
+    await expect(stub.reserveNpcMatch({ sessionId, accountId, sessionVersion })).resolves.toEqual({
+      ...first,
+      created: false,
+    });
+    await expect(stub.releaseNpcMatch({
+      sessionId,
+      accountId,
+      sessionVersion,
+      matchId: first.matchId,
+      seed: first.seed,
+    })).resolves.toEqual({ state: 'released' });
     const next = await stub.reserveNpcMatch({ sessionId, accountId, sessionVersion });
     expect(next).toMatchObject({ state: 'reserved', created: true });
     if (next.state !== 'reserved') throw new Error('Expected next NPC reservation');
     expect(next.matchId).not.toBe(first.matchId);
+    await expect(stub.releaseNpcMatch({
+      sessionId,
+      accountId,
+      sessionVersion,
+      matchId: first.matchId,
+      seed: first.seed,
+    })).resolves.toEqual({ state: 'conflict' });
+    await expect(stub.reserveNpcMatch({ sessionId, accountId, sessionVersion })).resolves.toEqual({
+      ...next,
+      created: false,
+    });
+  });
+
+  it('register前または未知registrationの解除要求で予約を消さない', async () => {
+    const sessionId = crypto.randomUUID();
+    const accountId = crypto.randomUUID();
+    const sessionVersion = 2;
+    const stub = coordinator(sessionId);
+    const reserved = await stub.reserveNpcMatch({ sessionId, accountId, sessionVersion });
+    if (reserved.state !== 'reserved') throw new Error('Expected NPC reservation');
+
+    await stub.unregisterMatch(reference(
+      sessionId,
+      reserved.matchId,
+      sessionVersion,
+      crypto.randomUUID(),
+    ));
+
+    await expect(stub.reserveNpcMatch({ sessionId, accountId, sessionVersion })).resolves.toEqual({
+      ...reserved,
+      created: false,
+    });
+  });
+
+  it('参照が残る間はterminal予約解放を拒否し、exact解除後だけ冪等に解放する', async () => {
+    const sessionId = crypto.randomUUID();
+    const accountId = crypto.randomUUID();
+    const sessionVersion = 5;
+    const stub = coordinator(sessionId);
+    const reserved = await stub.reserveNpcMatch({ sessionId, accountId, sessionVersion });
+    if (reserved.state !== 'reserved') throw new Error('Expected NPC reservation');
+    const activeReference = reference(sessionId, reserved.matchId, sessionVersion);
+    await stub.registerMatch(activeReference);
+    const release = {
+      sessionId,
+      accountId,
+      sessionVersion,
+      matchId: reserved.matchId,
+      seed: reserved.seed,
+    };
+
+    await expect(stub.releaseNpcMatch(release)).resolves.toEqual({ state: 'conflict' });
+    await stub.unregisterMatch(activeReference);
+    await expect(stub.releaseNpcMatch(release)).resolves.toEqual({ state: 'released' });
+    await expect(stub.releaseNpcMatch(release)).resolves.toEqual({ state: 'missing' });
   });
 
   it('named identityとexact input schemaをfail closedに検証する', async () => {

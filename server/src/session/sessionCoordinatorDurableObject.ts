@@ -91,6 +91,11 @@ export type SessionNpcMatchReservationResult =
   | { state: 'invalidated'; invalidatedVersion: number }
   | { state: 'conflict' };
 
+export type SessionNpcMatchReleaseResult =
+  | { state: 'released' }
+  | { state: 'missing' }
+  | { state: 'conflict' };
+
 export type SessionLogoutPreparationResult =
   | { state: 'prepared' }
   | { state: 'fanout_pending'; invalidatedVersion: number }
@@ -133,6 +138,11 @@ export interface SessionNpcMatchReservationInput {
   sessionVersion: number;
 }
 
+export interface SessionNpcMatchReleaseInput extends SessionNpcMatchReservationInput {
+  matchId: string;
+  seed: number;
+}
+
 export interface SessionCoordinatorPort {
   registerMatch(
     input: SessionMatchReferenceInput,
@@ -144,6 +154,9 @@ export interface SessionCoordinatorPort {
   reserveNpcMatch(
     input: SessionNpcMatchReservationInput,
   ): Promise<SessionNpcMatchReservationResult>;
+  releaseNpcMatch(
+    input: SessionNpcMatchReleaseInput,
+  ): Promise<SessionNpcMatchReleaseResult>;
   unregisterMatch(
     input: SessionMatchReferenceInput,
   ): Promise<{ state: 'acknowledged' }>;
@@ -235,6 +248,28 @@ function randomUint32(): number {
   const value = new Uint32Array(1);
   crypto.getRandomValues(value);
   return value[0]!;
+}
+
+function validateNpcReleaseInput(input: SessionNpcMatchReleaseInput): void {
+  if (
+    typeof input !== 'object' ||
+    input === null ||
+    Object.keys(input).length !== 5 ||
+    !Object.hasOwn(input, 'matchId') ||
+    !Object.hasOwn(input, 'seed') ||
+    typeof input.matchId !== 'string' ||
+    !MATCH_ID_PATTERN.test(input.matchId) ||
+    !Number.isSafeInteger(input.seed) ||
+    input.seed < 0 ||
+    input.seed > 0xffff_ffff
+  ) {
+    throw new TypeError('SESSION_NPC_MATCH_RELEASE_INVALID');
+  }
+  validateNpcReservationInput({
+    sessionId: input.sessionId,
+    accountId: input.accountId,
+    sessionVersion: input.sessionVersion,
+  });
 }
 
 function validateLogoutIntent(input: SessionLogoutIntent): void {
@@ -468,16 +503,47 @@ export class SessionCoordinatorDO extends DurableObject<Env> {
     });
   }
 
+  /** terminal永続化後にだけ呼ぶ、exact予約の明示解放。 */
+  async releaseNpcMatch(
+    input: SessionNpcMatchReleaseInput,
+  ): Promise<SessionNpcMatchReleaseResult> {
+    validateNpcReleaseInput(input);
+    validateIdentity(this.ctx.id.name, input.sessionId);
+    return this.ctx.storage.transaction(async (transaction) => {
+      const [reservation, references] = await Promise.all([
+        transaction.get<ActiveNpcMatchReservation>(ACTIVE_NPC_MATCH_RESERVATION_KEY),
+        transaction.get<MatchReference[]>(MATCH_REFERENCES_KEY),
+      ]);
+      if (!reservation) return { state: 'missing' } as const;
+      if (
+        reservation.accountId !== input.accountId ||
+        reservation.sessionVersion !== input.sessionVersion ||
+        reservation.matchId !== input.matchId ||
+        reservation.seed !== input.seed
+      ) {
+        return { state: 'conflict' } as const;
+      }
+      if ((references ?? []).some(
+        (reference) =>
+          reference.matchId === input.matchId &&
+          reference.sessionVersion === input.sessionVersion,
+      )) {
+        return { state: 'conflict' } as const;
+      }
+      await transaction.delete(ACTIVE_NPC_MATCH_RESERVATION_KEY);
+      return { state: 'released' } as const;
+    });
+  }
+
   async unregisterMatch(
     input: SessionMatchReferenceInput,
   ): Promise<{ state: 'acknowledged' }> {
     validateReferenceInput(input);
     validateIdentity(this.ctx.id.name, input.sessionId);
     await this.ctx.storage.transaction(async (transaction) => {
-      const [references, cancelledFloor, reservation] = await Promise.all([
+      const [references, cancelledFloor] = await Promise.all([
         transaction.get<MatchReference[]>(MATCH_REFERENCES_KEY),
         transaction.get<CancelledRegistrationFloor>(CANCELLED_REGISTRATION_FLOOR_KEY),
-        transaction.get<ActiveNpcMatchReservation>(ACTIVE_NPC_MATCH_RESERVATION_KEY),
       ]);
       const currentReferences = references ?? [];
       const next = currentReferences.filter(
@@ -501,17 +567,6 @@ export class SessionCoordinatorDO extends DurableObject<Env> {
       }
       if (next.length !== currentReferences.length) {
         await transaction.put(MATCH_REFERENCES_KEY, next);
-      }
-      if (
-        reservation?.matchId === input.matchId &&
-        reservation.sessionVersion === input.sessionVersion &&
-        !next.some(
-          (reference) =>
-            reference.matchId === reservation.matchId &&
-            reference.sessionVersion === reservation.sessionVersion,
-        )
-      ) {
-        await transaction.delete(ACTIVE_NPC_MATCH_RESERVATION_KEY);
       }
     });
     return { state: 'acknowledged' };
