@@ -2147,6 +2147,10 @@ export class MatchDO extends DurableObject<Env> {
     });
   }
 
+  // auth frame起因の失敗（SEAT_AUTH_FRAME_TOO_LARGE／不正token／期限切れ等）は、
+  // 認証確立前のsocketに対しては種別を問わず一律1008/AUTH_FAILEDへ畳む。
+  // authenticated後のgame frameが1009(too large)/1008(invalid)を使い分けるのとは非対称だが、
+  // 認証前は攻撃者へ失敗理由を渡さないfail closedを優先した意図的な設計。
   private async rejectPendingSocket(
     socket: WebSocket,
     attachment: PendingAttachment | VerifyingAttachment,
@@ -2431,6 +2435,10 @@ export class MatchDO extends DurableObject<Env> {
     }
 
     const lifecycle = this.battleLifecycleRow();
+    // withOperationLockがstartNpcBattleExclusiveとこの認証完了処理を直列化するため、
+    // 通常経路では'provisioning'を観測しない（HTTPレスポンスを返す前に'active'か終了状態へ遷移済み）。
+    // 到達し得るのはprocess evictionでprovisioning行だけが永続化された直後の再接続のみで、
+    // その場合もprojectionを送らずauth_okのみで応答するfail-closedな防御である。
     if (!lifecycle || lifecycle.lifecycle_state === 'provisioning') {
       try {
         socket.send('auth_ok');

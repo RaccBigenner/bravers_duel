@@ -656,7 +656,10 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
   補償削除とcascadeを確認できた時だけ再試行可能になる
 - 非参加、別match/seat、期限切れ、改変、再利用tokenを拒否し、同一tokenの並行consumeは1件だけ成功する
 - seat tokenなしの通常WebSocketは拒否する。`APP_ENV=local`の`local-smoke`だけは
-  SupabaseなしのOLG-102診断用例外として残す
+  SupabaseなしのOLG-102診断用例外として残す。この診断経路は16 KiB frameゲート（OLG-124）を
+  経由しないため、`APP_ENV`が本番環境で`'local'`になり得ないことをWrangler環境変数側
+  （`wrangler.jsonc`の named environment分離・secrets管理）でデプロイ前に確認する
+  ［TODO: G2以降の本番デプロイ設定時にチェック］
 - public match portはOLG-121でNPC開始だけを開き、`POST /matches/npc`のserver予約から到達させる。
   任意match IDからDurable Objectを作れず、MatchDO URLとnamed DO identityも完全一致を必須にする
 - assignmentごとの一意なregistration IDを持ち、seat置換では旧session参照をversion＋ID完全一致で

@@ -137,7 +137,9 @@
   SessionCoordinatorの参照解除→予約解放を二段outboxで回収する。失効後start/action、改変action、
   改変履歴からのseed再生成はfail closed。OLG-125完了後はactive evictionも保存履歴から復旧する。
   browser game frameはOLG-124のexact player projection / command updateだけを公開する。
-  server 246 test、protocol 8 test、server-engine境界5 test、leak検査はgreen。
+  server 246 test、protocol 8 test、server-engine境界5 test、`check-no-wip-leak.mjs`の未公開カード
+  leak検査はgreen。OLG-124の秘匿projection検査（JSON.stringifyへ相手hand/deck/seed等のcanary値が
+  混入しないことを見る別メカニズム）も同じくgreenだが、両者は検査対象も実装も別物。
 - P2へNPCシングル市場を正式登録した。G2 Collection Closed Betaは固定買取/販売、有限な実在個体在庫、
   atomic quote/orderで開始する。固定価格のraw集計からpolicyを承認し、2〜4週間shadow計算する。
   日次±5%・基準80〜120%の動的価格を実注文へ使えるのはG8だけとし、G4以降の標本、
