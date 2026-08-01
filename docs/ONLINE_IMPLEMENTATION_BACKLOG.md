@@ -42,7 +42,8 @@ player-visible exit conditions:
 
 ### G1: Internal Alpha
 
-状態: 未着手
+状態: **基盤実装中**。OLG-101は完了。OLG-102とOLG-111はコード実装済みで、
+Docker互換ランタイム上のSupabase実stack受入を待っている。
 
 主な範囲: P1
 
@@ -535,7 +536,8 @@ G1 Internal Alphaの土台。設計: `docs/ONLINE_SERVICE_DESIGN_2026-07-29.md` 
 
 検証: clean `npm ci`後にroot `npm test`、protocol/server各1 test＋typecheck、engine 225 tests、
 web 1 test、admin 47 tests、Web/Admin build、`check:leak`、`check:stale`がgreen。
-`supabase --workdir supabase services -o json`で設定読込に成功し、migration symlinkの実体一致を確認。
+`npx supabase --workdir . --debug status`で正本configの読込みとDocker不存在での安全停止、
+migration symlinkの実体一致を確認。
 Docker/local stack起動とmigration適用はOLG-102で行う。
 
 #### OLG-102 local Supabase/Worker/DO
@@ -552,14 +554,16 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
   疎通確認用socketを受ける。ゲーム本体のCommand/Event/SnapshotはOLG-121/122/125へ残す
 - `GET /health`はWorkerだけで成功にせず、health専用MatchDOを呼び、DO SQLiteの`SELECT 1`まで確認する
 - `npm run dev:online`はlocal Supabaseの状態確認→必要なら起動→`migration up --local`→
-  status/migration確認→Wrangler local起動の順に行う。SIGINT/SIGTERM/失敗時は、スクリプト自身が
+  status/migration確認→pgTAP DB受入→Wrangler local起動の順に行う。Supabase CLIの`--workdir`は
+  `supabase/`の親であるproject rootへ固定する。SIGINT/SIGTERM/失敗時は、スクリプト自身が
   起動したSupabase/Workerだけを停止し、先に動いていたローカルstackは止めない
 - `npm run smoke:online`はhealthとWebSocket `probe`応答まで自動検証して終了する。
   `--worker-only`はコンテナランタイムがない環境でもWorker/MatchDOだけを診断する
 - repo単位lockでSupabaseの二重操作を拒否し、Worker portの事前占有検査と起動run ID照合で
   別processへの誤疎通を拒否する。各health requestにも期限を設け、応答しないportで停止し続けない
 - Supabaseの`status`が明示的なnot-runningの場合だけ起動し、それ以外の非0は既存stackへ触れず
-  fail closedする。停止timeout/nonzeroを含むcleanup失敗は、元の失敗とまとめて報告する
+  fail closedする。`supabase start`の起動結果はlocal secret keyを含むためconsoleへteeしない。
+  停止timeout/nonzeroを含むcleanup失敗は、元の失敗とまとめて報告する
 
 受入:
 
@@ -568,12 +572,12 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
   同一WebSocket `probe`もgreen
 - 使用中port、ready前child exitと敗者待機のabort、応答しないhealth、二重lock、status曖昧失敗、
   start途中失敗/競合借用、起動途中signal/正常終了、cleanup失敗集約、WebSocket二重完了/timeoutを含む
-  起動ライフサイクル20 testがgreen
+  起動ライフサイクル24 testがgreen
 - clean `npm ci`後のroot全test、Web/Admin build、engine/admin/functions型検査、
   `check:leak`、`check:stale`がgreen。production dependencyの既知auditは0
 - 実在のCloudflareリソース、Supabase project、secretを一切作っていない
 - **残り**: Docker互換ランタイムを起動したMacで`npm run smoke:online`を実行し、
-  `20260731053431` migrationのlocal適用まで確認する。ここを通すまでOLG-102をdoneにしない
+  migrationのlocal適用とpgTAP受入まで確認する。ここを通すまでOLG-102をdoneにしない
 
 - OLG-103 development/staging/production bindings（実在のCloudflare/Supabase project作成を含む。
   社長のアカウント・課金判断が要る）
@@ -582,7 +586,39 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
 
 ### Epic OLG-110 アカウント
 
-- OLG-111 server-side guest account
+#### OLG-111 server-side guest account
+
+状態: **実装済み・実stack受入待ち**（2026-08-01）
+
+- Supabase Authのanonymous sign-inをlocalで有効化し、manual linkingはOLG-112まで無効のままにする
+- `auth.users.id`と同じUUIDを主キーにした`public.account`をAFTER INSERT triggerで作る。
+  FKは`ON DELETE CASCADE`、triggerは空`search_path`の`SECURITY DEFINER`とし、失敗を握り潰さない
+- migration適用前の既存Auth userは`auth.users`を短時間lockしてbackfillし、backfillとtrigger作成の
+  隙間に作成されたuserが1:1不変条件から漏れないようにする
+- `account`はRLSを有効化し、`anon`/`authenticated`のData API権限とpolicyを置かない。
+  `service_role`もこのrootではSELECTだけに絞る
+- Worker内部providerだけがSupabaseのaccess/refresh tokenを受け取る。remote環境はHTTPS・
+  `sb_secret`・信頼済みclient IP転送を必須とし、曖昧なnetwork/5xx/壊れた成功応答は
+  **安全に再試行できない**失敗として返す
+- OLG-111では`POST /auth/guest`を公開しない。OLG-113がgrantをserver-side sessionへ収容し、
+  opaque HttpOnly cookieを同時に発行できる段階でrouteを開く。`account_id`単体は認証情報にしない
+
+受入:
+
+- provider unit 15件（成功、captcha、remote credential/IP、429/5xx/network、pre-abort、
+  request/body timeout、壊れた応答、秘密非露出）とmigration静的guard 5件がgreen
+- `server/test/db/guest_accounts.test.sql`のpgTAP 27項目でPK/FK/CASCADE、RLS/実効権限、
+  trigger定義、同一UUID作成、trigger失敗時のAuth/account同時rollbackを検査する
+- `npm run smoke:online`ではGoTrueへ実際にanonymous sign-inし、同一UUIDのaccount行、
+  匿名clientの直接read拒否、admin削除時cascadeまで検査してtest userを後始末する
+- live smokeの各requestとpgTAPは期限付き。SIGINT/SIGTERM後もIDを取得済みのtest user削除と
+  cascade確認が終わるまでSupabaseを停止しない
+- 残余リスク: signupがserverでcommit後に応答ごと失われるとIDを知れず、local test userを
+  その実行内で特定・削除できない。この場合はsmokeをfailさせ自動再試行しない。本番routeは
+  OLG-113で監査可能な作成requestとopaque session発行を一つのserver-side flowとして扱う
+- **残り**: Docker互換ランタイム上で上記migration・pgTAP・GoTrue live smokeを実行する。
+  ここを通すまでOLG-111をdoneにしない
+
 - OLG-112 LINE/Google linking
 - OLG-113 secure session/seat token
 - OLG-114 active session/複数タブ制御
@@ -617,6 +653,18 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
   （`scripts/invites.mjs`）。行ロック・DB永続化・API化はOLG-101（server/protocol/supabaseの
   workspace scaffold）の後で`server/src/auth/`または`server/src/economy/`へ移す
 - G2公開前に、招待予定人数に合わせてNPC買取hard capを更新すること（6.6 / MARKETING-001必須手順）
+
+### OLG-116 休眠ゲストの保持・定期削除
+
+状態: 設計要件登録・実装未着手（G4 Public Online Beta公開前ゲート）
+
+- Supabase anonymous userは自動削除されないため、定期cleanup jobを運営側で持つ
+- 初期値は`last_active_at`から90日。ゲスト開始とスターター受取前に日本語で明示し、
+  保護済みaccountは対象外にする。`auth.users.created_at`だけで削除判定しない
+- candidateを小さなbatchでlockし、匿名状態、最終活動、active session、進行中バトル、
+  外部ID連携中でないことを削除直前に再検査する。曖昧な場合はfail closedで残す
+- dry-run、batch上限、kill switch、対象/削除/除外件数の監査、活動更新との競合テスを
+  揃えてから一般公開する
 
 ### Epic OLG-120 MatchDO
 

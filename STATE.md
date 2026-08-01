@@ -2,7 +2,7 @@
 
 - 最終更新: 2026-08-01
 - フェーズ: G0 FoundationはCloudflare smoke待ち。P1 / G1 Internal Alphaへ着手し、OLG-101完了、
-  OLG-102は実装済み。Docker互換ランタイム待ちでSupabase migrationの実stack受入だけ未完
+  OLG-102/111は実装済み。Docker互換ランタイム待ちでSupabase migration・DB/Auth実stack受入が未完
 
 
 ## この文書の読み方
@@ -112,11 +112,17 @@
   Workerの`GET /health`はMatchDOとDO SQLiteの`SELECT 1`まで検査し、最小WebSocketはHibernation APIで
   強制eviction後も`probe`疎通できる。repo lock、port事前検査、起動run ID照合により別processを
   誤合格せず、起動・migration・疎通の途中を含むSIGINT/SIGTERMでも所有processだけを片付ける。
-- Worker/MatchDOの実runtime smoke、起動ライフサイクル20 test、clean `npm ci`、root全test/build、
+- Worker/MatchDOの実runtime smoke、起動ライフサイクル24 test、clean `npm ci`、root全test/build、
   engine/admin/functions型検査、
   leak/stale検査はgreen。ゲーム本体のCommand/Event/Snapshotは後続OLGへ意図的に残している。
-  このMacにDocker互換ランタイムがないため、Supabaseの実起動と空migration適用を含む
+  このMacにDocker互換ランタイムがないため、Supabaseの実起動とmigration適用を含む
   `npm run smoke:online`だけ受入待ち。外部Cloudflare/Supabaseリソースやsecretは作成していない。
+- OLG-111は2026-08-01にコード実装済み。Supabase anonymous Auth userと同じUUIDの
+  `public.account`をtriggerで原子的に作り、RLSと権限剥奪でclientのData APIから隠す。
+  Worker内部providerはtokenを外へ出さず、remoteではsecret key＋信頼済みIP転送を必須にし、
+  曖昧なsignup失敗を自動再試行しない。`POST /auth/guest`とopaque cookieはOLG-113へ残した。
+  live smokeはrequest期限と中断後の削除完了待ちを持つ。pgTAP 27項目とGoTrue live smokeは
+  `npm run smoke:online`へ配線済みで、Docker起動後の実行待ち。
 - P2へNPCシングル市場を正式登録した。G2 Collection Closed Betaは固定買取/販売、有限な実在個体在庫、
   atomic quote/orderで開始する。固定価格のraw集計からpolicyを承認し、2〜4週間shadow計算する。
   日次±5%・基準80〜120%の動的価格を実注文へ使えるのはG8だけとし、G4以降の標本、
@@ -149,7 +155,10 @@
 - 完了: **OLG-101**（server/protocol npm workspace、Supabase CLI設定、migration正本の入口）。
 - **OLG-102は実装済み・実stack受入待ち**。Worker/MatchDOのhealth・SQLite・WebSocket smokeと
   全検証はgreen。Docker互換ランタイム起動後に`npm run smoke:online`を1回通し、
-  Supabase migrationまで確認できたら完了にする。OLG-003PのCloudflare作業はG0 blockerとして並行管理する。
+  Supabase migration/pgTAPまで確認できたら完了にする。
+- **OLG-111も実装済み・実stack受入待ち**。同じ`npm run smoke:online`でGoTrue匿名signup、
+  同一UUIDのaccount行、直接read拒否、削除cascadeまで通れば完了にする。HTTP routeはOLG-113で開く。
+  OLG-003PのCloudflare作業はG0 blockerとして並行管理する。
 - ここまでの経緯は一番下の「開発の記録」を見る。
 
 ## オープンβ要件 決定（2026-07-23）

@@ -1386,6 +1386,34 @@ Apple Loginは、ネイティブアプリ/App IDとの連携が必要になっ�
 
 ゲストをローカルUUIDだけで扱わず、サーバー上にも匿名`account_id`を作る。これにより、チュートリアル途中のリロード復帰ができる。
 
+実装境界:
+
+- Supabase Auth userとゲーム側`account`は同じUUIDで1対1とし、Auth user作成transaction内のtriggerで
+  account rootも作る。trigger失敗時はAuth userだけを残さない。初回migration時は既存Auth userを
+  lock下でbackfillし、backfillとtrigger作成の間に並行signupが漏れないようにする
+- `account_id`単体は認証情報ではない。Authのaccess/refresh tokenはWorker内部providerからHTTP body、
+  header、logへ出さず、8.4のserver-side sessionへ直ちに収容する
+- anonymous signupは冪等ではない。network切断、5xx、壊れた成功応答では作成済みか判別できないため、
+  同じ操作を自動再試行して別ゲストを作らない。明示的に拒否された429だけを安全な再試行候補にする
+- 公開環境のAuth proxyはsecret keyと、Cloudflareが付与した信頼済みclient IPの
+  `Sb-Forwarded-For`転送を組にする。OLG-113のrouteは本番でCloudflareが付与する
+  `CF-Connecting-IP`のみを正規化し、browser指定の`X-Forwarded-For`を信頼しない。Supabase側のIP forwardingと
+  CAPTCHA/Turnstileを有効にし、providerの`captchaToken`へ渡す。browser向けguest routeはopaque cookie発行と同時に開く
+- local live smokeは各requestに期限を付け、中断後もID取得済みtest userの削除を待ってから
+  local stackを停止する。signup commit後に応答全体が失われIDを取得できない場合は、
+  作成済みtest userを実行内で特定できない残余リスクとしてfail closedし、自動再試行しない
+
+休眠ゲストの保持:
+
+- Supabaseは匿名userを自動削除しないため、OLG-116で定期cleanupを持つ。作成日だけではなく
+  serverが更新する`last_active_at`を判定基準にし、初期保持期間は90日とする
+- ゲスト開始時とスターター受取前に「90日以上利用がないと削除される可能性」と
+  アカウント保護導線を日本語で示す。期間を短縮する場合は事前告知なしで適用しない
+- 削除候補は`is_anonymous = true`、期限より前の`last_active_at`、active session/進行中バトル/
+  外部ID連携処理なしを同じtransactionで再検査する。一つでも判定できなければ削除しない
+- batch上限、dry-run件数、kill switch、削除成否数の監査値を持つ。保護済みaccountは期限に関係なく
+  定期cleanupの対象外とし、削除の競合はlast activity更新を勝たせる
+
 ### 8.3 外部ID
 
 プレイヤーの内部IDはランダムな`account_id`とし、メールアドレスを主キーにしない。

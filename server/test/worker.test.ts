@@ -59,12 +59,18 @@ describe('@bravers/server OLG-102 foundation', () => {
 
   it('未知routeとUpgradeなしを明示的に拒否する', async () => {
     const missing = await workerExports.default.fetch('http://local.test/no-such-route');
+    const guestBeforeSecureSession = await workerExports.default.fetch(
+      'http://local.test/auth/guest',
+      { method: 'POST' },
+    );
     const noUpgrade = await workerExports.default.fetch(
       'http://local.test/matches/local-smoke/ws',
     );
 
     expect(missing.status).toBe(404);
     expect(await missing.json()).toEqual({ error: 'NOT_FOUND' });
+    expect(guestBeforeSecureSession.status).toBe(404);
+    expect(await guestBeforeSecureSession.json()).toEqual({ error: 'NOT_FOUND' });
     expect(noUpgrade.status).toBe(426);
     expect(await noUpgrade.json()).toEqual({ error: 'WEBSOCKET_UPGRADE_REQUIRED' });
   });

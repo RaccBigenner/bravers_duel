@@ -5,6 +5,7 @@ import { mkdir, open, readFile, unlink } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { verifyLocalGuestAccount } from './verify-local-guest-account.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_PORT = 8787;
@@ -240,9 +241,14 @@ function runSupabase(registry, args, options) {
   return runCommand(
     registry,
     process.execPath,
-    [supabaseScript, '--workdir', 'supabase', ...args],
+    supabaseCliArgs(args),
     options,
   );
+}
+
+export function supabaseCliArgs(args) {
+  // --workdirはconfig.tomlのあるsupabase/ではなく、その親project rootを指す。
+  return [supabaseScript, '--workdir', '.', ...args];
 }
 
 function processIsAlive(pid) {
@@ -354,27 +360,48 @@ export function createSignalGuard(target = process) {
   };
 }
 
+/**
+ * 中断を即座に記録しつつ、期限付きの検証処理が自前の後始末を終えるまで待つ。
+ * guest smokeを置き去りにしたまま外側のfinallyでSupabaseを停止しないための境界。
+ */
+export async function waitForCriticalCleanup(operation, wait) {
+  try {
+    return await wait(operation);
+  } catch (error) {
+    if (!(error instanceof InterruptedError)) throw error;
+    try {
+      await operation;
+    } catch (settleError) {
+      throw new AggregateError(
+        [error, settleError],
+        '中断後のゲストaccount後始末に失敗しました',
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+}
+
 export async function prepareSupabase(
   state,
-  { run, wait = (operation) => operation } = {},
+  { run, wait = (operation) => operation, verifyGuestAccount } = {},
 ) {
   let phase = 'status';
   try {
     const before = await wait(run(['status', '--output', 'json'], { capture: true, allowFailure: true }));
-    const statusOutput = cleanCliOutput(`${before.stdout ?? ''}\n${before.stderr ?? ''}`);
     const alreadyRunning = before.code === 0;
     const explicitlyStopped = supabaseStatusIsExplicitlyStopped(before);
     if (!alreadyRunning && !explicitlyStopped) {
-      throw new Error(
-        `Supabase statusを安全に判定できません: ${statusOutput.trim() || `exit ${before.code}`}`,
-      );
+      // statusは部分的にcredential付きJSONを返してから失敗し得る。raw出力を例外へ入れない。
+      throw new Error(`Supabase statusを安全に判定できません（exit ${before.code}）`);
     }
 
     if (!alreadyRunning) {
       phase = 'start';
       state.owned = true;
       console.log('▶ Supabase local stackを起動します');
-      const started = await wait(run(['start'], { capture: true, tee: true, allowFailure: true }));
+      // CLIはloopback用secret keyも起動結果へ含めるため、consoleへteeしない。
+      const started = await wait(run(['start'], { capture: true, tee: false, allowFailure: true }));
       if (supabaseStartFoundExistingStack(started)) {
         state.owned = false;
         console.log('✓ 競合して起動した既存Supabase local stackを借用します');
@@ -388,16 +415,26 @@ export async function prepareSupabase(
     phase = 'migration';
     console.log('▶ 未適用のlocal migrationを適用します');
     await wait(run(['migration', 'up', '--local']));
-    await wait(run(['status', '--output', 'json']));
+    const readyStatus = await wait(run(['status', '--output', 'json'], { capture: true }));
     await wait(run(['migration', 'list', '--local']));
+    console.log('▶ local DBのpgTAP受入テストを実行します');
+    await wait(run(['test', 'db', '--local', 'server/test/db'], { timeoutMs: 30_000 }));
+    if (verifyGuestAccount) {
+      phase = 'guest-auth';
+      console.log('▶ local Authの匿名account作成と削除cascadeを検証します');
+      const verification = Promise.resolve().then(() => verifyGuestAccount(readyStatus));
+      await waitForCriticalCleanup(verification, wait);
+    }
   } catch (error) {
     if (error instanceof InterruptedError) throw error;
     const message =
-      phase === 'migration'
-        ? 'Supabase local migrationまたはstatus検証に失敗しました。直前のCLI出力を確認してください。'
-        : phase === 'status'
-          ? 'Supabase local stackの状態を安全に確認できません。Docker互換ランタイムと既存stackを確認してください。既存stackには触れていません。'
-          : 'Supabase local stackを起動できません。Docker互換ランタイムを起動して再実行してください。';
+      phase === 'guest-auth'
+        ? 'Supabase local Authのゲストaccount受入テストに失敗しました。'
+        : phase === 'migration'
+          ? 'Supabase local migration・status・DB受入テストのいずれかに失敗しました。直前のCLI出力を確認してください。'
+          : phase === 'status'
+            ? 'Supabase local stackの状態を安全に確認できません。Docker互換ランタイムと既存stackを確認してください。既存stackには触れていません。'
+            : 'Supabase local stackを起動できません。Docker互換ランタイムを起動して再実行してください。';
     throw new Error(
       `${message} Workerだけの診断は \`npm run smoke:online -- --worker-only\` で実行できます。`,
       { cause: error },
@@ -696,6 +733,7 @@ async function main() {
       await prepareSupabase(supabase, {
         run: (args, runOptions) => runSupabase(registry, args, runOptions),
         wait: (operation) => interrupt.wait(operation),
+        ...(options.smoke ? { verifyGuestAccount: verifyLocalGuestAccount } : {}),
       });
     }
 
@@ -739,10 +777,8 @@ async function main() {
         });
         if (stopped.code !== 0) {
           cleanupErrors.push(
-            new Error(
-              `supabase stopが終了コード${stopped.code}で失敗しました: ` +
-                cleanCliOutput(stopped.stderr || stopped.stdout).trim(),
-            ),
+            // stop出力もcredentialを含む可能性があるため、終了コードだけを報告する。
+            new Error(`supabase stopが終了コード${stopped.code}で失敗しました`),
           );
         }
       } catch (error) {

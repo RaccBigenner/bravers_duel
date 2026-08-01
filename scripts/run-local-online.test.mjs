@@ -15,9 +15,11 @@ import {
   parseArgs,
   prepareSupabase,
   probeWebSocket,
+  supabaseCliArgs,
   supabaseStartFoundExistingStack,
   supabaseStatusIsExplicitlyStopped,
   verifyWorkerReadiness,
+  waitForCriticalCleanup,
   waitForHealth,
 } from './run-local-online.mjs';
 
@@ -50,6 +52,18 @@ describe('run-local-online', () => {
       health: 'http://127.0.0.1:9001/health',
       websocket: 'ws://127.0.0.1:9001/matches/local-smoke/ws',
     });
+  });
+
+  it('Supabase CLIのworkdirをsupabase/の親project rootへ固定する', () => {
+    const args = supabaseCliArgs(['status', '--output', 'json']);
+    assert.deepEqual(args.slice(-5), [
+      '--workdir',
+      '.',
+      'status',
+      '--output',
+      'json',
+    ]);
+    assert.ok(args[0].endsWith('/node_modules/supabase/dist/supabase.js'));
   });
 
   it('全checkと起動run IDが揃うまでhealthを再試行する', async () => {
@@ -132,23 +146,56 @@ describe('run-local-online', () => {
 
   it('Supabaseをstart前から所有扱いにし、migration確認順を固定する', async () => {
     const calls = [];
+    const callOptions = [];
     const state = { owned: false };
+    const verifiedStatuses = [];
     await prepareSupabase(state, {
-      run: async (args) => {
+      run: async (args, options) => {
         calls.push(args.join(' '));
+        callOptions.push(options);
         return calls.length === 1
           ? { code: 1, stdout: '', stderr: 'supabase start is not running.' }
           : { code: 0, stdout: '', stderr: '' };
       },
+      verifyGuestAccount: async (status) => verifiedStatuses.push(status),
     });
 
     assert.equal(state.owned, true);
+    assert.deepEqual(verifiedStatuses, [{ code: 0, stdout: '', stderr: '' }]);
     assert.deepEqual(calls, [
       'status --output json',
       'start',
       'migration up --local',
       'status --output json',
       'migration list --local',
+      'test db --local server/test/db',
+    ]);
+    assert.deepEqual(callOptions[1], { capture: true, tee: false, allowFailure: true });
+    assert.deepEqual(callOptions.at(-1), { timeoutMs: 30_000 });
+  });
+
+  it('DB受入テスト失敗をWorker起動前に止める', async () => {
+    const state = { owned: false };
+    const calls = [];
+
+    await assert.rejects(
+      prepareSupabase(state, {
+        run: async (args) => {
+          calls.push(args.join(' '));
+          if (args[0] === 'test') throw new Error('pgTAP failed');
+          return { code: 0, stdout: '{}', stderr: '' };
+        },
+      }),
+      /DB受入テスト/,
+    );
+
+    assert.equal(state.owned, false);
+    assert.deepEqual(calls, [
+      'status --output json',
+      'migration up --local',
+      'status --output json',
+      'migration list --local',
+      'test db --local server/test/db',
     ]);
   });
 
@@ -246,14 +293,24 @@ describe('run-local-online', () => {
   it('曖昧なSupabase status失敗では借用stackを所有扱いしない', async () => {
     const state = { owned: false };
     const calls = [];
+    const secretSentinel = 'sb_secret_must-not-appear';
     await assert.rejects(
       prepareSupabase(state, {
         run: async (args) => {
           calls.push(args.join(' '));
-          return { code: 1, stdout: '', stderr: 'container is unhealthy' };
+          return {
+            code: 1,
+            stdout: JSON.stringify({ API_URL: 'http://127.0.0.1:54321', SECRET_KEY: secretSentinel }),
+            stderr: 'container is unhealthy',
+          };
         },
       }),
-      /状態を安全に確認できません/,
+      (error) => {
+        assert.match(error.message, /状態を安全に確認できません/);
+        assert.doesNotMatch(error.message, new RegExp(secretSentinel));
+        assert.doesNotMatch(error.cause?.message ?? '', new RegExp(secretSentinel));
+        return true;
+      },
     );
     assert.equal(state.owned, false);
     assert.deepEqual(calls, ['status --output json']);
@@ -284,6 +341,77 @@ describe('run-local-online', () => {
     guard.dispose();
     assert.equal(target.listenerCount('SIGINT'), 0);
     assert.equal(target.listenerCount('SIGTERM'), 0);
+  });
+
+  it('guest検証中のSIGINTはその後始末完了までSupabase準備を返さない', async () => {
+    const target = new EventEmitter();
+    const guard = createSignalGuard(target);
+    let markVerificationStarted;
+    let releaseVerification;
+    const verificationStarted = new Promise((resolve) => {
+      markVerificationStarted = resolve;
+    });
+    const verificationCleanup = new Promise((resolve) => {
+      releaseVerification = resolve;
+    });
+    let settled = false;
+
+    const preparing = prepareSupabase(
+      { owned: false },
+      {
+        run: async () => ({ code: 0, stdout: '{}', stderr: '' }),
+        wait: (operation) => guard.wait(operation),
+        verifyGuestAccount: async () => {
+          markVerificationStarted();
+          await verificationCleanup;
+        },
+      },
+    );
+    const observed = preparing.then(
+      () => {
+        settled = true;
+        return null;
+      },
+      (error) => {
+        settled = true;
+        return error;
+      },
+    );
+
+    try {
+      await verificationStarted;
+      target.emit('SIGINT');
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(settled, false);
+
+      releaseVerification();
+      const error = await observed;
+      assert.equal(error?.signal, 'SIGINT');
+      assert.equal(settled, true);
+    } finally {
+      releaseVerification();
+      guard.dispose();
+    }
+  });
+
+  it('中断後のcritical cleanup失敗は両方の理由を保持する', async () => {
+    const target = new EventEmitter();
+    const guard = createSignalGuard(target);
+    let rejectCleanup;
+    const operation = new Promise((_, reject) => {
+      rejectCleanup = reject;
+    });
+    const waiting = waitForCriticalCleanup(operation, (candidate) => guard.wait(candidate));
+
+    target.emit('SIGTERM');
+    rejectCleanup(new Error('cleanup failed'));
+    await assert.rejects(waiting, (error) => {
+      assert.ok(error instanceof AggregateError);
+      assert.equal(error.errors[0].signal, 'SIGTERM');
+      assert.match(error.errors[1].message, /cleanup failed/);
+      return true;
+    });
+    guard.dispose();
   });
 
   it('Workerのready前exitを疎通成功として扱わない', async () => {

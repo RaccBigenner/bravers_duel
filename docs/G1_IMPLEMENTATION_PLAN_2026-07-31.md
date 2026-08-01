@@ -56,9 +56,12 @@ P1 exit の一言まとめ:
 
 ### Step B: アカウントの土台（OLG-111 → OLG-113）
 
-- **OLG-111** server-side guest account（設計 §8.2）
+- **OLG-111（実装済み・実stack受入待ち）** server-side guest account（設計 §8.2）
   - ゲスト開始 = サーバーが匿名 account_id を発行（ローカル UUID だけにしない）
   - Supabase Auth の anonymous sign-in を使う
+  - Auth userと同一UUIDの`public.account`を同一transactionのtriggerで作り、clientのData APIから隠す
+  - tokenを外へ返さないrequest-scoped Worker内部providerまでを担当する。曖昧な失敗は再試行しない
+  - browser向け`POST /auth/guest`は、OLG-113がopaque sessionへ収容できる段階で同時に開く
 - **OLG-113** secure session / seat token（設計 §8.4）
   - HttpOnly / Secure / SameSite=Lax の opaque session cookie
   - WebSocket 接続前に短命の match seat token を発行
@@ -115,7 +118,7 @@ P1 exit の一言まとめ:
 |---|---|
 | 101（完了） | `npm install`後にserver/protocolのtest・typecheckとルート`npm test`が通る。Supabase CLIが設定と`server/migrations/`へのsymlinkを認識し、外部resource/secretを作っていない |
 | 102（受入待ち） | 1コマンド、MatchDO WebSocket、DO SQLiteを含むhealthは実装・検証済み。Docker互換ランタイム上でSupabase migrationが通ればdone |
-| 111 | ブラウザを初めて開いたゲストにサーバー側 account_id が発行され、DB に匿名アカウント行ができる |
+| 111（受入待ち） | Auth anonymous userと同じUUIDのaccount行が原子的に作られ、clientから直接read/write不能。内部grantのtokenはHTTP/logへ出さず、曖昧失敗を自動再試行しない。Docker上のpgTAP＋GoTrue live smokeが通ればdone（browser route/cookieは113） |
 | 113 | session cookie が HttpOnly/Secure/SameSite=Lax。期限切れ session の API は 401。seat token なしの WebSocket は拒否 |
 | 121 | MatchDO 内で NPC 戦が開始→終了まで進み、結果が engine 単体実行と一致する（同 seed 同結果） |
 | 123 | 手札の並びが変わっても battleCardId 指定の action が正しいカードに当たる |
