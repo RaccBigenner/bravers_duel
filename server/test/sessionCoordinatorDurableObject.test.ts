@@ -465,6 +465,12 @@ describe('OLG-121 SessionCoordinatorDO membership preflight', () => {
             sessionVersion: 1,
             matchId: '../unsafe',
           },
+          {
+            sessionId: boundSessionId,
+            sessionVersion: 1,
+            matchId: 'extra-field',
+            extra: true,
+          },
         ]) {
           try {
             await (instance as SessionCoordinatorDO).checkMatchMembership(input);
@@ -479,6 +485,7 @@ describe('OLG-121 SessionCoordinatorDO membership preflight', () => {
 
     expect(result).toEqual([
       'SESSION_COORDINATOR_IDENTITY_INVALID',
+      'SESSION_MATCH_MEMBERSHIP_INVALID',
       'SESSION_MATCH_MEMBERSHIP_INVALID',
       'SESSION_MATCH_MEMBERSHIP_INVALID',
     ]);
@@ -519,9 +526,15 @@ describe('OLG-121 server-owned NPC match reservation', () => {
     const results = await Promise.all(
       Array.from({ length: 6 }, () => stub.reserveNpcMatch(input)),
     );
-    expect(results.filter((result) => result.state === 'reserved' && result.created)).toHaveLength(1);
-    expect(new Set(results.map((result) => JSON.stringify(result)))).toHaveLength(2);
-    const reservation = results.find((result) => result.state === 'reserved');
+    const reservedResults = results.filter(
+      (result): result is Extract<typeof result, { state: 'reserved' }> =>
+        result.state === 'reserved',
+    );
+    expect(reservedResults).toHaveLength(6);
+    expect(reservedResults.filter((result) => result.created)).toHaveLength(1);
+    expect(new Set(reservedResults.map((result) => result.matchId))).toHaveLength(1);
+    expect(new Set(reservedResults.map((result) => result.seed))).toHaveLength(1);
+    const reservation = reservedResults[0];
     expect(reservation).toMatchObject({ state: 'reserved' });
     if (!reservation || reservation.state !== 'reserved') {
       throw new Error('Expected NPC reservation');

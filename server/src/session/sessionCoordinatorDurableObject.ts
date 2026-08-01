@@ -194,6 +194,19 @@ function positiveInteger(value: unknown): value is number {
   return Number.isSafeInteger(value) && Number(value) >= 1;
 }
 
+function plainExactObject(
+  value: unknown,
+  keys: readonly string[],
+): value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return (
+    (prototype === Object.prototype || prototype === null) &&
+    Object.keys(value).length === keys.length &&
+    keys.every((key) => Object.hasOwn(value, key))
+  );
+}
+
 function validateIdentity(objectName: string | undefined, sessionId: string): void {
   if (!UUID_PATTERN.test(sessionId) || objectName !== sessionId) {
     throw new TypeError('SESSION_COORDINATOR_IDENTITY_INVALID');
@@ -215,8 +228,7 @@ function validateReferenceInput(input: SessionMatchReferenceInput): void {
 
 function validateMembershipInput(input: SessionMatchMembershipInput): void {
   if (
-    typeof input !== 'object' ||
-    input === null ||
+    !plainExactObject(input, ['sessionId', 'sessionVersion', 'matchId']) ||
     typeof input.sessionId !== 'string' ||
     !UUID_PATTERN.test(input.sessionId) ||
     !positiveInteger(input.sessionVersion) ||
@@ -229,12 +241,7 @@ function validateMembershipInput(input: SessionMatchMembershipInput): void {
 
 function validateNpcReservationInput(input: SessionNpcMatchReservationInput): void {
   if (
-    typeof input !== 'object' ||
-    input === null ||
-    Object.keys(input).length !== 3 ||
-    !Object.hasOwn(input, 'sessionId') ||
-    !Object.hasOwn(input, 'accountId') ||
-    !Object.hasOwn(input, 'sessionVersion') ||
+    !plainExactObject(input, ['sessionId', 'accountId', 'sessionVersion']) ||
     typeof input.sessionId !== 'string' ||
     !UUID_PATTERN.test(input.sessionId) ||
     typeof input.accountId !== 'string' ||
@@ -253,11 +260,18 @@ function randomUint32(): number {
 
 function validateNpcReleaseInput(input: SessionNpcMatchReleaseInput): void {
   if (
-    typeof input !== 'object' ||
-    input === null ||
-    Object.keys(input).length !== 5 ||
-    !Object.hasOwn(input, 'matchId') ||
-    !Object.hasOwn(input, 'seed') ||
+    !plainExactObject(input, [
+      'sessionId',
+      'accountId',
+      'sessionVersion',
+      'matchId',
+      'seed',
+    ]) ||
+    typeof input.sessionId !== 'string' ||
+    !UUID_PATTERN.test(input.sessionId) ||
+    typeof input.accountId !== 'string' ||
+    !UUID_PATTERN.test(input.accountId) ||
+    !positiveInteger(input.sessionVersion) ||
     typeof input.matchId !== 'string' ||
     !MATCH_ID_PATTERN.test(input.matchId) ||
     !Number.isSafeInteger(input.seed) ||
@@ -266,11 +280,6 @@ function validateNpcReleaseInput(input: SessionNpcMatchReleaseInput): void {
   ) {
     throw new TypeError('SESSION_NPC_MATCH_RELEASE_INVALID');
   }
-  validateNpcReservationInput({
-    sessionId: input.sessionId,
-    accountId: input.accountId,
-    sessionVersion: input.sessionVersion,
-  });
 }
 
 function validateLogoutIntent(input: SessionLogoutIntent): void {
