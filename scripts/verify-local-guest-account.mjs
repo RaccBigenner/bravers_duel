@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 function stableFailure(message) {
   return new Error(`local guest account smoke: ${message}`);
@@ -99,6 +99,12 @@ function withDeadline(operation, timeoutMs, label) {
   });
 }
 
+function randomDigestHex() {
+  const bytes = new Uint8Array(32);
+  globalThis.crypto.getRandomValues(bytes);
+  return [...bytes].map((value) => value.toString(16).padStart(2, '0')).join('');
+}
+
 export function localAuthConfigFromStatus(result) {
   if (!result || result.code !== 0 || typeof result.stdout !== 'string') {
     throw stableFailure('Supabase statusを取得できません');
@@ -182,8 +188,47 @@ export async function verifyLocalGuestAccount(
     const scopedFetch = fetchWithDeadline(fetchImpl, requestTimeoutMs);
     guestClient = localClient(createClientImpl, apiUrl, publishableKey, scopedFetch);
     adminClient = localClient(createClientImpl, apiUrl, secretKey, scopedFetch);
+    const bootstrapDigestHex = randomDigestHex();
+    const created = await withDeadline(
+      adminClient.rpc('create_guest_bootstrap_attempt', {
+        p_bootstrap_digest_hex: bootstrapDigestHex,
+        p_digest_key_version: 1,
+        p_session_derivation_key_version: 1,
+      }),
+      requestTimeoutMs,
+      'bootstrap create',
+    );
+    const attemptId = created.data?.state === 'created' && UUID_PATTERN.test(created.data.attempt_id ?? '')
+      ? created.data.attempt_id
+      : null;
+    if (created.error || !attemptId) {
+      throw stableFailure('bootstrap attemptを作成できません');
+    }
+    const claimed = await withDeadline(
+      adminClient.rpc('claim_guest_bootstrap_attempt', {
+        p_bootstrap_digest_hex: bootstrapDigestHex,
+        p_digest_key_version: 1,
+      }),
+      requestTimeoutMs,
+      'bootstrap claim',
+    );
+    const claimId = claimed.data?.state === 'create_auth'
+      && claimed.data.attempt_id === attemptId
+      && UUID_PATTERN.test(claimed.data.claim_id ?? '')
+      ? claimed.data.claim_id
+      : null;
+    if (claimed.error || !claimId) {
+      throw stableFailure('bootstrap claimを取得できません');
+    }
     const signup = await withDeadline(
-      guestClient.auth.signInAnonymously(),
+      guestClient.auth.signInAnonymously({
+        options: {
+          data: {
+            guest_bootstrap_attempt_id: attemptId,
+            guest_bootstrap_claim_id: claimId,
+          },
+        },
+      }),
       requestTimeoutMs,
       'anonymous signup',
     );

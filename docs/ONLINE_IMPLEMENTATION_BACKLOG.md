@@ -637,8 +637,11 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
   OLG-121がassignmentを作るまではclient指定のmatch/seatで発行せず未参加として拒否する
 - WebSocketはOrigin/sessionを検証後にupgradeし、最初の5秒以内のauth frameでtokenを原子的に消費。
   認証完了前はgame payloadを送らず、attachmentへraw tokenを残さない
-- logoutはsession versionを上げ、関連MatchDOをcloseする。各command前にもDBでversionを再確認し、
-  通知との競合で失効後commandが通らないようにする
+- logoutはDBでsession versionを上げた後、関連MatchDOへversion付きinvalidateを送りACKを待つ。
+  DOのsingle-thread順序でinvalidate後のcommandを拒否する。新規接続/再接続はDB versionを
+  fail closedで検査し、各commandのDB照会だけをlogoutとの排他制御には使わない
+- 初期sliceはHMAC/AES鍵のactive+retained keyringまでとし、online credential回転は未実装。
+  回転時は`PENDING`→最初のresolveで昇格する二段階方式等で応答順逆転を安全にする
 
 受入:
 

@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { createDeadlineFetch } from '../http/deadlineFetch';
 
 export type AuthKeyMode = 'publishable' | 'secret';
 
@@ -26,6 +27,10 @@ export interface RemoteAuthServerCredential extends BaseAuthServerCredential {
 export type AuthServerCredential = LocalAuthServerCredential | RemoteAuthServerCredential;
 
 export interface CreateAnonymousPrincipalInput {
+  guestBootstrap: {
+    attemptId: string;
+    claimId: string;
+  };
   captchaToken?: string;
   trustedClientIp?: string;
 }
@@ -67,7 +72,7 @@ interface GuestAuthDependencies {
   nowMs?: () => number;
 }
 
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SAFE_ERROR_CODE = /^[a-z0-9_]{1,64}$/;
 
 function normalizedSupabaseUrl(raw: string, environment: 'local' | 'remote'): string {
@@ -144,108 +149,13 @@ function safeUpstreamCode(value: unknown): string | undefined {
   return typeof value === 'string' && SAFE_ERROR_CODE.test(value) ? value : undefined;
 }
 
-function waitWithAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) return Promise.reject(signal.reason);
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const finish = (callback: () => void) => {
-      if (settled) return;
-      settled = true;
-      signal.removeEventListener('abort', onAbort);
-      callback();
-    };
-    const onAbort = () => finish(() => reject(signal.reason));
-    signal.addEventListener('abort', onAbort, { once: true });
-    operation.then(
-      (value) => finish(() => resolve(value)),
-      (error) => finish(() => reject(error)),
-    );
-  });
-}
-
-function responseWithDeadline(
-  response: Response,
-  signal: AbortSignal,
-  cleanup: () => void,
-): Response {
-  const bodyReaders = new Set<PropertyKey>(['arrayBuffer', 'blob', 'formData', 'json', 'text']);
-  return new Proxy(response, {
-    get(target, property) {
-      const value = Reflect.get(target, property, target) as unknown;
-      if (bodyReaders.has(property) && typeof value === 'function') {
-        return async (...args: unknown[]) => {
-          try {
-            const operation = Reflect.apply(value, target, args) as Promise<unknown>;
-            return await waitWithAbort(operation, signal);
-          } finally {
-            cleanup();
-          }
-        };
-      }
-      return typeof value === 'function' ? value.bind(target) : value;
-    },
-  });
-}
-
-function requestScopedFetch(
-  fetchImpl: typeof fetch,
-  { timeoutMs, signal }: { timeoutMs: number; signal?: AbortSignal },
-): typeof fetch {
-  return async (input, init) => {
-    const controller = new AbortController();
-    const requestSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
-    const abort = (source?: AbortSignal) => {
-      if (!controller.signal.aborted) {
-        controller.abort(source?.reason ?? new Error('Supabase Auth request aborted'));
-      }
-    };
-    if (signal?.aborted || requestSignal?.aborted) {
-      throw signal?.reason ?? requestSignal?.reason ?? new Error('Supabase Auth request aborted');
-    }
-
-    const onOuterAbort = () => abort(signal);
-    const onRequestAbort = () => abort(requestSignal);
-    let cleanedUp = false;
-    const cleanup = () => {
-      if (cleanedUp) return;
-      cleanedUp = true;
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', onOuterAbort);
-      requestSignal?.removeEventListener('abort', onRequestAbort);
-    };
-    const timer = setTimeout(() => {
-      abort();
-      cleanup();
-    }, timeoutMs);
-
-    signal?.addEventListener('abort', onOuterAbort, { once: true });
-    requestSignal?.addEventListener('abort', onRequestAbort, { once: true });
-
-    try {
-      const response = await waitWithAbort(
-        Promise.resolve(fetchImpl(input, { ...init, signal: controller.signal })),
-        controller.signal,
-      );
-      if (response.body === null) {
-        cleanup();
-        return response;
-      }
-      // fetchはheaders到着時点でresolveする。SDKのresponse.json()まで同じdeadlineで覆う。
-      return responseWithDeadline(response, controller.signal, cleanup);
-    } catch (error) {
-      cleanup();
-      throw error;
-    }
-  };
-}
-
 /**
  * Supabase clientはrequestごとに作る。module scopeでsessionを共有しない。
  * 成功したsignupとpublic.account triggerはPostgreSQL上で同じtransactionに属する。
  */
 export async function createAnonymousPrincipal(
   credential: AuthServerCredential,
-  input: CreateAnonymousPrincipalInput = {},
+  input: CreateAnonymousPrincipalInput,
   dependencies: GuestAuthDependencies = {},
 ): Promise<AnonymousAuthGrant> {
   const supabaseUrl = validateCredential(credential);
@@ -254,6 +164,15 @@ export async function createAnonymousPrincipal(
   const timeoutMs = dependencies.timeoutMs ?? 10_000;
   const nowEpochSeconds = Math.floor((dependencies.nowMs?.() ?? Date.now()) / 1_000);
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30_000) {
+    throw new GuestAuthError('AUTH_CONFIG_INVALID', false);
+  }
+
+  const bootstrap = input?.guestBootstrap;
+  if (
+    !bootstrap ||
+    !UUID_PATTERN.test(bootstrap.attemptId) ||
+    !UUID_PATTERN.test(bootstrap.claimId)
+  ) {
     throw new GuestAuthError('AUTH_CONFIG_INVALID', false);
   }
 
@@ -279,7 +198,7 @@ export async function createAnonymousPrincipal(
       skipAutoInitialize: true,
     },
     global: {
-      fetch: requestScopedFetch(dependencies.fetch ?? fetch, {
+      fetch: createDeadlineFetch(dependencies.fetch ?? fetch, {
         timeoutMs,
         signal: dependencies.signal,
       }),
@@ -289,9 +208,15 @@ export async function createAnonymousPrincipal(
 
   let result: Awaited<ReturnType<typeof client.auth.signInAnonymously>>;
   try {
-    result = await client.auth.signInAnonymously(
-      captchaToken ? { options: { captchaToken } } : undefined,
-    );
+    result = await client.auth.signInAnonymously({
+      options: {
+        data: {
+          guest_bootstrap_attempt_id: bootstrap.attemptId,
+          guest_bootstrap_claim_id: bootstrap.claimId,
+        },
+        ...(captchaToken ? { captchaToken } : {}),
+      },
+    });
   } catch {
     // signupは冪等ではない。応答だけ失われた可能性があるため、自動再試行させない。
     throw new GuestAuthError('AUTH_UNAVAILABLE', false);

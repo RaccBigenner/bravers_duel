@@ -66,7 +66,8 @@ P1 exit の一言まとめ:
   - 10分TTLのHttpOnly bootstrap cookieとDB claimで、並行guest作成と応答喪失を同じaccountへ収束
   - Auth grantをserver-sideで暗号化し、HttpOnly / Secure / SameSite=Lax のopaque sessionへ収容
   - MatchDOのserver-owned assignmentからだけ30秒・一回限りのseat tokenを発行し、最初のauth frameで消費
-  - unsafe HTTP/WebSocketはOriginを認証・DB照会より先に検査。logout後commandはsession versionで拒否
+  - unsafe HTTP/WebSocketはOriginを認証・DB照会より先に検査。logoutはDB失効後に関連MatchDOへ
+    version付きinvalidateを送りACKを待ち、DOの処理順でinvalidate後commandを拒否
 
 ### Step C: MatchDO の中核（OLG-121 → OLG-123 → OLG-122 → OLG-125 → OLG-124）
 

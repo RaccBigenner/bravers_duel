@@ -17,7 +17,7 @@
     "test:migration": "node --test scripts/migrate-card-identities.test.mjs",
     "test:publish": "node --test scripts/publish-card-set.test.mjs",
     "test:online-local": "node --test scripts/run-local-online.test.mjs scripts/verify-local-guest-account.test.mjs",
-    "test:online-schema": "node --test scripts/guest-account-migration.test.mjs",
+    "test:online-schema": "node --test scripts/guest-account-migration.test.mjs scripts/secure-session-migration.test.mjs",
     "sim": "npm --workspace engine run sim --",
     "dev": "npm --workspace web run dev",
     "build": "npm --workspace web run build",

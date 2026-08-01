@@ -170,14 +170,35 @@ select ok(
 
 create temporary table olg111_guest_test_ids (
   scenario text primary key,
-  id uuid not null unique
+  id uuid not null unique,
+  attempt_id uuid,
+  claim_id uuid
 ) on commit drop;
 insert into olg111_guest_test_ids values
-  ('normal', gen_random_uuid()),
-  ('rollback', gen_random_uuid());
+  ('normal', gen_random_uuid(), null, null),
+  ('rollback', gen_random_uuid(), null, null);
 
-insert into auth.users (id, is_anonymous)
-select id, true
+update olg111_guest_test_ids
+set attempt_id = (
+  public.create_guest_bootstrap_attempt(
+    case scenario when 'normal' then repeat('11', 32) else repeat('22', 32) end,
+    1::smallint,
+    1::smallint
+  ) ->> 'attempt_id'
+)::uuid;
+update olg111_guest_test_ids
+set claim_id = (
+  public.claim_guest_bootstrap_attempt(
+    case scenario when 'normal' then repeat('11', 32) else repeat('22', 32) end,
+    1::smallint
+  ) ->> 'claim_id'
+)::uuid;
+
+insert into auth.users (id, is_anonymous, raw_user_meta_data)
+select id, true, jsonb_build_object(
+  'guest_bootstrap_attempt_id', attempt_id,
+  'guest_bootstrap_claim_id', claim_id
+)
 from olg111_guest_test_ids
 where scenario = 'normal';
 select results_eq(
@@ -227,9 +248,19 @@ create trigger zzz_olg111_test_reject_account_insert
 
 select throws_ok(
   format(
-    'insert into auth.users (id, is_anonymous) values (%L::uuid, true)',
+    'insert into auth.users (id, is_anonymous, raw_user_meta_data) values (%L::uuid, true, jsonb_build_object(''guest_bootstrap_attempt_id'', %L::uuid, ''guest_bootstrap_claim_id'', %L::uuid))',
     (
       select id::text
+      from pg_temp.olg111_guest_test_ids
+      where scenario = 'rollback'
+    ),
+    (
+      select attempt_id::text
+      from pg_temp.olg111_guest_test_ids
+      where scenario = 'rollback'
+    ),
+    (
+      select claim_id::text
       from pg_temp.olg111_guest_test_ids
       where scenario = 'rollback'
     )

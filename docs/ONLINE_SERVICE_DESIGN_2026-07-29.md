@@ -1442,7 +1442,10 @@ LINE/Googleのメールが同じでも、自動でアカウント統合しない
   server-only列へ置く。HMAC鍵と暗号鍵は別のWorkers Secretとし、browser、URL、logへ出さない
 - sessionは最終活動から90日、絶対365日を初期上限とし、DB時刻で判定する。cookieの
   `Max-Age`は90日で活動中に更新する。失効、期限切れ、重複cookieは同じ401へ潰し、
-  高価値操作、鍵更新、絶対期限の前にはcredentialを回転または再認証する
+  高価値操作、鍵更新、絶対期限の前にはcredentialを回転または再認証する。初期sliceでは
+  暗号/HMAC鍵のactive+retained keyringまでを実装し、online credential回転は行わない。
+  回転を開く前に`PENDING`発行→最初のresolveで昇格する二段階方式等で、応答の到着順が逆転しても
+  新credentialを旧応答で上書きできないことを固定する
 - `POST /auth/bootstrap`はaccountを作らず、10分だけ有効なbootstrap attemptを先に作る。
   `POST /auth/guest`はそのHttpOnly cookieのHMAC digestで行をlockし、30秒leaseを取ってから
   anonymous signupする。同じbootstrapの並行/再送は1件へ直列化し、処理中は`202`と
@@ -1470,8 +1473,10 @@ LINE/Googleのメールが同じでも、自動でアカウント統合しない
 - 交換、認証手段の追加/削除、アカウント削除には直近再認証
 - 最後の回復可能な認証手段は削除不可
 - 新規認証リンク直後の高価値交換にクールダウン
-- ログアウトはsession versionを上げて失効し、関連MatchDOへcloseを通知する。通知との競合や
-  Worker中断があっても、各command直前にDBのsession/versionを再確認して盤面変更を拒否する
+- ログアウトはDBでsession versionを上げて失効した後、関連MatchDOへversion付きinvalidateを送り、
+  各DOのACKを待つ。DOのsingle-thread順序でinvalidateより後のcommandを拒否し、既にそのDOで
+  linearize済みのcommandだけは完了し得る。新規接続/再接続はDBのsession/versionをfail closedで
+  検査するが、各commandのDB照会だけをlogoutとの排他制御とはみなさない
 
 `guest_bootstrap_attempt`、`app_session`、session credentialはRLSを有効化するだけでなく、
 `anon`/`authenticated`/`service_role`の直接table権限を外す。空`search_path`の限定
@@ -2282,14 +2287,15 @@ battle.event.damage
 ### 15.1 API/WebSocket
 
 - exact Origin allowlistをsession/DB照会より先に検査。unsafe HTTPはsame-origin JSONと固定headerも必須
-- handshakeではsession、最初のauth frameでは一回限りseat token、各commandではsession versionと
-  seatを再検証する。認証完了前はゲーム情報を送らない
+- handshakeではsession、最初のauth frameでは一回限りseat tokenを検証し、各commandはDO内の
+  認証済みsession versionとseatに結び付ける。認証完了前はゲーム情報を送らない
 - payload schema検証
 - 64KB以下を目安にメッセージサイズ制限
 - ユーザー/IP別rate limit
 - 1ユーザーの接続数制限
 - heartbeatとidle timeout
-- セッション失効時にMatchDOへclose通知し、通知競合中のcommandもDB再検証で拒否
+- セッション失効後は関連MatchDOへversion付きinvalidateを送りACKを待つ。DOの処理順で
+  invalidate後のcommandを拒否し、新規接続/再接続はDB versionをfail closedで検査する
 - bootstrap/session/seat token、cookie、Supabase access/refresh tokenをURL、log、trace、close reasonへ出さない
 - 接続、拒否、異常切断、rate limitを監査
 

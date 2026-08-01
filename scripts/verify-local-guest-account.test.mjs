@@ -6,6 +6,8 @@ import {
 } from './verify-local-guest-account.mjs';
 
 const ACCOUNT_ID = '11111111-2222-4333-8444-555555555555';
+const ATTEMPT_ID = '22222222-3333-4444-8555-666666666666';
+const CLAIM_ID = '33333333-4444-4555-8666-777777777777';
 const PUBLISHABLE_KEY = 'sb_publishable_local-test';
 const SECRET_KEY = 'sb_secret_local-test';
 const STATUS = {
@@ -38,9 +40,12 @@ function clients({
   directError = { code: '42501' },
 } = {}) {
   let serviceRead = 0;
+  const signupCalls = [];
+  const rpcCalls = [];
   const guestClient = {
     auth: {
-      async signInAnonymously() {
+      async signInAnonymously(input) {
+        signupCalls.push(input);
         return {
           data: {
             user: { id: ACCOUNT_ID, is_anonymous: true },
@@ -59,6 +64,19 @@ function clients({
     },
   };
   const adminClient = {
+    async rpc(name, params) {
+      rpcCalls.push({ name, params });
+      if (name === 'create_guest_bootstrap_attempt') {
+        return { data: { state: 'created', attempt_id: ATTEMPT_ID }, error: null };
+      }
+      if (name === 'claim_guest_bootstrap_attempt') {
+        return {
+          data: { state: 'create_auth', attempt_id: ATTEMPT_ID, claim_id: CLAIM_ID },
+          error: null,
+        };
+      }
+      throw new Error('unexpected RPC');
+    },
     auth: {
       admin: {
         async deleteUser() {
@@ -71,7 +89,7 @@ function clients({
     },
   };
   const createClientImpl = (_url, key) => (key === PUBLISHABLE_KEY ? guestClient : adminClient);
-  return { createClientImpl, guestClient, adminClient };
+  return { createClientImpl, guestClient, adminClient, signupCalls, rpcCalls };
 }
 
 describe('OLG-111 local guest account live smoke', () => {
@@ -103,6 +121,18 @@ describe('OLG-111 local guest account live smoke', () => {
     const fixture = clients();
     const result = await verifyLocalGuestAccount(STATUS, fixture);
     assert.deepEqual(result, { accountId: ACCOUNT_ID });
+    assert.deepEqual(fixture.rpcCalls.map((call) => call.name), [
+      'create_guest_bootstrap_attempt',
+      'claim_guest_bootstrap_attempt',
+    ]);
+    assert.deepEqual(fixture.signupCalls, [{
+      options: {
+        data: {
+          guest_bootstrap_attempt_id: ATTEMPT_ID,
+          guest_bootstrap_claim_id: CLAIM_ID,
+        },
+      },
+    }]);
   });
 
   it('account root欠損でも作成済みAuth userを後始末し、秘密を例外へ出さない', async () => {
@@ -170,7 +200,7 @@ describe('OLG-111 local guest account live smoke', () => {
     assert.ok(Date.now() - startedAt < 250);
   });
 
-  it('Auth responseのbodyが止まっても同じrequest deadlineで停止する', async () => {
+  it('Supabase responseのbodyが止まっても同じrequest deadlineで停止する', async () => {
     const response = new Response(new ReadableStream({ start() {} }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
@@ -182,7 +212,7 @@ describe('OLG-111 local guest account live smoke', () => {
         fetchImpl: async () => response,
         requestTimeoutMs: 5,
       }),
-      /(?:request timeout|匿名signup応答が不正)/,
+      /(?:request timeout|bootstrap create timeout|匿名signup応答が不正)/,
     );
     assert.ok(Date.now() - startedAt < 250);
   });

@@ -9,6 +9,8 @@ const ACCOUNT_ID = '11111111-2222-4333-8444-555555555555';
 const ACCESS_TOKEN = 'access-token-sentinel';
 const REFRESH_TOKEN = 'refresh-token-sentinel';
 const EXPIRES_AT = 4_102_444_800;
+const ATTEMPT_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+const CLAIM_ID = 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff';
 
 const localCredential: AuthServerCredential = {
   environment: 'local',
@@ -17,6 +19,13 @@ const localCredential: AuthServerCredential = {
   keyMode: 'publishable',
   forwardClientIp: false,
 };
+
+function guestInput(extra: { captchaToken?: string; trustedClientIp?: string } = {}) {
+  return {
+    guestBootstrap: { attemptId: ATTEMPT_ID, claimId: CLAIM_ID },
+    ...extra,
+  };
+}
 
 function successBody(overrides: Record<string, unknown> = {}) {
   const user = {
@@ -45,12 +54,12 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 describe('OLG-111 Supabase anonymous principal provider', () => {
-  it('request-scoped clientで匿名grantを作り、captchaだけをAuthへ渡す', async () => {
+  it('request-scoped clientで匿名grantを作り、claim metadataとcaptchaだけをAuthへ渡す', async () => {
     const fetchMock = vi.fn(async () => jsonResponse(successBody()));
 
     const grant = await createAnonymousPrincipal(
       localCredential,
-      { captchaToken: 'turnstile-token' },
+      guestInput({ captchaToken: 'turnstile-token' }),
       { fetch: fetchMock },
     );
 
@@ -65,9 +74,40 @@ describe('OLG-111 Supabase anonymous principal provider', () => {
     expect(requestUrl).toBe('http://127.0.0.1:54321/auth/v1/signup');
     expect(init.method).toBe('POST');
     expect(JSON.parse(String(init.body))).toEqual({
-      data: {},
+      data: {
+        guest_bootstrap_attempt_id: ATTEMPT_ID,
+        guest_bootstrap_claim_id: CLAIM_ID,
+      },
       gotrue_meta_security: { captcha_token: 'turnstile-token' },
     });
+  });
+
+  it.each([
+    ['metadata欠損', {}],
+    [
+      '非canonical attempt ID',
+      {
+        guestBootstrap: {
+          attemptId: ATTEMPT_ID.toUpperCase(),
+          claimId: CLAIM_ID,
+        },
+      },
+    ],
+    [
+      '不正なclaim ID',
+      {
+        guestBootstrap: {
+          attemptId: ATTEMPT_ID,
+          claimId: 'not-a-claim',
+        },
+      },
+    ],
+  ])('%sではAuth requestを始めない', async (_label, input) => {
+    const fetchMock = vi.fn(async () => jsonResponse(successBody()));
+    await expect(
+      createAnonymousPrincipal(localCredential, input as never, { fetch: fetchMock }),
+    ).rejects.toMatchObject({ code: 'AUTH_CONFIG_INVALID', safeToRetry: false });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('production IP forwardingはsb_secretと信頼済み単一IPの組だけ許可する', async () => {
@@ -82,7 +122,7 @@ describe('OLG-111 Supabase anonymous principal provider', () => {
 
     await createAnonymousPrincipal(
       credential,
-      { trustedClientIp: '203.0.113.8' },
+      guestInput({ trustedClientIp: '203.0.113.8' }),
       { fetch: fetchMock },
     );
 
@@ -98,13 +138,13 @@ describe('OLG-111 Supabase anonymous principal provider', () => {
           keyMode: 'publishable',
           forwardClientIp: false,
         },
-        { trustedClientIp: '203.0.113.8' },
+        guestInput({ trustedClientIp: '203.0.113.8' }),
         { fetch: fetchMock },
       ),
     ).rejects.toMatchObject({ code: 'AUTH_CONFIG_INVALID' });
     await createAnonymousPrincipal(
       credential,
-      { trustedClientIp: '2001:db8::8' },
+      guestInput({ trustedClientIp: '2001:db8::8' }),
       { fetch: fetchMock },
     );
     const [, ipv6Init] = fetchMock.mock.calls.at(-1) as unknown as [string, RequestInit];
@@ -112,21 +152,21 @@ describe('OLG-111 Supabase anonymous principal provider', () => {
     await expect(
       createAnonymousPrincipal(
         credential,
-        { trustedClientIp: '1:::2' },
+        guestInput({ trustedClientIp: '1:::2' }),
         { fetch: fetchMock },
       ),
     ).rejects.toMatchObject({ code: 'AUTH_CONFIG_INVALID' });
     await expect(
       createAnonymousPrincipal(
         credential,
-        { trustedClientIp: '203.000.113.8' },
+        guestInput({ trustedClientIp: '203.000.113.8' }),
         { fetch: fetchMock },
       ),
     ).rejects.toMatchObject({ code: 'AUTH_CONFIG_INVALID' });
     await expect(
       createAnonymousPrincipal(
         credential,
-        { trustedClientIp: '203.0.113.8, 198.51.100.4' },
+        guestInput({ trustedClientIp: '203.0.113.8, 198.51.100.4' }),
         { fetch: fetchMock },
       ),
     ).rejects.toMatchObject({ code: 'AUTH_CONFIG_INVALID' });
@@ -140,7 +180,7 @@ describe('OLG-111 Supabase anonymous principal provider', () => {
           forwardClientIp: true,
           supabaseUrl: 'http://127.0.0.1:54321',
         },
-        { trustedClientIp: '203.0.113.8' },
+        guestInput({ trustedClientIp: '203.0.113.8' }),
         { fetch: fetchMock },
       ),
     ).rejects.toMatchObject({ code: 'AUTH_CONFIG_INVALID' });
@@ -159,7 +199,7 @@ describe('OLG-111 Supabase anonymous principal provider', () => {
 
     let failure: unknown;
     try {
-      await createAnonymousPrincipal(localCredential, {}, { fetch: fetchMock });
+      await createAnonymousPrincipal(localCredential, guestInput(), { fetch: fetchMock });
     } catch (error) {
       failure = error;
     }
@@ -193,7 +233,7 @@ describe('OLG-111 Supabase anonymous principal provider', () => {
     const fetchMock = vi.fn(async () => jsonResponse(successBody(overrides)));
 
     await expect(
-      createAnonymousPrincipal(localCredential, {}, { fetch: fetchMock }),
+      createAnonymousPrincipal(localCredential, guestInput(), { fetch: fetchMock }),
     ).rejects.toMatchObject({ code: 'AUTH_RESPONSE_INVALID' });
   });
 
@@ -203,7 +243,7 @@ describe('OLG-111 Supabase anonymous principal provider', () => {
     });
 
     await expect(
-      createAnonymousPrincipal(localCredential, {}, { fetch: fetchMock }),
+      createAnonymousPrincipal(localCredential, guestInput(), { fetch: fetchMock }),
     ).rejects.toMatchObject({ code: 'AUTH_UNAVAILABLE', safeToRetry: false });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -225,7 +265,7 @@ describe('OLG-111 Supabase anonymous principal provider', () => {
     );
 
     await expect(
-      createAnonymousPrincipal(localCredential, {}, { fetch: fetchMock, timeoutMs: 5 }),
+      createAnonymousPrincipal(localCredential, guestInput(), { fetch: fetchMock, timeoutMs: 5 }),
     ).rejects.toMatchObject({ code: 'AUTH_UNAVAILABLE', safeToRetry: false });
     expect(aborted).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -236,7 +276,7 @@ describe('OLG-111 Supabase anonymous principal provider', () => {
     const startedAt = Date.now();
 
     await expect(
-      createAnonymousPrincipal(localCredential, {}, { fetch: fetchMock, timeoutMs: 5 }),
+      createAnonymousPrincipal(localCredential, guestInput(), { fetch: fetchMock, timeoutMs: 5 }),
     ).rejects.toMatchObject({ code: 'AUTH_UNAVAILABLE', safeToRetry: false });
     expect(Date.now() - startedAt).toBeLessThan(250);
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -249,7 +289,7 @@ describe('OLG-111 Supabase anonymous principal provider', () => {
     const startedAt = Date.now();
 
     await expect(
-      createAnonymousPrincipal(localCredential, {}, { fetch: fetchMock, timeoutMs: 5 }),
+      createAnonymousPrincipal(localCredential, guestInput(), { fetch: fetchMock, timeoutMs: 5 }),
     ).rejects.toMatchObject({ code: 'AUTH_UNAVAILABLE', safeToRetry: false });
     expect(Date.now() - startedAt).toBeLessThan(250);
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -261,7 +301,7 @@ describe('OLG-111 Supabase anonymous principal provider', () => {
     const fetchMock = vi.fn(async () => jsonResponse(successBody()));
 
     await expect(
-      createAnonymousPrincipal(localCredential, {}, { fetch: fetchMock, signal: controller.signal }),
+      createAnonymousPrincipal(localCredential, guestInput(), { fetch: fetchMock, signal: controller.signal }),
     ).rejects.toMatchObject({ code: 'AUTH_UNAVAILABLE', safeToRetry: false });
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -272,7 +312,7 @@ describe('OLG-111 Supabase anonymous principal provider', () => {
     );
 
     await expect(
-      createAnonymousPrincipal(localCredential, {}, { fetch: fetchMock }),
+      createAnonymousPrincipal(localCredential, guestInput(), { fetch: fetchMock }),
     ).rejects.toMatchObject({
       code: 'AUTH_UNAVAILABLE',
       safeToRetry: false,
