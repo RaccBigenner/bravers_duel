@@ -21,6 +21,16 @@ import {
   type MatchSessionPrincipal,
   type SeatTokenIssueResult,
 } from '../src/match/matchDurableObject';
+import type {
+  SessionCoordinatorPort,
+  SessionMatchMembershipStatus,
+  SessionNpcMatchReservationResult,
+} from '../src/session/sessionCoordinatorDurableObject';
+
+type TestNpcBattleStartResult =
+  | { state: 'ready'; created: boolean }
+  | { state: 'conflict' }
+  | { state: 'unavailable' };
 
 const ORIGIN = 'http://127.0.0.1:8787';
 const REMOTE_ORIGIN = 'https://play.racc.games';
@@ -78,6 +88,12 @@ const principal: SessionPrincipal = {
   absoluteExpiresAt: '2027-08-01T00:00:00Z',
 };
 
+const matchPrincipal: MatchSessionPrincipal = {
+  sessionId: SESSION_ID,
+  accountId: ACCOUNT_ID,
+  sessionVersion: 3,
+};
+
 function fakeStore(overrides: Partial<SessionStore> = {}): SessionStore {
   return {
     createBootstrap: vi.fn(async () => ({ attemptId: SESSION_ID })),
@@ -109,15 +125,44 @@ function testFlow(
   const fetchMatch = vi.fn(
     async (_request: Request): Promise<Response> => new Response(null, { status: 204 }),
   );
+  const startNpcBattle = vi.fn(async (): Promise<TestNpcBattleStartResult> => ({
+    state: 'ready' as const,
+    created: true,
+  }));
+  const checkMatchMembership = vi.fn(
+    async (): Promise<SessionMatchMembershipStatus> => ({ state: 'registered' }),
+  );
+  const reserveNpcMatch = vi.fn(async (): Promise<SessionNpcMatchReservationResult> => ({
+    state: 'reserved' as const,
+    matchId: 'npc-11111111-2222-4333-8444-555555555555',
+    seed: 0x1234_5678,
+    created: true,
+  }));
+  const coordinator = {
+    registerMatch: vi.fn(),
+    checkMatch: vi.fn(),
+    checkMatchMembership,
+    reserveNpcMatch,
+    releaseNpcMatch: vi.fn(),
+    unregisterMatch: vi.fn(),
+    prepareLogout: vi.fn(),
+    confirmLogout: vi.fn(),
+    invalidateSession: vi.fn(),
+  } as unknown as SessionCoordinatorPort;
+  const coordinatorStub = vi.fn(
+    (_bindings: MatchAccessBindings, _sessionId: string) => coordinator,
+  );
   const matchStub = vi.fn(
     (_bindings: MatchAccessBindings, _matchId: string) => ({
       issueSeatToken,
+      startNpcBattle,
       fetch: fetchMatch,
     }),
   );
   const dependencies = {
     publicPortEnabled,
     createStore,
+    coordinatorStub,
     matchStub,
   } satisfies MatchAccessDependencies;
 
@@ -125,8 +170,12 @@ function testFlow(
     handle: createMatchAccessRequestHandler(dependencies),
     createStore,
     issueSeatToken,
+    startNpcBattle,
     fetchMatch,
     matchStub,
+    coordinatorStub,
+    checkMatchMembership,
+    reserveNpcMatch,
   };
 }
 
@@ -161,6 +210,10 @@ function seatRequest(options: SeatRequestOptions = {}): Request {
   });
 }
 
+function npcStartRequest(options: SeatRequestOptions = {}): Request {
+  return seatRequest({ ...options, path: options.path ?? '/matches/npc' });
+}
+
 interface WebSocketRequestOptions {
   path?: string;
   origin?: string | null;
@@ -186,7 +239,7 @@ function webSocketRequest(options: WebSocketRequestOptions = {}): Request {
   });
 }
 
-describe('OLG-113 match access controller', () => {
+describe('OLG-113/121 match access controller', () => {
   it('Origin/Fetch Metadata/header/body/queryをDB・DOより先に拒否する', async () => {
     const flow = testFlow();
     const cases: Array<[string, Request, number]> = [
@@ -199,6 +252,11 @@ describe('OLG-113 match access controller', () => {
       ['client指定seat', seatRequest({ body: '{"seat":"player-1"}' }), 400],
       ['object以外', seatRequest({ body: '[]' }), 400],
       ['body上限超過', seatRequest({ body: 'a'.repeat(4_097) }), 413],
+      ['NPC戦のclient指定seed', npcStartRequest({ body: '{"seed":1}' }), 400],
+      ['NPC戦のclient指定deck', npcStartRequest({ body: '{"deck":[]}' }), 400],
+      ['NPC戦のclient指定matchId', npcStartRequest({ body: '{"matchId":"chosen"}' }), 400],
+      ['NPC戦のclient指定version', npcStartRequest({ body: '{"version":"old"}' }), 400],
+      ['query付きNPC戦開始', npcStartRequest({ path: '/matches/npc?matchId=chosen' }), 403],
       [
         'query付きWebSocket',
         webSocketRequest({ path: '/matches/battle_1/ws?seatToken=raw' }),
@@ -213,8 +271,10 @@ describe('OLG-113 match access controller', () => {
       expect(response?.status, label).toBe(status);
     }
     expect(flow.createStore).not.toHaveBeenCalled();
+    expect(flow.coordinatorStub).not.toHaveBeenCalled();
     expect(flow.matchStub).not.toHaveBeenCalled();
     expect(flow.issueSeatToken).not.toHaveBeenCalled();
+    expect(flow.startNpcBattle).not.toHaveBeenCalled();
     expect(flow.fetchMatch).not.toHaveBeenCalled();
   });
 
@@ -222,6 +282,7 @@ describe('OLG-113 match access controller', () => {
     const flow = testFlow(fakeStore(), false);
 
     const seat = await flow.handle(seatRequest(), localBindings());
+    const start = await flow.handle(npcStartRequest(), localBindings());
     const socket = await flow.handle(webSocketRequest(), localBindings());
     const nearSmoke = await flow.handle(
       webSocketRequest({ path: '/matches/local-smoke2/ws' }),
@@ -240,15 +301,130 @@ describe('OLG-113 match access controller', () => {
     );
 
     expect(seat?.status).toBe(404);
+    expect(start?.status).toBe(404);
     expect(socket?.status).toBe(404);
     expect(nearSmoke?.status).toBe(404);
     expect(remoteSmoke?.status).toBe(404);
     expect(exactSmoke?.status).toBe(204);
     expect(flow.createStore).not.toHaveBeenCalled();
+    expect(flow.coordinatorStub).not.toHaveBeenCalled();
     expect(flow.matchStub).toHaveBeenCalledTimes(1);
     expect(flow.matchStub).toHaveBeenCalledWith(expect.anything(), 'local-smoke');
     expect(flow.fetchMatch).toHaveBeenCalledTimes(1);
     expect(flow.issueSeatToken).not.toHaveBeenCalled();
+    expect(flow.startNpcBattle).not.toHaveBeenCalled();
+  });
+
+  it('NPC戦開始はserver予約のmatch ID/seedだけを使い、応答へmatch ID以外を出さない', async () => {
+    const store = fakeStore({
+      resolveSessionCandidates: vi.fn(async () => principal),
+    });
+    const flow = testFlow(store);
+    const request = () => npcStartRequest({
+      cookie: `bd_session_local=${SESSION_TOKEN}`,
+      body: '{}',
+    });
+
+    const created = await flow.handle(request(), localBindings());
+    flow.startNpcBattle.mockResolvedValueOnce({ state: 'ready', created: false });
+    const retried = await flow.handle(request(), localBindings());
+
+    const expectedMatchId = 'npc-11111111-2222-4333-8444-555555555555';
+    expect(created?.status).toBe(201);
+    expect(retried?.status).toBe(200);
+    expect(await created?.json()).toEqual({ matchId: expectedMatchId });
+    expect(await retried?.json()).toEqual({ matchId: expectedMatchId });
+    expect(flow.reserveNpcMatch).toHaveBeenCalledTimes(2);
+    expect(flow.reserveNpcMatch).toHaveBeenCalledWith({
+      sessionId: SESSION_ID,
+      accountId: ACCOUNT_ID,
+      sessionVersion: 3,
+    });
+    expect(flow.matchStub).toHaveBeenCalledWith(expect.anything(), expectedMatchId);
+    expect(flow.startNpcBattle).toHaveBeenCalledWith({
+      principal: matchPrincipal,
+      seed: 0x1234_5678,
+    });
+    expect(flow.createStore.mock.invocationCallOrder[0]).toBeLessThan(
+      flow.coordinatorStub.mock.invocationCallOrder[0]!,
+    );
+    expect(flow.coordinatorStub.mock.invocationCallOrder[0]).toBeLessThan(
+      flow.reserveNpcMatch.mock.invocationCallOrder[0]!,
+    );
+    expect(flow.reserveNpcMatch.mock.invocationCallOrder[0]).toBeLessThan(
+      flow.matchStub.mock.invocationCallOrder[0]!,
+    );
+    expect(flow.matchStub.mock.invocationCallOrder[0]).toBeLessThan(
+      flow.startNpcBattle.mock.invocationCallOrder[0]!,
+    );
+    const serialized = JSON.stringify(await (await flow.handle(request(), localBindings()))?.json());
+    expect(serialized).not.toContain(String(0x1234_5678));
+    expect(serialized).not.toContain(ACCOUNT_ID);
+    expect(serialized).not.toContain(SESSION_ID);
+  });
+
+  it('NPC予約の失効・競合とMatchDO runtime欠落を一般化して返す', async () => {
+    const store = fakeStore({
+      resolveSessionCandidates: vi.fn(async () => principal),
+    });
+
+    const invalidated = testFlow(store);
+    invalidated.reserveNpcMatch.mockResolvedValue({
+      state: 'invalidated',
+      invalidatedVersion: 4,
+    });
+    const invalidatedResponse = await invalidated.handle(
+      npcStartRequest({ cookie: `bd_session_local=${SESSION_TOKEN}` }),
+      localBindings(),
+    );
+    expect(invalidatedResponse?.status).toBe(401);
+    expect(invalidatedResponse?.headers.get('Set-Cookie')).toContain('bd_session_local=;');
+    expect(invalidated.matchStub).not.toHaveBeenCalled();
+
+    const conflict = testFlow(store);
+    conflict.reserveNpcMatch.mockResolvedValue({ state: 'conflict' });
+    const conflictResponse = await conflict.handle(
+      npcStartRequest({ cookie: `bd_session_local=${SESSION_TOKEN}` }),
+      localBindings(),
+    );
+    expect(conflictResponse?.status).toBe(409);
+    expect(await conflictResponse?.json()).toEqual({ error: 'MATCH_START_CONFLICT' });
+    expect(conflict.matchStub).not.toHaveBeenCalled();
+
+    const unavailableFlow = testFlow(store);
+    unavailableFlow.startNpcBattle.mockResolvedValue({ state: 'unavailable' });
+    const unavailableResponse = await unavailableFlow.handle(
+      npcStartRequest({ cookie: `bd_session_local=${SESSION_TOKEN}` }),
+      localBindings(),
+    );
+    expect(unavailableResponse?.status).toBe(503);
+    expect(await unavailableResponse?.json()).toEqual({ error: 'MATCH_STATE_UNAVAILABLE' });
+
+    const malformedReservation = testFlow(store);
+    malformedReservation.reserveNpcMatch.mockResolvedValue({
+      state: 'reserved',
+      matchId: 'client-chosen',
+      seed: -1,
+      created: true,
+    } as never);
+    const malformedReservationResponse = await malformedReservation.handle(
+      npcStartRequest({ cookie: `bd_session_local=${SESSION_TOKEN}` }),
+      localBindings(),
+    );
+    expect(malformedReservationResponse?.status).toBe(503);
+    expect(malformedReservation.matchStub).not.toHaveBeenCalled();
+
+    const malformedStart = testFlow(store);
+    malformedStart.startNpcBattle.mockResolvedValue({
+      state: 'ready',
+      created: 'yes',
+    } as never);
+    const malformedStartResponse = await malformedStart.handle(
+      npcStartRequest({ cookie: `bd_session_local=${SESSION_TOKEN}` }),
+      localBindings(),
+    );
+    expect(malformedStartResponse?.status).toBe(503);
+    expect(await malformedStartResponse?.json()).toEqual({ error: 'MATCH_ACCESS_UNAVAILABLE' });
   });
 
   it('enabled時もmissing/invalid/revoked/ambiguous sessionをassignment前に拒否する', async () => {
@@ -293,12 +469,51 @@ describe('OLG-113 match access controller', () => {
     expect(ambiguousFlow.matchStub).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['seat-token', () => seatRequest({ cookie: `bd_session_local=${SESSION_TOKEN}` })],
+    ['WebSocket', () => webSocketRequest({ cookie: `bd_session_local=${SESSION_TOKEN}` })],
+  ])('%sはmembership registered確認前にMatchDO stubを取得しない', async (_label, request) => {
+    const store = fakeStore({
+      resolveSessionCandidates: vi.fn(async () => principal),
+    });
+
+    const missing = testFlow(store);
+    missing.checkMatchMembership.mockResolvedValue({ state: 'missing' });
+    const missingResponse = await missing.handle(request(), localBindings());
+    expect(missingResponse?.status).toBe(404);
+    expect(missing.matchStub).not.toHaveBeenCalled();
+
+    const invalidated = testFlow(store);
+    invalidated.checkMatchMembership.mockResolvedValue({
+      state: 'invalidated',
+      invalidatedVersion: 4,
+    });
+    const invalidatedResponse = await invalidated.handle(request(), localBindings());
+    expect(invalidatedResponse?.status).toBe(401);
+    expect(invalidatedResponse?.headers.get('Set-Cookie')).toContain('bd_session_local=;');
+    expect(invalidated.matchStub).not.toHaveBeenCalled();
+
+    const failed = testFlow(store);
+    failed.checkMatchMembership.mockRejectedValue(new Error('coordinator unavailable'));
+    const failedResponse = await failed.handle(request(), localBindings());
+    expect(failedResponse?.status).toBe(503);
+    expect(await failedResponse?.json()).toEqual({ error: 'MATCH_ACCESS_UNAVAILABLE' });
+    expect(failed.matchStub).not.toHaveBeenCalled();
+
+    const malformed = testFlow(store);
+    malformed.checkMatchMembership.mockResolvedValue({ state: 'unknown' } as never);
+    const malformedResponse = await malformed.handle(request(), localBindings());
+    expect(malformedResponse?.status).toBe(503);
+    expect(await malformedResponse?.json()).toEqual({ error: 'MATCH_ACCESS_UNAVAILABLE' });
+    expect(malformed.matchStub).not.toHaveBeenCalled();
+  });
+
   it('assignment成功時だけraw seat tokenを201/no-storeで返し他credentialを露出しない', async () => {
     const store = fakeStore({
       resolveSessionCandidates: vi.fn(async () => principal),
     });
     const flow = testFlow(store);
-    const expiresAtEpochMs = Date.parse('2026-08-01T09:00:30.000Z');
+    const expiresAtEpochMs = Date.now() + 30_000;
     flow.issueSeatToken.mockResolvedValue({
       state: 'issued',
       seatToken: SEAT_TOKEN,
@@ -318,16 +533,25 @@ describe('OLG-113 match access controller', () => {
     expect(response?.headers.get('Set-Cookie')).toBeNull();
     expect(body).toEqual({
       seatToken: SEAT_TOKEN,
-      expiresAt: '2026-08-01T09:00:30.000Z',
+      expiresAt: new Date(expiresAtEpochMs).toISOString(),
     });
     const serialized = JSON.stringify(body);
     expect(serialized).not.toContain(SESSION_TOKEN);
     expect(serialized).not.toContain(ACCOUNT_ID);
     expect(serialized).not.toContain(SESSION_ID);
     expect(serialized).not.toContain(String(localBindings().SESSION_HMAC_KEYS));
-    expect(flow.issueSeatToken).toHaveBeenCalledWith(principal);
+    expect(flow.issueSeatToken).toHaveBeenCalledWith(matchPrincipal);
     expect(flow.createStore.mock.invocationCallOrder[0]).toBeLessThan(
+      flow.coordinatorStub.mock.invocationCallOrder[0]!,
+    );
+    expect(flow.coordinatorStub.mock.invocationCallOrder[0]).toBeLessThan(
+      flow.checkMatchMembership.mock.invocationCallOrder[0]!,
+    );
+    expect(flow.checkMatchMembership.mock.invocationCallOrder[0]).toBeLessThan(
       flow.matchStub.mock.invocationCallOrder[0]!,
+    );
+    expect(flow.matchStub.mock.invocationCallOrder[0]).toBeLessThan(
+      flow.issueSeatToken.mock.invocationCallOrder[0]!,
     );
   });
 
@@ -355,6 +579,26 @@ describe('OLG-113 match access controller', () => {
     expect(rateLimited?.status).toBe(429);
     expect(rateLimited?.headers.get('Retry-After')).toBe('1');
     expect(await rateLimited?.json()).toEqual({ error: 'MATCH_ACCESS_RATE_LIMITED' });
+
+    flow.issueSeatToken.mockResolvedValue({ state: 'unknown' } as never);
+    const unknown = await flow.handle(
+      seatRequest({ cookie: `bd_session_local=${SESSION_TOKEN}` }),
+      localBindings(),
+    );
+    expect(unknown?.status).toBe(503);
+    expect(await unknown?.json()).toEqual({ error: 'MATCH_ACCESS_UNAVAILABLE' });
+
+    flow.issueSeatToken.mockResolvedValue({
+      state: 'issued',
+      seatToken: 'not-an-opaque-token',
+      expiresAtEpochMs: Date.now() + 30_000,
+    });
+    const malformed = await flow.handle(
+      seatRequest({ cookie: `bd_session_local=${SESSION_TOKEN}` }),
+      localBindings(),
+    );
+    expect(malformed?.status).toBe(503);
+    expect(JSON.stringify(await malformed?.json())).not.toContain('not-an-opaque-token');
   });
 
   it('WebSocketはbrowser custom header不要で、外部credential/spoofを捨ててresolved principalだけ渡す', async () => {
@@ -380,6 +624,23 @@ describe('OLG-113 match access controller', () => {
     expect(response?.status).toBe(204);
     expect(flow.fetchMatch).toHaveBeenCalledOnce();
     expect(flow.issueSeatToken).not.toHaveBeenCalled();
+    expect(flow.checkMatchMembership).toHaveBeenCalledWith({
+      sessionId: SESSION_ID,
+      sessionVersion: 3,
+      matchId: 'battle_1',
+    });
+    expect(flow.createStore.mock.invocationCallOrder[0]).toBeLessThan(
+      flow.coordinatorStub.mock.invocationCallOrder[0]!,
+    );
+    expect(flow.coordinatorStub.mock.invocationCallOrder[0]).toBeLessThan(
+      flow.checkMatchMembership.mock.invocationCallOrder[0]!,
+    );
+    expect(flow.checkMatchMembership.mock.invocationCallOrder[0]).toBeLessThan(
+      flow.matchStub.mock.invocationCallOrder[0]!,
+    );
+    expect(flow.matchStub.mock.invocationCallOrder[0]).toBeLessThan(
+      flow.fetchMatch.mock.invocationCallOrder[0]!,
+    );
 
     const forwarded = flow.fetchMatch.mock.calls[0]![0];
     expect(forwarded.method).toBe('GET');

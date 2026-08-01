@@ -65,10 +65,12 @@ npm run dev:online
 - Supabaseを使わずWorker/MatchDOだけ診断: `npm run smoke:online -- --worker-only`
 - 手動起動などで残したローカルSupabaseを停止: `npm run stop:online`
 
-`local-smoke` WebSocketだけはOLG-102の疎通確認用`probe:`を扱う。通常matchはOLG-113の
-session＋一回性seat token認証まで実装済みだが、任意IDのDO生成を防ぐためpublic正方向は
-OLG-121のserver-owned assignment directory接続まで404にする。ゲーム本体のCommand/Event/Snapshotは
-後続のOLG-121/122/125で実装する。browser向け`POST /auth/guest`、`GET /auth/session`、
+`local-smoke` WebSocketだけはOLG-102の疎通確認用`probe:`を扱う。通常のNPC戦は
+`POST /matches/npc`（bodyは空objectだけ）でserver生成IDへ予約し、参加台帳で同じsession/matchを
+確認できた場合だけseat token発行とWebSocketのMatchDOへ到達する。client指定のmatch ID・seat・
+deck・seed・versionからDOを作る経路はない。ゲーム本体のbrowser向けCommand/Event/Snapshotは
+後続のOLG-123/122/125/124まで閉じ、認証後のsocketも`error:game-not-ready`だけを返す。
+browser向け`POST /auth/guest`、`GET /auth/session`、
 `POST /auth/logout`はopaque HttpOnly sessionとして接続済みで、Supabase Auth tokenはWorker内部grantだけに保持する。
 
 エンジンだけを触るとき:

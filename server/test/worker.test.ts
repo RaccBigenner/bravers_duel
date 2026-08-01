@@ -70,7 +70,7 @@ describe('@bravers/server OLG-102 foundation', () => {
       'http://127.0.0.1:8787/matches/normal-match/ws',
       { headers: { Upgrade: 'websocket' } },
     );
-    const normalBeforeAssignments = await workerExports.default.fetch(
+    const normalWithoutSession = await workerExports.default.fetch(
       'http://127.0.0.1:8787/matches/normal-match/ws',
       {
         headers: {
@@ -98,8 +98,8 @@ describe('@bravers/server OLG-102 foundation', () => {
     expect(await noUpgrade.json()).toEqual({ error: 'WEBSOCKET_UPGRADE_REQUIRED' });
     expect(normalWithoutOrigin.status).toBe(403);
     expect(await normalWithoutOrigin.json()).toEqual({ error: 'AUTH_REQUEST_REJECTED' });
-    expect(normalBeforeAssignments.status).toBe(404);
-    expect(await normalBeforeAssignments.json()).toEqual({ error: 'MATCH_NOT_AVAILABLE' });
+    expect(normalWithoutSession.status).toBe(401);
+    expect(await normalWithoutSession.json()).toEqual({ error: 'SESSION_REQUIRED' });
     expect(noSession.status).toBe(401);
     expect(noSession.headers.get('Cache-Control')).toBe('private, no-store');
     expect(await noSession.json()).toEqual({ error: 'SESSION_REQUIRED' });

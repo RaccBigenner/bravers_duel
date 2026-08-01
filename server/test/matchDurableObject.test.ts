@@ -1,4 +1,5 @@
 import { env } from 'cloudflare:workers';
+import { actingPlayer, searchAi, type BattleState } from '@bravers/engine';
 import {
   evictDurableObject,
   runDurableObjectAlarm,
@@ -17,6 +18,7 @@ import {
   type MatchSessionPrincipal,
   type MatchSeatId,
 } from '../src/match/matchDurableObject';
+import { HUMAN_PLAYER } from '../src/battle/engineBattleAdapter';
 import {
   createMatchAccessRequestHandler,
   type MatchAccessBindings,
@@ -65,6 +67,106 @@ function coordinatorFor(sessionId: string): SessionCoordinatorStub {
   return env.SESSION_COORDINATOR_DO.get(
     env.SESSION_COORDINATOR_DO.idFromName(sessionId),
   );
+}
+
+async function reserveNpcBattle(session = principal()): Promise<{
+  session: MatchSessionPrincipal;
+  id: string;
+  seed: number;
+  stub: MatchStub;
+  coordinator: SessionCoordinatorStub;
+}> {
+  const coordinator = coordinatorFor(session.sessionId);
+  const reservation = await coordinator.reserveNpcMatch({
+    sessionId: session.sessionId,
+    accountId: session.accountId,
+    sessionVersion: session.sessionVersion,
+  });
+  expect(reservation.state).toBe('reserved');
+  if (reservation.state !== 'reserved') throw new Error('Expected NPC reservation');
+  return {
+    session,
+    id: reservation.matchId,
+    seed: reservation.seed,
+    stub: stubFor(reservation.matchId),
+    coordinator,
+  };
+}
+
+async function startReservedNpcBattle(session = principal()) {
+  const reserved = await reserveNpcBattle(session);
+  await expect(
+    reserved.stub.startNpcBattle({ principal: reserved.session, seed: reserved.seed }),
+  ).resolves.toEqual({ state: 'ready', created: true });
+  return reserved;
+}
+
+async function expectMatchInstanceError(
+  stub: MatchStub,
+  operation: (instance: MatchDO) => Promise<unknown>,
+  expectedCode: string,
+): Promise<void> {
+  const message = await runInDurableObject(stub, async (instance) => {
+    try {
+      await operation(instance as MatchDO);
+      return null;
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  });
+  expect(message).toContain(expectedCode);
+}
+
+async function leaveFinishedRuntimeBeforeTerminalCommit(
+  instance: MatchDO,
+  session: MatchSessionPrincipal,
+): Promise<{ currentStateHash: string; steps: unknown[] }> {
+  const target = instance as unknown as {
+    battleRuntime: {
+      authoritativeSnapshot(): {
+        state: BattleState;
+        currentStateHash: string;
+        steps: unknown[];
+      };
+    } | null;
+    persistBattleTerminal: (...args: unknown[]) => Promise<unknown>;
+    applyNpcBattleAction: MatchDO['applyNpcBattleAction'];
+  };
+  const originalPersist = target.persistBattleTerminal;
+  const injectedError = 'INJECTED_TERMINAL_COMMIT_FAILURE';
+  target.persistBattleTerminal = async () => {
+    throw new Error(injectedError);
+  };
+  let errorMessage: string | null = null;
+  try {
+    const human = searchAi({ keepHand: 2 });
+    for (let safety = 0; safety < 1_000; safety += 1) {
+      const runtime = target.battleRuntime;
+      if (!runtime) throw new Error('Expected active battle runtime');
+      const snapshot = runtime.authoritativeSnapshot();
+      try {
+        await target.applyNpcBattleAction({
+          principal: session,
+          action: human.choose(snapshot.state, HUMAN_PLAYER),
+        });
+      } catch (error) {
+        errorMessage = error instanceof Error ? error.message : String(error);
+        break;
+      }
+    }
+  } finally {
+    target.persistBattleTerminal = originalPersist;
+  }
+  if (errorMessage !== injectedError) {
+    throw new Error(`Expected injected terminal failure, received: ${errorMessage}`);
+  }
+  const runtime = target.battleRuntime;
+  if (!runtime) throw new Error('Expected finished in-memory battle runtime');
+  const snapshot = runtime.authoritativeSnapshot();
+  return {
+    currentStateHash: snapshot.currentStateHash,
+    steps: snapshot.steps,
+  };
 }
 
 function deterministicKeyMaterial(byte: number): string {
@@ -1103,10 +1205,14 @@ describe('OLG-113 MatchDO seat authentication', () => {
       createStore: () => {
         throw new Error('Session store must not be reached');
       },
+      coordinatorStub: () => {
+        throw new Error('Session coordinator must not be reached');
+      },
       matchStub: () => {
         nonLocalStubCalls += 1;
         return {
           issueSeatToken: async () => ({ state: 'not_assigned' as const }),
+          startNpcBattle: async () => ({ state: 'unavailable' as const }),
           fetch: async () => new Response(null, { status: 101 }),
         };
       },
@@ -1155,5 +1261,719 @@ describe('OLG-113 MatchDO seat authentication', () => {
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({ error: 'INVALID_MATCH_PATH' });
     expect(response.webSocket).toBeNull();
+  });
+});
+
+describe('OLG-121 MatchDO authoritative NPC battle lifecycle', () => {
+  it('server生成identityだけで開始し、exact再送を同じruntimeへ収束させる', async () => {
+    const battle = await startReservedNpcBattle();
+
+    await expect(
+      battle.stub.startNpcBattle({ principal: battle.session, seed: battle.seed }),
+    ).resolves.toEqual({ state: 'ready', created: false });
+    const lifecycle = await battle.stub.getNpcBattleLifecycle(battle.session);
+    expect(lifecycle).toMatchObject({
+      matchId: battle.id,
+      state: 'active',
+      principal: battle.session,
+      seatId: 'player-1',
+      seed: battle.seed,
+      terminalResult: null,
+    });
+    expect(lifecycle.assignmentVersion).toBeGreaterThanOrEqual(1);
+    const snapshot = await battle.stub.getNpcBattleSnapshot(battle.session);
+    expect(snapshot.header.seed).toBe(battle.seed);
+    expect(snapshot.header.humanPlayer).toBe(HUMAN_PLAYER);
+
+    await expect(
+      battle.stub.startNpcBattle({ principal: battle.session, seed: (battle.seed + 1) >>> 0 }),
+    ).resolves.toEqual({ state: 'conflict' });
+    await expect(
+      battle.stub.startNpcBattle({ principal: principal(), seed: battle.seed }),
+    ).resolves.toEqual({ state: 'conflict' });
+    await expectMatchInstanceError(
+      battle.stub,
+      (instance) => instance.startNpcBattle({
+        principal: { ...battle.session, credentialState: 'spoof' } as never,
+        seed: battle.seed,
+      }),
+      'MATCH_BATTLE_INPUT_INVALID',
+    );
+    const invalidIdentity = stubFor('npc-client-chosen');
+    await expectMatchInstanceError(
+      invalidIdentity,
+      (instance) => instance.startNpcBattle({
+        principal: battle.session,
+        seed: battle.seed,
+      }),
+      'MATCH_BATTLE_INPUT_INVALID',
+    );
+  });
+
+  it('改変actionを盤面不変で拒否し、合法actionだけをNPC応答まで適用する', async () => {
+    const battle = await startReservedNpcBattle();
+    const before = await battle.stub.getNpcBattleSnapshot(battle.session);
+    expect(actingPlayer(before.state as BattleState)).toBe(HUMAN_PLAYER);
+    const action = searchAi({ keepHand: 2 }).choose(
+      before.state as BattleState,
+      HUMAN_PLAYER,
+    );
+
+    await expectMatchInstanceError(
+      battle.stub,
+      (instance) => instance.applyNpcBattleAction({
+        principal: battle.session,
+        action: { ...action, browserInjected: true },
+      }),
+      'BATTLE_ACTION_INVALID',
+    );
+    await expect(battle.stub.getNpcBattleSnapshot(battle.session)).resolves.toEqual(before);
+
+    const applied = await battle.stub.applyNpcBattleAction({
+      principal: battle.session,
+      action,
+    });
+    expect(applied.state).toBe('applied');
+    expect(applied.transition.steps[0]).toMatchObject({
+      player: HUMAN_PLAYER,
+      source: 'human',
+    });
+    if (applied.lifecycleState === 'active') {
+      const after = await battle.stub.getNpcBattleSnapshot(battle.session);
+      expect(after.currentStateHash).toBe(applied.transition.status.stateHash);
+      expect(after.currentStateHash).not.toBe(before.currentStateHash);
+    }
+  });
+
+  it('NPC戦を最後まで進め、engine結果を先に永続化してassignmentと予約を解除する', async () => {
+    const battle = await startReservedNpcBattle();
+    const human = searchAi({ keepHand: 2 });
+    let finalTransition: Awaited<ReturnType<MatchStub['applyNpcBattleAction']>> | null = null;
+
+    for (let safety = 0; safety < 1_000; safety += 1) {
+      const snapshot = await battle.stub.getNpcBattleSnapshot(battle.session);
+      expect(actingPlayer(snapshot.state as BattleState)).toBe(HUMAN_PLAYER);
+      const applied = await battle.stub.applyNpcBattleAction({
+        principal: battle.session,
+        action: human.choose(snapshot.state as BattleState, HUMAN_PLAYER),
+      });
+      if (applied.lifecycleState === 'finished') {
+        finalTransition = applied;
+        break;
+      }
+    }
+    if (!finalTransition) throw new Error('NPC battle did not finish');
+
+    const result = await battle.stub.getNpcBattleResult(battle.session);
+    expect(result).toEqual({
+      kind: 'finished',
+      winner: finalTransition.transition.status.winner,
+      endReason: finalTransition.transition.status.endReason,
+      turns: finalTransition.transition.status.turn,
+      finalStateHash: finalTransition.transition.status.stateHash,
+      appliedActions: finalTransition.transition.status.appliedActions,
+    });
+    expect(result?.kind === 'finished' ? result.endReason : null).toMatch(/^(wipeout|deckout)$/);
+    const durable = await runInDurableObject(battle.stub, (_instance, state) => ({
+      lifecycle: state.storage.sql.exec<SqlRow>(
+        `SELECT lifecycle_state, final_state_hash FROM match_battle_lifecycle`,
+      ).one(),
+      assignments: state.storage.sql.exec<SqlRow>(`SELECT * FROM match_seat_assignment`).toArray(),
+      tokens: state.storage.sql.exec<SqlRow>(`SELECT * FROM match_seat_token`).toArray(),
+      terminalRelease: state.storage.sql.exec<SqlRow>(
+        `SELECT * FROM match_terminal_release`,
+      ).toArray(),
+    }));
+    expect(durable).toEqual({
+      lifecycle: {
+        lifecycle_state: 'finished',
+        final_state_hash: finalTransition.transition.status.stateHash,
+      },
+      assignments: [],
+      tokens: [],
+      terminalRelease: [],
+    });
+
+    const next = await battle.coordinator.reserveNpcMatch({
+      sessionId: battle.session.sessionId,
+      accountId: battle.session.accountId,
+      sessionVersion: battle.session.sessionVersion,
+    });
+    expect(next).toMatchObject({ state: 'reserved', created: true });
+    if (next.state === 'reserved') expect(next.matchId).not.toBe(battle.id);
+  }, 20_000);
+
+  it('active DO eviction後はseedから再生成せず全state RPCをfail closedにする', async () => {
+    const battle = await startReservedNpcBattle();
+    await battle.stub.getNpcBattleSnapshot(battle.session);
+    await evictDurableObject(battle.stub);
+
+    await expect(
+      battle.stub.startNpcBattle({ principal: battle.session, seed: battle.seed }),
+    ).resolves.toEqual({ state: 'unavailable' });
+    await expectMatchInstanceError(
+      battle.stub,
+      (instance) => instance.getNpcBattleSnapshot(battle.session),
+      'MATCH_STATE_UNAVAILABLE',
+    );
+    await expectMatchInstanceError(
+      battle.stub,
+      (instance) => instance.getNpcBattleLifecycle(battle.session),
+      'MATCH_STATE_UNAVAILABLE',
+    );
+    await expectMatchInstanceError(
+      battle.stub,
+      (instance) => instance.getNpcBattleResult(battle.session),
+      'MATCH_STATE_UNAVAILABLE',
+    );
+    await expectMatchInstanceError(
+      battle.stub,
+      (instance) => instance.applyNpcBattleAction({
+        principal: battle.session,
+        action: { type: 'endPlay' },
+      }),
+      'MATCH_STATE_UNAVAILABLE',
+    );
+
+    const durable = await runInDurableObject(battle.stub, (_instance, state) => ({
+      lifecycle: state.storage.sql.exec<SqlRow>(
+        `SELECT lifecycle_state, seed FROM match_battle_lifecycle`,
+      ).one(),
+      assignmentCount: state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM match_seat_assignment`,
+      ).one().count,
+      terminalCount: state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM match_terminal_release`,
+      ).one().count,
+    }));
+    expect(durable).toEqual({
+      lifecycle: { lifecycle_state: 'active', seed: battle.seed },
+      assignmentCount: 1,
+      terminalCount: 0,
+    });
+  });
+
+  it('terminal永続化後のDO evictionでもlifecycleとresultを復元する', async () => {
+    const battle = await startReservedNpcBattle();
+    const terminal = await battle.stub.abandonNpcBattle({
+      principal: battle.session,
+      reason: 'player_abandoned',
+    });
+    expect(terminal.state).toBe('abandoned');
+    expect(terminal.terminalResult).toMatchObject({
+      kind: 'abandoned',
+      reason: 'player_abandoned',
+      winner: 1,
+    });
+
+    await evictDurableObject(battle.stub);
+
+    await expect(battle.stub.getNpcBattleLifecycle(battle.session)).resolves.toEqual(terminal);
+    await expect(battle.stub.getNpcBattleResult(battle.session)).resolves.toEqual(
+      terminal.terminalResult,
+    );
+    await expect(
+      battle.stub.startNpcBattle({ principal: battle.session, seed: battle.seed }),
+    ).resolves.toEqual({ state: 'conflict' });
+    await expectMatchInstanceError(
+      battle.stub,
+      (instance) => instance.getNpcBattleSnapshot(battle.session),
+      'MATCH_BATTLE_ALREADY_TERMINAL',
+    );
+  });
+
+  it('認証済みWSのgame frameをwireへ通さずauthoritative stateを不変に保つ', async () => {
+    const battle = await startReservedNpcBattle();
+    const issued = await battle.stub.issueSeatToken(battle.session);
+    expect(issued.state).toBe('issued');
+    if (issued.state !== 'issued') throw new Error('Expected issued seat token');
+    const socket = await openPlayerSocket(battle.stub, battle.id, battle.session);
+    await expect(authenticate(socket, issued.seatToken)).resolves.toEqual({
+      kind: 'message',
+      data: 'auth_ok',
+    });
+    const before = await battle.stub.getNpcBattleSnapshot(battle.session);
+
+    const rejected = socketOutcome(socket);
+    socket.send(JSON.stringify({ type: 'action', action: { type: 'endPlay' } }));
+    await expect(rejected).resolves.toEqual({
+      kind: 'message',
+      data: 'error:game-not-ready',
+    });
+
+    const after = await battle.stub.getNpcBattleSnapshot(battle.session);
+    expect(after.currentStateHash).toBe(before.currentStateHash);
+    expect(after.steps).toEqual(before.steps);
+    socket.close(1000, 'done');
+  });
+
+  it('session失効後はsocketを閉じ、exact startとbattle commandを盤面不変で拒否する', async () => {
+    const battle = await startReservedNpcBattle();
+    const issued = await battle.stub.issueSeatToken(battle.session);
+    expect(issued.state).toBe('issued');
+    if (issued.state !== 'issued') throw new Error('Expected issued seat token');
+    const socket = await openPlayerSocket(battle.stub, battle.id, battle.session);
+    await expect(authenticate(socket, issued.seatToken)).resolves.toEqual({
+      kind: 'message',
+      data: 'auth_ok',
+    });
+    const before = await battle.stub.getNpcBattleSnapshot(battle.session);
+    const action = searchAi({ keepHand: 2 }).choose(
+      before.state as BattleState,
+      HUMAN_PLAYER,
+    );
+    const closed = socketOutcome(socket);
+
+    await expect(battle.stub.invalidateSession({
+      sessionId: battle.session.sessionId,
+      invalidatedVersion: battle.session.sessionVersion + 1,
+    })).resolves.toEqual({ state: 'acknowledged', closedConnections: 1 });
+    await expect(closed).resolves.toEqual({
+      kind: 'close',
+      code: 1008,
+      reason: 'SESSION_ENDED',
+    });
+    await expect(battle.stub.issueSeatToken(battle.session)).resolves.toEqual({
+      state: 'not_assigned',
+    });
+    await expect(
+      battle.stub.startNpcBattle({ principal: battle.session, seed: battle.seed }),
+    ).resolves.toEqual({ state: 'conflict' });
+
+    const rejected = await runInDurableObject(battle.stub, async (instance) => {
+      let errorMessage: string | null = null;
+      try {
+        await (instance as MatchDO).applyNpcBattleAction({
+          principal: battle.session,
+          action,
+        });
+      } catch (error) {
+        errorMessage = error instanceof Error ? error.message : String(error);
+      }
+      const runtime = (
+        instance as unknown as {
+          battleRuntime: {
+            authoritativeSnapshot(): { currentStateHash: string; steps: unknown[] };
+          } | null;
+        }
+      ).battleRuntime;
+      if (!runtime) throw new Error('Expected active battle runtime');
+      const after = runtime.authoritativeSnapshot();
+      return {
+        errorMessage,
+        currentStateHash: after.currentStateHash,
+        steps: after.steps,
+      };
+    });
+    expect(rejected).toEqual({
+      errorMessage: 'MATCH_BATTLE_ACCESS_DENIED',
+      currentStateHash: before.currentStateHash,
+      steps: before.steps,
+    });
+  });
+
+  it('engine終了後のterminal commit失敗をexact start再送でfinishedへ収束させる', async () => {
+    const battle = await startReservedNpcBattle();
+    const recovered = await runInDurableObject(battle.stub, async (instance, state) => {
+      const finished = await leaveFinishedRuntimeBeforeTerminalCommit(
+        instance as MatchDO,
+        battle.session,
+      );
+      const restart = await (instance as MatchDO).startNpcBattle({
+        principal: battle.session,
+        seed: battle.seed,
+      });
+      const lifecycle = await (instance as MatchDO).getNpcBattleLifecycle(battle.session);
+      const row = state.storage.sql.exec<SqlRow>(
+        `SELECT * FROM match_battle_lifecycle`,
+      ).one();
+      let tamperedRowError: string | null = null;
+      try {
+        (
+          instance as unknown as {
+            lifecycleFromRow(row: unknown): unknown;
+          }
+        ).lifecycleFromRow({ ...row, terminal_reason: 'server_cancelled' });
+      } catch (error) {
+        tamperedRowError = error instanceof Error ? error.message : String(error);
+      }
+      return { finished, restart, lifecycle, tamperedRowError };
+    });
+
+    expect(recovered.restart).toEqual({ state: 'conflict' });
+    expect(recovered.tamperedRowError).toBe('MATCH_BATTLE_STATE_INVALID');
+    expect(recovered.lifecycle).toMatchObject({
+      state: 'finished',
+      terminalResult: {
+        kind: 'finished',
+        finalStateHash: recovered.finished.currentStateHash,
+      },
+    });
+  }, 20_000);
+
+  it('engine終了後のterminal commit失敗でもcancelで勝敗を上書きしない', async () => {
+    const battle = await startReservedNpcBattle();
+    const recovered = await runInDurableObject(battle.stub, async (instance) => {
+      const finished = await leaveFinishedRuntimeBeforeTerminalCommit(
+        instance as MatchDO,
+        battle.session,
+      );
+      let cancelError: string | null = null;
+      try {
+        await (instance as MatchDO).cancelNpcBattle({
+          principal: battle.session,
+          reason: 'server_cancelled',
+        });
+      } catch (error) {
+        cancelError = error instanceof Error ? error.message : String(error);
+      }
+      const lifecycle = await (instance as MatchDO).getNpcBattleLifecycle(battle.session);
+      return { cancelError, finished, lifecycle };
+    });
+
+    expect(recovered.cancelError).toBe('MATCH_BATTLE_ALREADY_TERMINAL');
+    expect(recovered.lifecycle).toMatchObject({
+      state: 'finished',
+      terminalResult: {
+        kind: 'finished',
+        finalStateHash: recovered.finished.currentStateHash,
+      },
+    });
+  }, 20_000);
+
+  it('cancelとabandonを別の終端理由で永続化し、exact再送だけ冪等にする', async () => {
+    const cancelled = await startReservedNpcBattle();
+    const firstCancel = await cancelled.stub.cancelNpcBattle({
+      principal: cancelled.session,
+      reason: 'server_cancelled',
+    });
+    expect(firstCancel.state).toBe('cancelled');
+    expect(firstCancel.terminalResult).toMatchObject({
+      kind: 'cancelled',
+      reason: 'server_cancelled',
+      winner: null,
+    });
+    await expect(
+      cancelled.stub.cancelNpcBattle({
+        principal: cancelled.session,
+        reason: 'server_cancelled',
+      }),
+    ).resolves.toEqual(firstCancel);
+    await expectMatchInstanceError(
+      cancelled.stub,
+      (instance) => instance.cancelNpcBattle({
+        principal: cancelled.session,
+        reason: 'start_failed',
+      }),
+      'MATCH_BATTLE_ALREADY_TERMINAL',
+    );
+
+    const abandoned = await startReservedNpcBattle();
+    const firstAbandon = await abandoned.stub.abandonNpcBattle({
+      principal: abandoned.session,
+      reason: 'player_abandoned',
+    });
+    expect(firstAbandon.state).toBe('abandoned');
+    expect(firstAbandon.terminalResult).toMatchObject({
+      kind: 'abandoned',
+      reason: 'player_abandoned',
+      winner: 1,
+    });
+    await expect(
+      abandoned.stub.abandonNpcBattle({
+        principal: abandoned.session,
+        reason: 'player_abandoned',
+      }),
+    ).resolves.toEqual(firstAbandon);
+  });
+
+  it('assignmentを作れないprovisioning取消でもreservation-only outboxで予約を解放する', async () => {
+    const session = principal();
+    const coordinator = coordinatorFor(session.sessionId);
+    const baseEpoch = Date.now();
+    for (let index = 0; index < 16; index += 1) {
+      await coordinator.registerMatch({
+        sessionId: session.sessionId,
+        sessionVersion: session.sessionVersion,
+        matchId: `capacity-${index}`,
+        registrationId: crypto.randomUUID(),
+        registrationEpochMs: baseEpoch + index,
+      });
+    }
+    const reserved = await reserveNpcBattle(session);
+    await expect(
+      reserved.stub.startNpcBattle({ principal: session, seed: reserved.seed }),
+    ).resolves.toEqual({ state: 'conflict' });
+    const beforeCancel = await runInDurableObject(reserved.stub, (_instance, state) => ({
+      lifecycle: state.storage.sql.exec<SqlRow>(
+        `SELECT lifecycle_state FROM match_battle_lifecycle`,
+      ).one(),
+      assignments: state.storage.sql.exec<SqlRow>(`SELECT * FROM match_seat_assignment`).toArray(),
+    }));
+    expect(beforeCancel).toEqual({
+      lifecycle: { lifecycle_state: 'provisioning' },
+      assignments: [],
+    });
+
+    const cancelled = await reserved.stub.cancelNpcBattle({
+      principal: session,
+      reason: 'start_failed',
+    });
+    expect(cancelled.terminalResult).toEqual({
+      kind: 'cancelled',
+      winner: null,
+      reason: 'start_failed',
+      turns: null,
+      finalStateHash: null,
+      appliedActions: null,
+    });
+    const outbox = await runInDurableObject(
+      reserved.stub,
+      (_instance, state) => state.storage.sql.exec<SqlRow>(
+        `SELECT * FROM match_terminal_release`,
+      ).toArray(),
+    );
+    expect(outbox).toEqual([]);
+    const next = await coordinator.reserveNpcMatch({
+      sessionId: session.sessionId,
+      accountId: session.accountId,
+      sessionVersion: session.sessionVersion,
+    });
+    expect(next).toMatchObject({ state: 'reserved', created: true });
+    if (next.state === 'reserved') expect(next.matchId).not.toBe(reserved.id);
+  });
+
+  it('旧seat cleanup ACK喪失中でも別表outboxで新assignmentを安全に終端できる', async () => {
+    const battle = await startReservedNpcBattle();
+    const old = principal();
+    const oldReference = {
+      seatId: 'player-1' as const,
+      accountId: old.accountId,
+      sessionId: old.sessionId,
+      sessionVersion: old.sessionVersion,
+      matchId: battle.id,
+      registrationId: crypto.randomUUID(),
+      registrationEpochMs: Date.now(),
+    };
+    await coordinatorFor(old.sessionId).registerMatch(oldReference);
+    await runInDurableObject(battle.stub, async (instance) => {
+      await (
+        instance as unknown as {
+          scheduleReferenceCleanup(input: typeof oldReference): Promise<void>;
+        }
+      ).scheduleReferenceCleanup(oldReference);
+    });
+
+    await expect(
+      battle.stub.cancelNpcBattle({
+        principal: battle.session,
+        reason: 'server_cancelled',
+      }),
+    ).resolves.toMatchObject({ state: 'cancelled' });
+    const coexistence = await runInDurableObject(battle.stub, (_instance, state) => ({
+      oldCleanup: state.storage.sql.exec<SqlRow>(`SELECT * FROM match_reference_cleanup`).toArray(),
+      terminalRelease: state.storage.sql.exec<SqlRow>(
+        `SELECT * FROM match_terminal_release`,
+      ).toArray(),
+      assignments: state.storage.sql.exec<SqlRow>(`SELECT * FROM match_seat_assignment`).toArray(),
+    }));
+    expect(coexistence.oldCleanup).toEqual([
+      expect.objectContaining({ registration_id: oldReference.registrationId, seat_id: 'player-1' }),
+    ]);
+    expect(coexistence.terminalRelease).toEqual([]);
+    expect(coexistence.assignments).toEqual([]);
+
+    await runInDurableObject(battle.stub, async (instance, state) => {
+      state.storage.sql.exec(
+        `UPDATE do_deadline SET due_at_ms = ? WHERE deadline_kind = 'coordinator-cleanup'`,
+        Date.now() - 1,
+      );
+      await state.storage.setAlarm(Date.now() + 60_000);
+      await (instance as MatchDO).alarm();
+    });
+    await expect(coordinatorFor(old.sessionId).checkMatch(oldReference)).resolves.toEqual({
+      state: 'missing',
+    });
+  });
+
+  it('unregister後に参照が残ればreservation release phaseを永続してalarm再試行する', async () => {
+    const battle = await startReservedNpcBattle();
+    const extra = {
+      sessionId: battle.session.sessionId,
+      sessionVersion: battle.session.sessionVersion,
+      matchId: battle.id,
+      registrationId: crypto.randomUUID(),
+      registrationEpochMs: Date.now() + 1,
+    };
+    await battle.coordinator.registerMatch(extra);
+
+    await battle.stub.cancelNpcBattle({
+      principal: battle.session,
+      reason: 'server_cancelled',
+    });
+    const pending = await runInDurableObject(battle.stub, (_instance, state) => ({
+      release: state.storage.sql.exec<SqlRow>(`SELECT * FROM match_terminal_release`).one(),
+      deadline: state.storage.sql.exec<SqlRow>(
+        `SELECT * FROM do_deadline WHERE deadline_kind = 'coordinator-terminal-release'`,
+      ).one(),
+    }));
+    expect(pending.release).toMatchObject({
+      release_phase: 'reservation_release_pending',
+      retry_attempt: 1,
+      seed: battle.seed,
+    });
+    expect(pending.deadline).toMatchObject({
+      deadline_kind: 'coordinator-terminal-release',
+    });
+
+    await battle.coordinator.unregisterMatch(extra);
+    await runInDurableObject(battle.stub, async (instance, state) => {
+      state.storage.sql.exec(
+        `UPDATE do_deadline SET due_at_ms = ?
+          WHERE deadline_kind = 'coordinator-terminal-release'`,
+        Date.now() - 1,
+      );
+      await state.storage.setAlarm(Date.now() + 60_000);
+      await (instance as MatchDO).alarm();
+    });
+    const cleaned = await runInDurableObject(battle.stub, (_instance, state) => ({
+      release: state.storage.sql.exec<SqlRow>(`SELECT * FROM match_terminal_release`).toArray(),
+      deadline: state.storage.sql.exec<SqlRow>(
+        `SELECT * FROM do_deadline WHERE deadline_kind = 'coordinator-terminal-release'`,
+      ).toArray(),
+    }));
+    expect(cleaned).toEqual({ release: [], deadline: [] });
+  });
+
+  it('stale terminal releaseが新予約と競合してもoutboxだけ完了し新予約を保つ', async () => {
+    const battle = await startReservedNpcBattle();
+    const release = await runInDurableObject(battle.stub, async (instance, state) => {
+      const target = instance as unknown as {
+        cancelNpcBattle(input: {
+          principal: MatchSessionPrincipal;
+          reason: 'server_cancelled';
+        }): Promise<unknown>;
+        retryTerminalRelease(deadlineKey: string): Promise<boolean>;
+      };
+      const retry = target.retryTerminalRelease.bind(instance);
+      target.retryTerminalRelease = async () => false;
+      try {
+        await target.cancelNpcBattle({
+          principal: battle.session,
+          reason: 'server_cancelled',
+        });
+      } finally {
+        target.retryTerminalRelease = retry;
+      }
+      return state.storage.sql.exec<{
+        registration_id: string;
+        registration_epoch_ms: number;
+        release_phase: string;
+      }>(
+        `SELECT registration_id, registration_epoch_ms, release_phase
+           FROM match_terminal_release`,
+      ).one();
+    });
+    expect(release.release_phase).toBe('unregister_pending');
+
+    const reference = {
+      sessionId: battle.session.sessionId,
+      sessionVersion: battle.session.sessionVersion,
+      matchId: battle.id,
+      registrationId: release.registration_id,
+      registrationEpochMs: release.registration_epoch_ms,
+    };
+    await expect(battle.coordinator.unregisterMatch(reference)).resolves.toEqual({
+      state: 'acknowledged',
+    });
+    await expect(battle.coordinator.releaseNpcMatch({
+      sessionId: battle.session.sessionId,
+      accountId: battle.session.accountId,
+      sessionVersion: battle.session.sessionVersion,
+      matchId: battle.id,
+      seed: battle.seed,
+    })).resolves.toEqual({ state: 'released' });
+    const next = await battle.coordinator.reserveNpcMatch({
+      sessionId: battle.session.sessionId,
+      accountId: battle.session.accountId,
+      sessionVersion: battle.session.sessionVersion,
+    });
+    expect(next).toMatchObject({ state: 'reserved', created: true });
+    if (next.state !== 'reserved') throw new Error('Expected next NPC reservation');
+
+    await runInDurableObject(battle.stub, async (instance, state) => {
+      const deadlineKey = state.storage.sql.exec<{ deadline_key: string }>(
+        `SELECT deadline_key FROM do_deadline
+          WHERE deadline_kind = 'coordinator-terminal-release'`,
+      ).one().deadline_key;
+      await expect(
+        (
+          instance as unknown as {
+            retryTerminalRelease(deadlineKey: string): Promise<boolean>;
+          }
+        ).retryTerminalRelease(deadlineKey),
+      ).resolves.toBe(true);
+    });
+
+    const outbox = await runInDurableObject(battle.stub, (_instance, state) => ({
+      releases: state.storage.sql.exec<SqlRow>(`SELECT * FROM match_terminal_release`).toArray(),
+      deadlines: state.storage.sql.exec<SqlRow>(
+        `SELECT * FROM do_deadline WHERE deadline_kind = 'coordinator-terminal-release'`,
+      ).toArray(),
+    }));
+    expect(outbox).toEqual({ releases: [], deadlines: [] });
+    await expect(battle.coordinator.reserveNpcMatch({
+      sessionId: battle.session.sessionId,
+      accountId: battle.session.accountId,
+      sessionVersion: battle.session.sessionVersion,
+    })).resolves.toEqual({ ...next, created: false });
+  });
+
+  it('malformed coordinator ACK/resultを成功扱いせずterminal outboxを保持する', async () => {
+    const battle = await startReservedNpcBattle();
+    await runInDurableObject(battle.stub, async (instance, state) => {
+      const target = instance as unknown as {
+        cancelNpcBattle(input: {
+          principal: MatchSessionPrincipal;
+          reason: 'server_cancelled';
+        }): Promise<unknown>;
+        retryTerminalRelease(deadlineKey: string, coordinator?: unknown): Promise<boolean>;
+      };
+      const retry = target.retryTerminalRelease.bind(instance);
+      target.retryTerminalRelease = async () => false;
+      await target.cancelNpcBattle({
+        principal: battle.session,
+        reason: 'server_cancelled',
+      });
+      target.retryTerminalRelease = retry;
+      const key = state.storage.sql.exec<{ deadline_key: string }>(
+        `SELECT deadline_key FROM do_deadline
+          WHERE deadline_kind = 'coordinator-terminal-release'`,
+      ).one().deadline_key;
+
+      let releaseCalls = 0;
+      await expect(retry(key, {
+        unregisterMatch: async () => ({ state: 'acknowledged', extra: true }),
+        releaseNpcMatch: async () => {
+          releaseCalls += 1;
+          return { state: 'released' };
+        },
+      })).resolves.toBe(false);
+      expect(releaseCalls).toBe(0);
+      expect(state.storage.sql.exec<SqlRow>(
+        `SELECT release_phase, retry_attempt FROM match_terminal_release`,
+      ).one()).toEqual({ release_phase: 'unregister_pending', retry_attempt: 1 });
+
+      await expect(retry(key, {
+        unregisterMatch: async () => ({ state: 'acknowledged' }),
+        releaseNpcMatch: async () => ({ state: 'missing', extra: true }),
+      })).resolves.toBe(false);
+      expect(state.storage.sql.exec<SqlRow>(
+        `SELECT release_phase, retry_attempt FROM match_terminal_release`,
+      ).one()).toEqual({
+        release_phase: 'reservation_release_pending',
+        retry_attempt: 1,
+      });
+    });
   });
 });
