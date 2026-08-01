@@ -654,7 +654,9 @@ describe('OLG-121 server-owned NPC match reservation', () => {
       seed: reserved.seed,
     };
 
-    await expect(stub.releaseNpcMatch(release)).resolves.toEqual({ state: 'conflict' });
+    await expect(stub.releaseNpcMatch(release)).resolves.toEqual({
+      state: 'references_remain',
+    });
     await stub.unregisterMatch(activeReference);
     await expect(stub.releaseNpcMatch(release)).resolves.toEqual({ state: 'released' });
     await expect(stub.releaseNpcMatch(release)).resolves.toEqual({ state: 'missing' });

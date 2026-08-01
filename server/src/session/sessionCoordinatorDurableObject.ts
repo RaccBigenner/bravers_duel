@@ -94,6 +94,7 @@ export type SessionNpcMatchReservationResult =
 export type SessionNpcMatchReleaseResult =
   | { state: 'released' }
   | { state: 'missing' }
+  | { state: 'references_remain' }
   | { state: 'conflict' };
 
 export type SessionLogoutPreparationResult =
@@ -528,7 +529,7 @@ export class SessionCoordinatorDO extends DurableObject<Env> {
           reference.matchId === input.matchId &&
           reference.sessionVersion === input.sessionVersion,
       )) {
-        return { state: 'conflict' } as const;
+        return { state: 'references_remain' } as const;
       }
       await transaction.delete(ACTIVE_NPC_MATCH_RESERVATION_KEY);
       return { state: 'released' } as const;
