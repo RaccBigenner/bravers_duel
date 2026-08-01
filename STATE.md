@@ -173,10 +173,15 @@
   同一UUIDのaccount行、直接read拒否、削除cascadeまで通れば完了にする。HTTP routeはOLG-113で接続済み。
 - **OLG-113も実装済み・実stack受入待ち**。同じ実stackでguest cookie発行、session復元、logout後401、
   pgTAPを完走したら完了にする。通常matchはOLG-121でserver生成NPC予約からだけ正方向を開いた。
-- **OLG-121はコード実装済み**。active runtimeの再起動復旧はOLG-125、stable card IDはOLG-123、
+- **OLG-121はコード実装済み**。active runtimeの再起動復旧はOLG-125、
   command冪等性はOLG-122、player projectionはOLG-124へ続く。終端後まで極端に遅延した旧開始要求の
   区別はOLG-129、logout失効後のactive lifecycle終端条件はOLG-127で固定する。
   OLG-003PのCloudflare作業はG0 blockerとして並行管理する。
+- **OLG-123は2026-08-01にコード実装済み**。全カードへseed非依存の128-bit `battleCardId`を割り当て、
+  engine移動traceとserver全zone台帳でshuffle・重複printing・zone移動後も個体を保持する。
+  protocol / action logから`handIndex`を除き、未知・stale・他owner・非hand IDを盤面不変で拒否する。
+  engine state hash / replay v1は不変。NPC pump前の初期ID manifestとstable stepsからCSPRNG再採番なしで
+  hash検証付き再演もできる。OLG-125はこの履歴とcurrent snapshotを原子的に保存し、OLG-124で秘匿する。
 - ここまでの経緯は一番下の「開発の記録」を見る。
 
 ## オープンβ要件 決定（2026-07-23）

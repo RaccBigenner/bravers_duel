@@ -772,7 +772,33 @@ UIでは法的な「所有権」と断定せず、「所持カード」「カー
 - 交換/売却後に不足したデッキは「使用不可」にし、不足カードを明示する
 - 進行中の試合で使っている個体は、試合終了まで交換/売却不可
 
-試合内では全カードへランダムな`battle_card_id`を割り当て、グローバルな`instance_id`を相手へ出さない。
+試合内では、場のキャラクターを含む全カード個体へ`battleCardId`を割り当てる。
+
+- 形式は`bc_` + lowercase 32 hex（128 bit）。試合開始時にserverのCSPRNGから生成し、
+  engineの試合seed、match ID、`instance_id`、`printing_id`から導出しない
+- 同じ試合内では一意とし、形式違反や衝突は開始をfail closedにする。同じseedで再戦しても別IDになる
+- deck / hand / trash / AP / character / equipment / fieldのどこへ移動しても同じIDを保持し、
+  並び替え・shuffle・同一printingの重複で再採番しない
+- serverは全zoneの個体台帳を持つ。グローバルな`instance_id`は試合内IDへ置換し、相手へ出さない
+- engineの決定論的state / replay v1 / state hashにはCSPRNG値を混ぜない。engineが返す移動traceを
+  server台帳へ同じtrial内で適用し、stateと台帳が一致した時だけcommitする
+- `createBattle`完了後・NPC先攻pump前の全zone ID配置と`initialIdentityHash`をimmutableな
+  初期manifestとして保持する。履歴再演ではCSPRNG再採番や自動NPC pumpをせず、このmanifestから
+  stable actionを1手ずつ現在handへ解決し、state hash / identity hashを各手で照合する
+
+OLG-123ではメモリ上のactive runtimeまで実装する。reload / DO eviction後にも同じIDを維持する保存単位は
+OLG-125で、header / 初期manifest / stable steps / current snapshotを同一transactionへ保存する。
+相手のhand / deck IDを隠すviewer別projectionはOLG-124で固定する。
+
+OLG-125の通常復旧はappend-only stepと周期checkpointからtailだけを再演し、初期manifestからの全再演は
+監査・破損検出に使う。headerのadapter / engine / content / format versionへ一致するruntimeを進行中試合に
+pinし、デプロイ後の現行版へ読み替えない。一致版を提供できなければ新しいIDで再生成せずfail closedにする。
+
+G2で所持個体を使う時は、match開始前にlockした`instance_id`集合を`printing_id`別のserver-only poolとして
+渡す。engineが初期shuffle済みのprinting配置を作った後、各出現へpoolからcanonical順で1対1に割り当て、
+その対応へ`battleCardId`を付ける。同一printingの個体はルール上同値で、キラ等の表示属性だけを対応表から
+引く。poolの枚数/printing一致、二重割当て、場と40枚側の重複を開始前に検査し、
+`battleCardId → instance_id`対応表自体はplayer projectionへ出さない。
 
 ---
 
@@ -1875,8 +1901,8 @@ secretを用意するのはOLG-103以降（社長の手番を含む）。OLG-101
   （パッケージ名`@bravers/server`、`@bravers/protocol`。ルート`package.json`の`workspaces`へ追加）。
   `protocol`は`server`と`web`の両方から参照される共有型（Command/Event/Snapshot）を持つため、
   `engine`のように独立したworkspaceにする。OLG-121のengine adapterはwire非公開のserver内部型とし、
-  browser向けの実型はOLG-122/123/124（`commandId`+`expectedRevision`、stable card ID、projection）で
-  埋める。OLG-101の時点では、workspaceとして
+  browser向けの実型は段階的に埋める。OLG-123でstable card ID action、OLG-122で
+  `commandId` + `expectedRevision`、OLG-124でprojectionを固定する。OLG-101の時点では、workspaceとして
   解決できることを1つのプレースホルダ型と1本のテストで示すだけでよい
 - `supabase/`はnpm workspaceにしない（JS/TSパッケージではないため）。`supabase init`が作る
   `config.toml`（Supabase CLIのローカル設定）だけを置く。PostgreSQLの正本になるマイグレーション
@@ -1966,7 +1992,14 @@ interface CommandEnvelope {
 }
 ```
 
-`MatchAction`は`handIndex`ではなく、安定した`battleCardId`と対象slotを使う。
+`MatchAction`は`handIndex`ではなく、安定した`battleCardId`と対象slotを使う。カードを使う
+`playSkill / playCharacter / playEquipment / playField / playGuard / charge`は
+`battleCardId`を必須にし、`bc_` + lowercase 32 hex以外や余剰keyをexact decoderで拒否する。
+
+serverは、行動者の**現在の手札**に同じIDがちょうど1枚あり、台帳のowner / `printingId`とengine stateが
+一致するときだけengine内部の`handIndex`へ変換し、その時点の合法手と完全一致することを再検査する。
+未知ID、既に別zoneへ移ったstale ID、相手所有ID、自分のdeck等の非hand IDは、存在の詳細を返さず
+同じ`BATTLE_ACTION_INVALID`として盤面不変で拒否する。engine内部の`handIndex`はprotocol / eventへ出さない。
 
 ### 11.2 サーバー処理
 

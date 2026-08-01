@@ -81,11 +81,16 @@ P1 exit の一言まとめ:
   client指定のmatch ID / seat / deck / seed / versionは受けず、seat token / WebSocketも参加台帳の
   positive確認後だけ対象DOへ到達する。active runtimeはOLG-125までメモリ内なのでeviction後はseedから
   再生成せず`MATCH_STATE_UNAVAILABLE`、browser向けgame frameは後続OLGまで`game-not-ready`とする。
-- **OLG-123** stable `battleCardId`: 手札 index でなくカード個体 ID で
-  action を指定する（設計 §11.1。engine の action と protocol の action の変換層で吸収）
+- **OLG-123（2026-08-01コード実装済み）** stable `battleCardId`: 全カードへseed非依存の
+  128-bit CSPRNG IDを割り当て、zone移動後も保持する。protocol / action logは手札indexでなく
+  カード個体IDを使い、server adapterが現在の行動者handだけからengine actionへ変換する。
+  malformed / stale / 他owner / 非hand IDと旧`handIndex`は盤面不変で拒否する。engineのstate hashと
+  replay v1は不変。NPC pump前の初期ID manifest + stable stepsからCSPRNG再採番なしでruntimeを
+  再演し、各state / identity hashを検証できる。永続化transactionはOLG-125、viewer別の秘匿はOLG-124へ続く
 - **OLG-122** `commandId + expectedRevision`: 重複 command と古い revision の拒否
-- **OLG-125** snapshot / event の永続化: DO SQLite へ command・event・snapshot を
-  保存。クラッシュしても試合が消えない
+- **OLG-125** snapshot / event の永続化: DO SQLite へheader・初期battleCard manifest・
+  stable command/event・current snapshotを同一transactionでappend保存。周期checkpoint + tail再演で
+  クラッシュ後もIDを再生成せず続け、進行中試合は開始時のadapter / engine / content / format版へpinする
 - **OLG-124** player projection: 相手手札・山札・seed を送らない
   プレイヤー別ビュー（設計 §11.3）。**command 処理パイプライン（設計 §11.2）の
   順序をここまでで固定**: Origin / Fetch Metadata確認 → セッション確認 → seat 確認 →
@@ -132,9 +137,9 @@ P1 exit の一言まとめ:
 | 111（受入待ち） | Auth anonymous userと同じUUIDのaccount行が原子的に作られ、clientから直接read/write不能。内部grantのtokenはHTTP/logへ出さず、曖昧失敗を自動再試行しない。Docker上のpgTAP＋GoTrue live smokeが通ればdone（browser route/cookieは113） |
 | 113 | 同一bootstrapの並行/応答喪失が別accountを作らず、session cookieが本番で`__Host-`/HttpOnly/Secure/SameSite=Lax。期限切れ/失効APIは401。通常WebSocketはserver-owned assignment由来の一回限りseat tokenなしでは認証されず、logout後commandも拒否 |
 | 121 | MatchDO 内で NPC 戦が開始→終了まで進み、結果が engine 単体実行と一致する（同 seed 同結果） |
-| 123 | 手札の並びが変わっても battleCardId 指定の action が正しいカードに当たる |
+| 123（完了） | 全カードIDが同seedから独立して一意で、重複printing・shuffle・zone移動後も保持される。手札の並びが変わっても指定個体へ当たり、旧index・未知・stale・他owner・非hand IDは盤面不変で拒否 |
 | 122 | 同じ commandId の再送は 2 回目が no-op（同じ応答を返す）。古い expectedRevision は拒否され盤面が変わらない |
-| 125 | command 適用のたび DO SQLite に永続化。DO を強制再起動しても試合が同じ盤面で続く |
+| 125 | command 適用のたびheader・初期ID manifest・stable steps・current snapshotを同一transactionへ永続化。DO を強制再起動してもCSPRNG再採番や自動NPC pumpをせず、同じID・盤面で続く |
 | 124 | projection に相手手札・山札の中身・seed が含まれないことをテストで保証 |
 | 126 | バトル中リロード→ 同じ試合・同じ操作待ちへ自動復帰。切断 30 秒→復帰も同様 |
 | 133 | 復帰導線がスマホ縦持ち・PC の両方で表示され、タップ 1 回で盤面へ戻る |

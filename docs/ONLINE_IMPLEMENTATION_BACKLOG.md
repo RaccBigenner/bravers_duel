@@ -551,7 +551,8 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
 - Workers test poolが要求するVitest 4.1.10へtest runnerを統一する。Web/Adminのunit testは専用configを
   使い、production build用Vite 5/React pluginの設定をVitest内蔵Viteへ読み込ませない
 - `MatchDO`は宣言的Durable Object exportとSQLite storageを使い、WebSocket Hibernation APIで
-  疎通確認用socketを受ける。ゲーム本体のbrowser向けCommand/Event/SnapshotはOLG-123/122/125/124へ残す
+  疎通確認用socketを受ける。内部action型はOLG-123で実装済み。ゲーム本体のbrowser向け
+  Command envelope / Event / SnapshotはOLG-122/125/124へ残す
 - `GET /health`はWorkerだけで成功にせず、health専用MatchDOを呼び、DO SQLiteの`SELECT 1`まで確認する
 - `npm run dev:online`はlocal Supabaseの状態確認→必要なら起動→`migration up --local`→
   status/migration確認→pgTAP DB受入→Wrangler local起動の順に行う。Supabase CLIの`--workdir`は
@@ -718,7 +719,7 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
 - OLG-121 engine server adapter（server-owned assignment directoryと、正常終了・取消・放棄後の
   SessionCoordinator参照解除を含む）— **コード実装済み（2026-08-01）**
 - OLG-122 `commandId + expectedRevision`
-- OLG-123 stable `battleCardId`
+- OLG-123 stable `battleCardId` — **コード実装済み（2026-08-01）**
 - OLG-124 player projection
 - OLG-125 snapshot/event persistence
 - OLG-126 reconnect/resume
@@ -752,15 +753,50 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
 - NPC戦を最後まで決定論的に進め、勝敗をSQLiteへ保存してからassignmentと予約を解除できる
 - active DO eviction後はseedから再生成せずfail closed。terminal lifecycle/resultはeviction後も読める
 - authoritative snapshot / seed / deck / engine-native actionは内部RPCだけで扱い、browser WebSocketの
-  game frameはOLG-123/122/125/124完了まで`error:game-not-ready`で盤面不変にする
+  game frameはOLG-122/125/124完了まで`error:game-not-ready`で盤面不変にする
 
 残余:
 
-- active runtime・action streamの再構築はOLG-125、stable card IDはOLG-123、command冪等性はOLG-122、
+- active runtime・action streamとbattleCardId台帳の再構築はOLG-125、command冪等性はOLG-122、
   player projectionはOLG-124で実装する
 - terminal解放後まで極端に遅延した旧`POST /matches/npc`は新規開始と区別できないためOLG-129へ送る
 - logout失効後にactive lifecycleを自動終端する条件は、NPC idle suspendを扱うOLG-127で固定する
 - MatchDOのbattle lifecycle / terminal outboxは後続機能追加時に別moduleへ分割する
+
+#### OLG-123 stable battleCardId
+
+状態: **コード実装済み**（2026-08-01）
+
+- protocolに`bc_` + lowercase 32 hexのbranded `BattleCardId`とexact `MatchAction` unionを置いた。
+  card actionはID必須、旧`handIndex`と余剰keyを受けない
+- MatchDOで試合を作るたび、engine seedとは独立したCSPRNGから全カード個体へ128-bit IDを割り当てる。
+  重複printingも別IDで、形式違反・衝突は試合開始前にfail closedにする
+- engineは公開APIとしてカードのmove / deck swap traceを返す。server adapterは全zone台帳へtraceを
+  同じtrial内で適用し、ID / owner / printing / 枚数 / zone順がengine stateと一致した時だけcommitする。
+  engine-native state、state hash、replay v1、既存`BattleAction`は変更しない
+- client由来actionは現在の行動者handだけからIDを解決する。未知・stale・他owner・非hand IDは
+  `BATTLE_ACTION_INVALID`で盤面不変に拒否し、NPC action logもstable IDへ変換する
+- NPC先攻pump前の`initialBattleCards` + `initialIdentityHash`をimmutable manifestとしてsnapshotへ持つ。
+  `restoreFromHistory`はCSPRNG再採番・自動NPC pumpなしでstable stepsを現在handへ順次解決し、
+  state / identity hashとeventsを毎手照合する。engine action / `handIndex`は履歴へ保存しない
+
+受入:
+
+- 同seedのengine state / 結果は同じまま、別試合のbattleCardIdは一致しない
+- 重複printing、search shuffle、hand→AP、equipment / field、効果失敗rollbackを個体単位で追跡できる
+- 手札先頭を移動してindexが詰まった後も、保存済みIDが同じ個体へ当たる
+- 初期manifestとstable stepsから同一runtimeを再演でき、初期ID / hash / step改変をfail closedにできる
+- golden replayを含むengine testとadapter / MatchDO境界testがgreen
+
+残余:
+
+- OLG-125はheader / 初期manifest / stable steps / current snapshotを同一transactionへ保存し、
+  append-only steps + 周期checkpointからtailを再演してcurrent snapshotと照合する。監査時は初期から全再演し、
+  開始時のadapter / engine / content / format版へpinする。一致runtime不在時は現行版で再生せずfail closedにする
+- G2の所持個体連携はOLG-200で、lock済みinstance poolと初期printing配置を1対1照合して
+  server-only `battleCardId → instance_id`対応表を作る。キラ等の表示属性以外は同printingで同値とする
+- opponent hand / deckのIDとprintingをwireから隠すprojectionはOLG-124
+- browser向けgame frameはOLG-122/125/124まで`error:game-not-ready`のまま開かない
 
 ### Epic OLG-130 PWA shell
 
