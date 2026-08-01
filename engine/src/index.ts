@@ -8,6 +8,7 @@ export * from './decks';
 export * from './deckLegality';
 export * from './starters';
 export * from './battle';
+export * from './battleCardTrace';
 export * from './replay';
 export * from './events';
 export * from './ai';

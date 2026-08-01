@@ -10,6 +10,7 @@
  * 選択が必要な一部のカード効果は、効果ごとの実装状況を参照する。
  */
 import { cardByPrintingId, oracleIdOfPrinting } from './cards';
+import type { BattleCardArrayZone, BattleCardLocation, BattleCardMutation } from './battleCardTrace';
 import { checkDeckForMatchStart, describeDeckViolations } from './deckLegality';
 import { containsAll, formatForDeckRules, DEFAULT_DECK_RULES, type DeckList, type DeckRules } from './decks';
 import type { FormatDefinition } from './formats';
@@ -31,6 +32,7 @@ import {
   type CharacterCard,
   type EquipmentCard,
   type OracleId,
+  type PrintingId,
   type SkillCard,
 } from './types';
 
@@ -128,6 +130,203 @@ export type BattleAction =
   | { type: 'pass' }
   | { type: 'charge'; handIndex: number }
   | { type: 'endTurn' };
+
+// ---------------------------------------------------------------- カード個体trace
+
+/**
+ * traceはBattleStateへ保存しない。stateHash/replay v1/既存snapshotの形を変えず、
+ * `applyActionWithCardTrace` の呼び出し中だけ同じstateのmutationを収集する。
+ * WeakMapをstate単位にすることで、AIの予測cloneや別バトルの処理を混ぜない。
+ */
+const activeCardMutationTraces = new WeakMap<BattleState, BattleCardMutation[]>();
+
+function arrayLocation(
+  player: PlayerIndex,
+  zone: BattleCardArrayZone,
+  index: number,
+): BattleCardLocation {
+  return { type: 'array', player, zone, index };
+}
+
+function recordCardMutation(state: BattleState, mutation: BattleCardMutation): void {
+  activeCardMutationTraces.get(state)?.push(mutation);
+}
+
+function arrayZoneOf(
+  state: BattleState,
+  player: PlayerIndex,
+  zone: BattleCardArrayZone,
+): string[] {
+  return state.players[player][zone];
+}
+
+/** 配列zone間で1枚を動かす。toIndexは取り除いた後の挿入位置。 */
+function moveArrayCard(
+  state: BattleState,
+  fromPlayer: PlayerIndex,
+  fromZone: BattleCardArrayZone,
+  fromIndex: number,
+  toPlayer: PlayerIndex,
+  toZone: BattleCardArrayZone,
+  toIndex = arrayZoneOf(state, toPlayer, toZone).length,
+): PrintingId {
+  const from = arrayZoneOf(state, fromPlayer, fromZone);
+  const printingId = from[fromIndex];
+  if (printingId === undefined) {
+    throw new Error(`カード移動元がありません: P${fromPlayer + 1}.${fromZone}[${fromIndex}]`);
+  }
+  from.splice(fromIndex, 1);
+
+  const to = arrayZoneOf(state, toPlayer, toZone);
+  if (!Number.isSafeInteger(toIndex) || toIndex < 0 || toIndex > to.length) {
+    throw new Error(`カード移動先が不正です: P${toPlayer + 1}.${toZone}[${toIndex}]`);
+  }
+  to.splice(toIndex, 0, printingId);
+  recordCardMutation(state, {
+    type: 'move',
+    printingId,
+    from: arrayLocation(fromPlayer, fromZone, fromIndex),
+    to: arrayLocation(toPlayer, toZone, toIndex),
+  });
+  return printingId;
+}
+
+/** 配列zoneの先頭から最大n枚を、順序を保ったまま別zone末尾へ動かす。 */
+function moveArrayPrefix(
+  state: BattleState,
+  fromPlayer: PlayerIndex,
+  fromZone: BattleCardArrayZone,
+  toPlayer: PlayerIndex,
+  toZone: BattleCardArrayZone,
+  n: number,
+): PrintingId[] {
+  const count = Math.min(Math.max(0, n), arrayZoneOf(state, fromPlayer, fromZone).length);
+  const moved: PrintingId[] = [];
+  for (let i = 0; i < count; i++) {
+    moved.push(moveArrayCard(state, fromPlayer, fromZone, 0, toPlayer, toZone));
+  }
+  return moved;
+}
+
+function moveArrayToEquipment(
+  state: BattleState,
+  fromPlayer: PlayerIndex,
+  fromZone: BattleCardArrayZone,
+  fromIndex: number,
+  player: PlayerIndex,
+  characterSlot: number,
+): PrintingId {
+  const character = state.players[player].characters[characterSlot];
+  if (!character) throw new Error(`装備先がありません: P${player + 1}[${characterSlot}]`);
+  if (character.equipmentCardId !== null) {
+    throw new Error(`装備先が空ではありません: P${player + 1}[${characterSlot}]`);
+  }
+  const from = arrayZoneOf(state, fromPlayer, fromZone);
+  const printingId = from[fromIndex];
+  if (printingId === undefined) {
+    throw new Error(`カード移動元がありません: P${fromPlayer + 1}.${fromZone}[${fromIndex}]`);
+  }
+  from.splice(fromIndex, 1);
+  character.equipmentCardId = printingId;
+  recordCardMutation(state, {
+    type: 'move',
+    printingId,
+    from: arrayLocation(fromPlayer, fromZone, fromIndex),
+    to: { type: 'equipment', player, characterSlot },
+  });
+  return printingId;
+}
+
+function moveEquipmentToArray(
+  state: BattleState,
+  player: PlayerIndex,
+  characterSlot: number,
+  toPlayer: PlayerIndex,
+  toZone: BattleCardArrayZone,
+): PrintingId {
+  const character = state.players[player].characters[characterSlot];
+  const printingId = character?.equipmentCardId;
+  if (!character || printingId === null || printingId === undefined) {
+    throw new Error(`移動する装備がありません: P${player + 1}[${characterSlot}]`);
+  }
+  const to = arrayZoneOf(state, toPlayer, toZone);
+  const toIndex = to.length;
+  character.equipmentCardId = null;
+  to.push(printingId);
+  recordCardMutation(state, {
+    type: 'move',
+    printingId,
+    from: { type: 'equipment', player, characterSlot },
+    to: arrayLocation(toPlayer, toZone, toIndex),
+  });
+  return printingId;
+}
+
+function moveArrayToField(
+  state: BattleState,
+  fromPlayer: PlayerIndex,
+  fromZone: BattleCardArrayZone,
+  fromIndex: number,
+  owner: PlayerIndex,
+): PrintingId {
+  if (state.field !== null) throw new Error('フィールドが空ではありません');
+  const from = arrayZoneOf(state, fromPlayer, fromZone);
+  const printingId = from[fromIndex];
+  if (printingId === undefined) {
+    throw new Error(`カード移動元がありません: P${fromPlayer + 1}.${fromZone}[${fromIndex}]`);
+  }
+  from.splice(fromIndex, 1);
+  state.field = { cardId: printingId, owner };
+  recordCardMutation(state, {
+    type: 'move',
+    printingId,
+    from: arrayLocation(fromPlayer, fromZone, fromIndex),
+    to: { type: 'field' },
+  });
+  return printingId;
+}
+
+function moveFieldToArray(
+  state: BattleState,
+  toPlayer: PlayerIndex,
+  toZone: BattleCardArrayZone,
+): PrintingId {
+  const field = state.field;
+  if (!field) throw new Error('移動するフィールドがありません');
+  const to = arrayZoneOf(state, toPlayer, toZone);
+  const toIndex = to.length;
+  state.field = null;
+  to.push(field.cardId);
+  recordCardMutation(state, {
+    type: 'move',
+    printingId: field.cardId,
+    from: { type: 'field' },
+    to: arrayLocation(toPlayer, toZone, toIndex),
+  });
+  return field.cardId;
+}
+
+/** 山札内の入れ替え。printingIdが同じ2枚でも個体ledgerが追従できるよう必ず記録する。 */
+function swapDeckCards(
+  state: BattleState,
+  player: PlayerIndex,
+  leftIndex: number,
+  rightIndex: number,
+): void {
+  const deck = state.players[player].deck;
+  if (
+    !Number.isSafeInteger(leftIndex) ||
+    !Number.isSafeInteger(rightIndex) ||
+    leftIndex < 0 ||
+    rightIndex < 0 ||
+    leftIndex >= deck.length ||
+    rightIndex >= deck.length
+  ) {
+    throw new Error(`山札の入れ替え位置が不正です: P${player + 1}[${leftIndex},${rightIndex}]`);
+  }
+  [deck[leftIndex], deck[rightIndex]] = [deck[rightIndex], deck[leftIndex]];
+  recordCardMutation(state, { type: 'swap', player, zone: 'deck', leftIndex, rightIndex });
+}
 
 // ---------------------------------------------------------------- 基本ヘルパー
 
@@ -306,6 +505,8 @@ function runEffectSafely(
     events: state.events,
     eventSeq: state.eventSeq,
   });
+  const mutationTrace = activeCardMutationTraces.get(state);
+  const mutationCheckpoint = mutationTrace?.length ?? 0;
   state.effectDepth++;
   // ＠P◯の◯番手 は演出がキャラ位置を正確に特定するための機械可読な印
   pushLog(state, anchor ? `発動:${label}＠P${anchor.player + 1}の${anchor.charIndex + 1}番手` : `発動:${label}`);
@@ -315,6 +516,7 @@ function runEffectSafely(
     fn();
   } catch (e) {
     Object.assign(state, backup);
+    if (mutationTrace) mutationTrace.length = mutationCheckpoint;
     pushLog(state, `効果でエラーが起きたためスキップ: ${label}（${e instanceof Error ? e.message : e}）`);
   } finally {
     state.effectDepth--;
@@ -427,8 +629,7 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
     chargeFromDeck: (who, n) => {
       const idx = who === 'me' ? owner : enemyIdx;
       const p = state.players[idx];
-      const moved = p.deck.splice(0, clampN(n));
-      p.ap.push(...moved);
+      const moved = moveArrayPrefix(state, idx, 'deck', idx, 'ap', clampN(n));
       if (moved.length > 0) {
         pushLog(state, `P${idx + 1}はデッキから${moved.length}枚チャージ（AP: ${p.ap.length}）`);
         emit(state, { t: 'chargeDeck', player: idx, n: moved.length, ap: p.ap.length });
@@ -437,7 +638,7 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
     chargeAllHand: () => {
       const p = me();
       const n = p.hand.length;
-      p.ap.push(...p.hand.splice(0));
+      moveArrayPrefix(state, owner, 'hand', owner, 'ap', n);
       if (n > 0) {
         pushLog(state, `P${owner + 1}は手札を全てチャージ（${n}枚）`);
         emit(state, { t: 'chargeAllHand', player: owner, n });
@@ -445,8 +646,7 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
     },
     chargeFromTrashBottom: (n) => {
       const p = me();
-      const moved = p.trash.splice(0, clampN(n));
-      p.ap.push(...moved);
+      const moved = moveArrayPrefix(state, owner, 'trash', owner, 'ap', clampN(n));
       if (moved.length > 0) {
         pushLog(state, `P${owner + 1}はトラッシュから${moved.length}枚チャージ（AP: ${p.ap.length}）`);
         emit(state, { t: 'chargeTrash', player: owner, n: moved.length, ap: p.ap.length });
@@ -456,7 +656,7 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
       const idx = who === 'me' ? owner : enemyIdx;
       const p = state.players[idx];
       const before = p.hand.length;
-      p.hand.push(...p.deck.splice(0, clampN(n)));
+      moveArrayPrefix(state, idx, 'deck', idx, 'hand', clampN(n));
       const drawn = p.hand.length - before;
       if (drawn > 0) {
         pushLog(state, `プレイヤー${idx + 1}が${drawn}枚ドロー`);
@@ -466,7 +666,7 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
     discardHandAll: () => {
       const p = me();
       const n = p.hand.length;
-      p.trash.push(...p.hand.splice(0));
+      moveArrayPrefix(state, owner, 'hand', owner, 'trash', n);
       if (n > 0) {
         pushLog(state, `P${owner + 1}は手札を全てトラッシュ（${n}枚）`);
         emit(state, { t: 'handTrash', player: owner, n });
@@ -475,8 +675,7 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
     millDeck: (who, n) => {
       const idx = who === 'me' ? owner : enemyIdx;
       const p = state.players[idx];
-      const moved = p.deck.splice(0, clampN(n));
-      p.trash.push(...moved);
+      const moved = moveArrayPrefix(state, idx, 'deck', idx, 'trash', clampN(n));
       if (moved.length > 0) {
         pushLog(state, `P${idx + 1}のデッキから${moved.length}枚トラッシュ`);
         emit(state, { t: 'mill', player: idx, n: moved.length });
@@ -484,8 +683,7 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
     },
     discardEnemyAp: (n) => {
       const p = enemy();
-      const moved = p.ap.splice(0, clampN(n));
-      p.trash.push(...moved);
+      const moved = moveArrayPrefix(state, enemyIdx, 'ap', enemyIdx, 'trash', clampN(n));
       if (moved.length > 0) {
         pushLog(state, `P${enemyIdx + 1}のAPから${moved.length}枚トラッシュ`);
         emit(state, { t: 'apTrash', player: enemyIdx, n: moved.length });
@@ -493,8 +691,7 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
     },
     discardMyAp: (n) => {
       const p = me();
-      const moved = p.ap.splice(0, clampN(n));
-      p.trash.push(...moved);
+      const moved = moveArrayPrefix(state, owner, 'ap', owner, 'trash', clampN(n));
       if (moved.length > 0) {
         pushLog(state, `P${owner + 1}のAPから${moved.length}枚トラッシュ`);
         emit(state, { t: 'apTrash', player: owner, n: moved.length });
@@ -568,8 +765,7 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
     },
     returnTrashBottomToDeck: (n) => {
       const p = me();
-      const moved = p.trash.splice(0, clampN(n));
-      p.deck.push(...moved); // デッキの下に戻す
+      const moved = moveArrayPrefix(state, owner, 'trash', owner, 'deck', clampN(n)); // デッキの下に戻す
       if (moved.length > 0) {
         pushLog(state, `P${owner + 1}はトラッシュから${moved.length}枚をデッキに戻した`);
         emit(state, { t: 'trashToDeck', player: owner, n: moved.length });
@@ -645,12 +841,11 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
       const p = me();
       const idx = p.deck.findIndex(filter);
       if (idx === -1) return false;
-      const [card] = p.deck.splice(idx, 1);
-      p.hand.push(card);
+      const card = moveArrayCard(state, owner, 'deck', idx, owner, 'hand');
       // 見たのでシャッフル
       for (let i = p.deck.length - 1; i > 0; i--) {
         const j = Math.floor(stepRng(state) * (i + 1));
-        [p.deck[i], p.deck[j]] = [p.deck[j], p.deck[i]];
+        swapDeckCards(state, owner, i, j);
       }
       pushLog(state, `デッキから${cardByPrintingId(card).name}を手札に加えた`);
       emit(state, { t: 'searchToHand', player: owner, cardId: card });
@@ -660,21 +855,20 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
     destroyTargetEquipment: () => {
       const t = firstTarget();
       if (t === null) return;
-      const c = state.players[defenderIdx()].characters[t];
+      const targetPlayer = defenderIdx();
+      const c = state.players[targetPlayer].characters[t];
       if (c.equipmentCardId) {
-        state.players[defenderIdx()].trash.push(c.equipmentCardId);
-        pushLog(state, `P${defenderIdx() + 1}の${c.name}の装備${cardByPrintingId(c.equipmentCardId).name}を破壊`);
-        emit(state, { t: 'equipDestroyed', player: defenderIdx(), charIndex: t, cardId: c.equipmentCardId });
-        c.equipmentCardId = null;
+        const removedCardId = moveEquipmentToArray(state, targetPlayer, t, targetPlayer, 'trash');
+        pushLog(state, `P${targetPlayer + 1}の${c.name}の装備${cardByPrintingId(removedCardId).name}を破壊`);
+        emit(state, { t: 'equipDestroyed', player: targetPlayer, charIndex: t, cardId: removedCardId });
       }
     },
     destroySelfEquipment: () => {
       const c = me().characters[ownerChar];
       if (c.equipmentCardId) {
-        me().trash.push(c.equipmentCardId);
-        pushLog(state, `P${owner + 1}の${c.name}の装備${cardByPrintingId(c.equipmentCardId).name}を破壊`);
-        emit(state, { t: 'equipDestroyed', player: owner, charIndex: ownerChar, cardId: c.equipmentCardId });
-        c.equipmentCardId = null;
+        const removedCardId = moveEquipmentToArray(state, owner, ownerChar, owner, 'trash');
+        pushLog(state, `P${owner + 1}の${c.name}の装備${cardByPrintingId(removedCardId).name}を破壊`);
+        emit(state, { t: 'equipDestroyed', player: owner, charIndex: ownerChar, cardId: removedCardId });
       }
     },
     handUsableSkillCount: (by) => {
@@ -691,7 +885,7 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
     consumeAllMyAp: () => {
       const p = me();
       const n = p.ap.length;
-      p.trash.push(...p.ap.splice(0));
+      moveArrayPrefix(state, owner, 'ap', owner, 'trash', n);
       if (n > 0) {
         pushLog(state, `P${owner + 1}のAPから${n}枚トラッシュ`);
         emit(state, { t: 'apTrash', player: owner, n });
@@ -700,8 +894,7 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
     },
     consumeAp: (n) => {
       const p = me();
-      const moved = p.ap.splice(0, clampN(n));
-      p.trash.push(...moved);
+      const moved = moveArrayPrefix(state, owner, 'ap', owner, 'trash', clampN(n));
       if (moved.length > 0) {
         pushLog(state, `P${owner + 1}のAPから${moved.length}枚トラッシュ`);
         emit(state, { t: 'apTrash', player: owner, n: moved.length });
@@ -727,9 +920,8 @@ function makeApi(state: BattleState, owner: PlayerIndex, ownerChar: number): Eff
         emit(state, { t: 'info', text: 'デッキに条件に合うカードが無かった' });
         return;
       }
-      const [id] = p.deck.splice(idx, 1);
+      const id = moveArrayCard(state, owner, 'deck', idx, owner, 'trash');
       const card = cardByPrintingId(id) as SkillCard;
-      p.trash.push(id);
       pushLog(state, `デッキから${card.name}をコストなしで使用`);
       emit(state, { t: 'castFromDeck', player: owner, charIndex: ownerChar, cardId: id });
       // スキルを本当に「使用」する（効果込み）。奇襲扱いでguard割り込みは不可。
@@ -897,8 +1089,8 @@ export function createBattle(
       };
     });
     const player: PlayerBattle = {
-      deck: shuffledDeck,
-      hand: shuffledDeck.splice(0, HAND_REFILL_TO),
+      deck: shuffledDeck.slice(HAND_REFILL_TO),
+      hand: shuffledDeck.slice(0, HAND_REFILL_TO),
       trash: [],
       ap: [],
       characters,
@@ -913,8 +1105,8 @@ export function createBattle(
     return player;
   }) as [PlayerBattle, PlayerBattle];
 
-  const second = players[(1 - firstPlayer) as PlayerIndex];
-  second.ap.push(...second.deck.splice(0, SECOND_PLAYER_STARTING_AP));
+  const secondPlayer = (1 - firstPlayer) as PlayerIndex;
+  const second = players[secondPlayer];
 
   const state: BattleState = {
     turn: 1,
@@ -935,6 +1127,8 @@ export function createBattle(
     events: [],
     eventSeq: 0,
   };
+  // createBattleの初期化traceは公開しないが、通常のzone移動と同じhelperで状態を作る。
+  moveArrayPrefix(state, secondPlayer, 'deck', secondPlayer, 'ap', SECOND_PLAYER_STARTING_AP);
   pushLog(
     state,
     `後攻のP${(1 - firstPlayer) + 1}はデッキから${SECOND_PLAYER_STARTING_AP}枚チャージ（AP: ${second.ap.length}）`,
@@ -1025,7 +1219,7 @@ function drawPhase(state: BattleState): void {
 
   if (drawCount > 0) {
     const drawn = Math.min(drawCount, p.deck.length);
-    p.hand.push(...p.deck.splice(0, drawn));
+    moveArrayPrefix(state, state.active, 'deck', state.active, 'hand', drawn);
     if (drawn > 0) {
       pushLog(state, `プレイヤー${state.active + 1}が${drawn}枚ドロー`);
       emit(state, { t: 'draw', player: state.active, n: drawn });
@@ -1240,9 +1434,8 @@ export function applyAction(state: BattleState, action: BattleAction): void {
       const cost = effectiveSkillCost(state, state.active, card, usingChar);
       if (p.ap.length < cost) throw new Error(`APが足りません: ${card.name}`);
 
-      p.trash.push(...p.ap.splice(0, cost));
-      p.hand.splice(action.handIndex, 1);
-      p.trash.push(card.printingId);
+      moveArrayPrefix(state, state.active, 'ap', state.active, 'trash', cost);
+      moveArrayCard(state, state.active, 'hand', action.handIndex, state.active, 'trash');
       p.skillsUsedThisTurn++;
       p.nextSkillCostDelta = 0; // コスト修正は1回で消費
       pushLog(state, `P${state.active + 1}の${p.characters[usingChar].name}（${usingChar + 1}番手）が${card.name}を使用`);
@@ -1281,9 +1474,8 @@ export function applyAction(state: BattleState, action: BattleAction): void {
       if (!pending) throw new Error('割り込む攻撃がありません');
 
       const cost = effectiveSkillCost(state, defender, card);
-      p.trash.push(...p.ap.splice(0, cost));
-      p.hand.splice(action.handIndex, 1);
-      p.trash.push(card.printingId);
+      moveArrayPrefix(state, defender, 'ap', defender, 'trash', cost);
+      moveArrayCard(state, defender, 'hand', action.handIndex, defender, 'trash');
       if (card.effectText !== '' && !hasEffectImplementation(card.oracleId)) {
         pushLog(state, `※${card.name}の効果は未実装: 「${card.effectText}」`);
       }
@@ -1337,12 +1529,24 @@ export function applyAction(state: BattleState, action: BattleAction): void {
       }
       // 付け替えOK: 古い装備はトラッシュへ
       if (target.equipmentCardId) {
-        p.trash.push(target.equipmentCardId);
-        pushLog(state, `P${state.active + 1}の${target.name}の${cardByPrintingId(target.equipmentCardId).name}を外してトラッシュ`);
-        emit(state, { t: 'info', text: `${target.name}の${cardByPrintingId(target.equipmentCardId).name}は外れた` });
+        const removedCardId = moveEquipmentToArray(
+          state,
+          state.active,
+          action.targetIndex,
+          state.active,
+          'trash',
+        );
+        pushLog(state, `P${state.active + 1}の${target.name}の${cardByPrintingId(removedCardId).name}を外してトラッシュ`);
+        emit(state, { t: 'info', text: `${target.name}の${cardByPrintingId(removedCardId).name}は外れた` });
       }
-      p.hand.splice(action.handIndex, 1);
-      target.equipmentCardId = card.printingId;
+      moveArrayToEquipment(
+        state,
+        state.active,
+        'hand',
+        action.handIndex,
+        state.active,
+        action.targetIndex,
+      );
       pushLog(state, `P${state.active + 1}の${target.name}に${card.name}を装備`);
       emit(state, { t: 'equip', player: state.active, charIndex: action.targetIndex, cardId: card.printingId });
       return;
@@ -1355,12 +1559,12 @@ export function applyAction(state: BattleState, action: BattleAction): void {
       if (card.type !== 'field') throw new Error(`フィールドカードではありません: ${card.name}`);
       // 上書きOK: 古いフィールドは持ち主のトラッシュへ
       if (state.field) {
-        state.players[state.field.owner].trash.push(state.field.cardId);
-        pushLog(state, `${cardByPrintingId(state.field.cardId).name}は上書きされてトラッシュへ`);
-        emit(state, { t: 'info', text: `${cardByPrintingId(state.field.cardId).name}は上書きされた` });
+        const previousOwner = state.field.owner;
+        const removedCardId = moveFieldToArray(state, previousOwner, 'trash');
+        pushLog(state, `${cardByPrintingId(removedCardId).name}は上書きされてトラッシュへ`);
+        emit(state, { t: 'info', text: `${cardByPrintingId(removedCardId).name}は上書きされた` });
       }
-      p.hand.splice(action.handIndex, 1);
-      state.field = { cardId: card.printingId, owner: state.active };
+      moveArrayToField(state, state.active, 'hand', action.handIndex, state.active);
       pushLog(state, `フィールド${card.name}を展開`);
       emit(state, { t: 'fieldSet', player: state.active, cardId: card.printingId });
       return;
@@ -1380,8 +1584,7 @@ export function applyAction(state: BattleState, action: BattleAction): void {
           if (best === -1 || c.damage > p.characters[best].damage) best = i;
         }
       });
-      p.hand.splice(action.handIndex, 1);
-      p.trash.push(card.printingId);
+      moveArrayCard(state, state.active, 'hand', action.handIndex, state.active, 'trash');
       pushLog(state, `${card.name}のカードを使用`);
       emit(state, { t: 'characterCardUsed', player: state.active, cardId: card.printingId });
       healCharacter(state, state.active, best, CHARACTER_CARD_HEAL);
@@ -1423,8 +1626,7 @@ export function applyAction(state: BattleState, action: BattleAction): void {
       requirePhase(state, 'charge');
       const p = state.players[state.active];
       const card = cardAtHand(p, action.handIndex);
-      p.hand.splice(action.handIndex, 1);
-      p.ap.push(card.printingId);
+      moveArrayCard(state, state.active, 'hand', action.handIndex, state.active, 'ap');
       p.chargedThisTurn++;
       pushLog(state, `プレイヤー${state.active + 1}が${card.name}をチャージ（AP: ${p.ap.length}）`);
       emit(state, { t: 'chargeHand', player: state.active, cardId: card.printingId, ap: p.ap.length });
@@ -1476,6 +1678,28 @@ export function applyAction(state: BattleState, action: BattleAction): void {
       beginTurn(state);
       return;
     }
+  }
+}
+
+/**
+ * 通常のaction適用と同じ状態遷移を行い、その1 action中の正確なカード移動を返す。
+ * mutationは成功したactionについてだけ利用すること。呼び出しが例外になった場合、
+ * applyActionと同じくstate全体のrollbackは行わないため、serverはclone上で呼ぶ。
+ */
+export function applyActionWithCardTrace(
+  state: BattleState,
+  action: BattleAction,
+): BattleCardMutation[] {
+  if (activeCardMutationTraces.has(state)) {
+    throw new Error('同じBattleStateでカード移動traceを入れ子に収集できません');
+  }
+  const mutations: BattleCardMutation[] = [];
+  activeCardMutationTraces.set(state, mutations);
+  try {
+    applyAction(state, action);
+    return mutations;
+  } finally {
+    activeCardMutationTraces.delete(state);
   }
 }
 
