@@ -538,8 +538,43 @@ web 1 test、admin 47 tests、Web/Admin build、`check:leak`、`check:stale`がg
 `supabase --workdir supabase services -o json`で設定読込に成功し、migration symlinkの実体一致を確認。
 Docker/local stack起動とmigration適用はOLG-102で行う。
 
-- OLG-102 local Supabase/Worker/DO（OLG-101の雛形を実際にローカルで起動する。Supabase CLI/
-  Wranglerのローカル実行、`MatchDO`等の最小スタブ）
+#### OLG-102 local Supabase/Worker/DO
+
+状態: **実装済み・実stack受入待ち**（2026-08-01）
+
+OLG-101の雛形を、外部resource/secretを使わずローカルで実際に起動する。
+
+- Node.js 22を`.nvmrc`と`engines`で固定。Supabase CLI 2.111.0、Wrangler 4.118.0を
+  root/serverのdev dependencyとして固定し、グローバルCLIへ依存しない
+- Workers test poolが要求するVitest 4.1.10へtest runnerを統一する。Web/Adminのunit testは専用configを
+  使い、production build用Vite 5/React pluginの設定をVitest内蔵Viteへ読み込ませない
+- `MatchDO`は宣言的Durable Object exportとSQLite storageを使い、WebSocket Hibernation APIで
+  疎通確認用socketを受ける。ゲーム本体のCommand/Event/SnapshotはOLG-121/122/125へ残す
+- `GET /health`はWorkerだけで成功にせず、health専用MatchDOを呼び、DO SQLiteの`SELECT 1`まで確認する
+- `npm run dev:online`はlocal Supabaseの状態確認→必要なら起動→`migration up --local`→
+  status/migration確認→Wrangler local起動の順に行う。SIGINT/SIGTERM/失敗時は、スクリプト自身が
+  起動したSupabase/Workerだけを停止し、先に動いていたローカルstackは止めない
+- `npm run smoke:online`はhealthとWebSocket `probe`応答まで自動検証して終了する。
+  `--worker-only`はコンテナランタイムがない環境でもWorker/MatchDOだけを診断する
+- repo単位lockでSupabaseの二重操作を拒否し、Worker portの事前占有検査と起動run ID照合で
+  別processへの誤疎通を拒否する。各health requestにも期限を設け、応答しないportで停止し続けない
+- Supabaseの`status`が明示的なnot-runningの場合だけ起動し、それ以外の非0は既存stackへ触れず
+  fail closedする。停止timeout/nonzeroを含むcleanup失敗は、元の失敗とまとめて報告する
+
+受入:
+
+- `npm run smoke:online -- --worker-only`で実Wrangler/workerdのhealth、MatchDO、DO SQLite、
+  WebSocket upgradeと起動run ID照合がgreen。Vitest Workers poolではDOを強制evictionした後の
+  同一WebSocket `probe`もgreen
+- 使用中port、ready前child exitと敗者待機のabort、応答しないhealth、二重lock、status曖昧失敗、
+  start途中失敗/競合借用、起動途中signal/正常終了、cleanup失敗集約、WebSocket二重完了/timeoutを含む
+  起動ライフサイクル20 testがgreen
+- clean `npm ci`後のroot全test、Web/Admin build、engine/admin/functions型検査、
+  `check:leak`、`check:stale`がgreen。production dependencyの既知auditは0
+- 実在のCloudflareリソース、Supabase project、secretを一切作っていない
+- **残り**: Docker互換ランタイムを起動したMacで`npm run smoke:online`を実行し、
+  `20260731053431` migrationのlocal適用まで確認する。ここを通すまでOLG-102をdoneにしない
+
 - OLG-103 development/staging/production bindings（実在のCloudflare/Supabase project作成を含む。
   社長のアカウント・課金判断が要る）
 - OLG-104 migration CIとenvironment marker

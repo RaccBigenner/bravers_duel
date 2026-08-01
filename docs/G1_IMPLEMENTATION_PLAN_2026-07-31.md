@@ -49,8 +49,10 @@ P1 exit の一言まとめ:
   - `server/migrations/`をPostgreSQL正本とし、`supabase/migrations` symlinkからCLIへ接続
   - `supabase init`相当のローカル設定と既存npm workspaceへの組み込み
   - Command/Event/Snapshot実型、Wrangler、MatchDO、WebSocket疎通はまだ作らない
-- **OLG-102** ローカル環境: Supabase CLI + Wrangler local（DO/SQLite）が
-  1 コマンドで立ち上がり、MatchDOの最小WebSocket疎通とヘルスチェック API が通る
+- **OLG-102（実装済み・実stack受入待ち）** ローカル環境: Supabase CLI + Wrangler local（DO/SQLite）が
+  1 コマンドで立ち上がり、MatchDOの最小WebSocket疎通とヘルスチェック API が通る。
+  Worker/MatchDOの実runtime smokeはgreen。Docker互換ランタイム起動後のSupabase migration実適用を
+  最後の受入として残す
 
 ### Step B: アカウントの土台（OLG-111 → OLG-113）
 
@@ -112,7 +114,7 @@ P1 exit の一言まとめ:
 | OLG | 受け入れ条件（これができたら done） |
 |---|---|
 | 101（完了） | `npm install`後にserver/protocolのtest・typecheckとルート`npm test`が通る。Supabase CLIが設定と`server/migrations/`へのsymlinkを認識し、外部resource/secretを作っていない |
-| 102 | 1コマンドでローカル一式が起動し、MatchDOの最小WebSocket疎通、ヘルスチェック、Supabase migrationが通る |
+| 102（受入待ち） | 1コマンド、MatchDO WebSocket、DO SQLiteを含むhealthは実装・検証済み。Docker互換ランタイム上でSupabase migrationが通ればdone |
 | 111 | ブラウザを初めて開いたゲストにサーバー側 account_id が発行され、DB に匿名アカウント行ができる |
 | 113 | session cookie が HttpOnly/Secure/SameSite=Lax。期限切れ session の API は 401。seat token なしの WebSocket は拒否 |
 | 121 | MatchDO 内で NPC 戦が開始→終了まで進み、結果が engine 単体実行と一致する（同 seed 同結果） |

@@ -5,14 +5,18 @@
   "type": "module",
   "main": "./src/index.ts",
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "dev": "wrangler dev --local --ip 127.0.0.1",
+    "generate-types": "wrangler types",
+    "typecheck": "wrangler types --check && tsc --noEmit",
     "test": "npm run typecheck && vitest run"
   },
   "dependencies": {
     "@bravers/protocol": "*"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.20.1",
     "typescript": "^5.6.0",
-    "vitest": "^2.1.0"
+    "vitest": "4.1.10",
+    "wrangler": "4.118.0"
   }
 }

@@ -2,6 +2,9 @@
   "name": "bravers-duel",
   "private": true,
   "version": "0.1.0",
+  "engines": {
+    "node": ">=22 <23"
+  },
   "workspaces": [
     "engine",
     "web",
@@ -10,19 +13,24 @@
     "server"
   ],
   "scripts": {
-    "test": "npm run test:migration && npm run test:publish && npm run test:invites && npm run test:stale && npm run check:stale && npm --workspace protocol run test && npm --workspace server run test && npm --workspace engine run test && npm --workspace web run test && npm --workspace admin run test",
+    "test": "npm run test:migration && npm run test:publish && npm run test:invites && npm run test:online-local && npm run test:stale && npm run check:stale && npm --workspace protocol run test && npm --workspace server run test && npm --workspace engine run test && npm --workspace web run test && npm --workspace admin run test",
     "test:migration": "node --test scripts/migrate-card-identities.test.mjs",
     "test:publish": "node --test scripts/publish-card-set.test.mjs",
+    "test:online-local": "node --test scripts/run-local-online.test.mjs",
     "sim": "npm --workspace engine run sim --",
     "dev": "npm --workspace web run dev",
     "build": "npm --workspace web run build",
     "admin": "npm --workspace admin run dev",
+    "dev:online": "node scripts/run-local-online.mjs",
+    "smoke:online": "node scripts/run-local-online.mjs --smoke",
+    "stop:online": "supabase --workdir supabase stop",
     "check:leak": "node scripts/check-no-wip-leak.mjs",
     "check:stale": "node scripts/check-stale-comments.mjs",
     "test:stale": "node --test scripts/check-stale-comments.test.mjs",
     "test:invites": "node --test scripts/invites.test.mjs"
   },
   "devDependencies": {
-    "sharp": "^0.35.3"
+    "sharp": "^0.35.3",
+    "supabase": "2.111.0"
   }
 }

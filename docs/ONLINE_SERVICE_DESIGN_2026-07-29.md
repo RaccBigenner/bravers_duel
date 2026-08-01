@@ -1818,6 +1818,41 @@ secretを用意するのはOLG-103以降（社長の手番を含む）。OLG-101
 - 実在のCloudflareリソース、実在のSupabase project、実在のsecretは一切作らない
   （それらはOLG-102〜105の範囲。OLG-101はローカルの雛形だけ）
 
+### 10.8 OLG-102: local Supabase/Worker/MatchDOの実行境界
+
+OLG-102は10.7の雛形をローカルだけで起動し、後続のサーバー権威バトルを載せられる実行境界を固定する。
+実在のCloudflare resource、Supabase project、外部secretは作らず、接続もしない。
+
+- runtimeはNode.js 22に固定し、Supabase CLIとWranglerはroot/serverのdev dependencyへ正確な版を置く。
+  開発者のグローバルCLIの版に成否を左右させない
+- `MatchDO`は宣言的export、SQLite storage、WebSocket Hibernation APIを使う。OLG-102のsocket protocolは
+  runtime疎通用の`probe`だけとし、Command/Event/Snapshot、認証、試合状態はOLG-121以降へ混ぜない
+- `GET /health`はWorker processの生存だけでなく、health専用MatchDOの呼出しとDO SQLiteの
+  `SELECT 1`までを1応答で確認する。失敗時は503、成功/失敗応答は`no-store`とする
+- Match IDはURL segment 1個（英数字・`_`・`-`、1〜64文字）だけを受理し、任意pathをDO名へ流さない
+- 同じrepoのlocal Supabase操作はprocess lockで直列化する。Workerは指定portが空いていることを
+  起動前に確認し、起動ごとのrun IDをWrangler bindingとhealth応答で照合する。これにより、古いWorkerや
+  別processのhealth/WebSocketを、新しく起動したWorkerの成功として扱わない
+
+ローカル起動は次の順序を変えない。
+
+1. 既存local Supabaseの状態を確認する。CLIが明示的にnot-runningと返した場合だけ手順2へ進み、
+   unhealthy、Docker inspect失敗など他の非0は既存stackへ触れずfail closedする
+2. 停止中なら`supabase start`で起動し、このプロセスが所有したことを記録する
+3. `supabase migration up --local`を実行し、statusとmigration listを確認する
+4. 空きportへWrangler localをloopbackで起動し、`GET /health`がDO SQLiteと今回のrun IDまで
+   greenになるのを待つ。子processが先に終了した場合は直ちに失敗する
+5. WebSocketをupgradeし、`probe`応答を検証する
+6. 起動、migration、疎通、常駐のどの段階でもSIGINT/SIGTERMを捕捉する。smoke終了、失敗、signalの
+   いずれでもWorker process treeを止める。Supabaseは手順2で自分が起動を試みた場合だけ止め、
+   start途中で失敗したcontainerも残さない。先に動いていたstackは残す。停止の非0/timeoutは
+   元の失敗と併記し、後始末成功と表示しない
+
+`npm run dev:online`は確認後も起動を維持し、`npm run smoke:online`は一式を検証して終了する。
+コンテナランタイムが使えないときの切り分け専用に`--worker-only`を許可するが、これは
+Supabase migrationの受入を満たさない。OLG-102をdoneにするには、Docker互換ランタイム上で
+通常の`npm run smoke:online`を通し、`server/migrations/`の版がlocal DBへ適用されたことまで確認する。
+
 ---
 
 ## 11. 完全サーバー権威のバトル

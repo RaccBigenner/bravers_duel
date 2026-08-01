@@ -37,11 +37,35 @@ npm install       # 最初に1回
 npm test          # 全部のテスト（protocol / server / engine / web / admin / スクリプト）
 npm run sim       # 自動対戦シミュレーター
 npm run dev       # ブラウザで動作確認（開発サーバー）
+npm run dev:online    # Supabase + Worker/MatchDOをローカル起動
+npm run smoke:online  # migration・health・WebSocketを通して終了
 npm run build     # ブラウザ用のビルド
 npm run admin     # カード制作用の管理画面
 npm run check:leak    # 未公開カードが公開物へ漏れていないか検査
 npm run check:stale   # 古くなった記述が残っていないか検査
 ```
+
+### ローカルのオンライン基盤
+
+Node.js 22（`.nvmrc`）と、起動済みのDocker互換コンテナランタイムが必要。
+
+```bash
+npm run dev:online
+```
+
+この1コマンドでローカルSupabaseを確認または起動し、`server/migrations/`のmigrationを適用してから
+Wrangler localを起動する。終了時は、このコマンド自身が起動したプロセスだけを停止する。
+実在のCloudflare/Supabaseリソースやsecretには接続しない。
+同じrepoのSupabase二重起動と使用中Worker portは開始前に拒否し、healthは起動ごとのrun IDまで照合する。
+
+- health check: `http://127.0.0.1:8787/health`
+- 最小WebSocket: `ws://127.0.0.1:8787/matches/<matchId>/ws`
+- 一式を自動検証して終了: `npm run smoke:online`
+- Supabaseを使わずWorker/MatchDOだけ診断: `npm run smoke:online -- --worker-only`
+- 手動起動などで残したローカルSupabaseを停止: `npm run stop:online`
+
+WebSocketはOLG-102の疎通確認用`probe:`だけを扱う。ゲーム本体のCommand/Event/Snapshotは
+後続のOLG-121/122/125で実装する。
 
 エンジンだけを触るとき:
 

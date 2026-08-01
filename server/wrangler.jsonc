@@ -1,0 +1,23 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "bravers-duel-server",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  "vars": {
+    "APP_ENV": "local"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "MATCH_DO",
+        "class_name": "MatchDO"
+      }
+    ]
+  },
+  "exports": {
+    "MatchDO": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  }
+}

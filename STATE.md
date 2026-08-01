@@ -2,7 +2,7 @@
 
 - 最終更新: 2026-08-01
 - フェーズ: G0 FoundationはCloudflare smoke待ち。P1 / G1 Internal Alphaへ着手し、OLG-101完了、
-  次はOLG-102
+  OLG-102は実装済み。Docker互換ランタイム待ちでSupabase migrationの実stack受入だけ未完
 
 
 ## この文書の読み方
@@ -107,6 +107,16 @@
   root testへ配線し、各placeholder test/typecheck、clean `npm ci`、全test/build、leak/stale検査を
   greenにした。Supabase CLIは設定を読め、`supabase/migrations` symlinkから
   `server/migrations/`の空migrationを参照する。Worker/MatchDO/local DBの起動はOLG-102で行う。
+- OLG-102は2026-08-01に実装を完了。Node 22、Supabase CLI 2.111.0、Wrangler 4.118.0を固定し、
+  `npm run dev:online`でローカルSupabaseの起動確認→migration適用→Wrangler local起動を順番に行う。
+  Workerの`GET /health`はMatchDOとDO SQLiteの`SELECT 1`まで検査し、最小WebSocketはHibernation APIで
+  強制eviction後も`probe`疎通できる。repo lock、port事前検査、起動run ID照合により別processを
+  誤合格せず、起動・migration・疎通の途中を含むSIGINT/SIGTERMでも所有processだけを片付ける。
+- Worker/MatchDOの実runtime smoke、起動ライフサイクル20 test、clean `npm ci`、root全test/build、
+  engine/admin/functions型検査、
+  leak/stale検査はgreen。ゲーム本体のCommand/Event/Snapshotは後続OLGへ意図的に残している。
+  このMacにDocker互換ランタイムがないため、Supabaseの実起動と空migration適用を含む
+  `npm run smoke:online`だけ受入待ち。外部Cloudflare/Supabaseリソースやsecretは作成していない。
 - P2へNPCシングル市場を正式登録した。G2 Collection Closed Betaは固定買取/販売、有限な実在個体在庫、
   atomic quote/orderで開始する。固定価格のraw集計からpolicyを承認し、2〜4週間shadow計算する。
   日次±5%・基準80〜120%の動的価格を実注文へ使えるのはG8だけとし、G4以降の標本、
@@ -137,8 +147,9 @@
   テストバッチ3枚のeffects/test）は2026-07-30に完了。残るのはCloudflare側（社長のトークン設定と
   再デプロイ）だけで、G0を終える前に必ず片付ける。
 - 完了: **OLG-101**（server/protocol npm workspace、Supabase CLI設定、migration正本の入口）。
-- 次にやること: **OLG-102**。Supabase/Worker/MatchDOをローカルで1コマンド起動し、最小WebSocketと
-  health checkを通す。OLG-003PのCloudflare作業はG0 blockerとして並行管理する。
+- **OLG-102は実装済み・実stack受入待ち**。Worker/MatchDOのhealth・SQLite・WebSocket smokeと
+  全検証はgreen。Docker互換ランタイム起動後に`npm run smoke:online`を1回通し、
+  Supabase migrationまで確認できたら完了にする。OLG-003PのCloudflare作業はG0 blockerとして並行管理する。
 - ここまでの経緯は一番下の「開発の記録」を見る。
 
 ## オープンβ要件 決定（2026-07-23）

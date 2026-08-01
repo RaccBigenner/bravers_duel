@@ -7,7 +7,7 @@
     "dev": "vite --port 5273 --open",
     "serve": "vite build && vite preview --port 5273 --host 127.0.0.1",
     "build": "vite build",
-    "test": "vitest run test"
+    "test": "vitest run --config vitest.config.ts test"
   },
   "dependencies": {
     "@bravers/engine": "*",
@@ -24,6 +24,6 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.1",
     "vite": "^5.4.0",
-    "vitest": "^2.1.0"
+    "vitest": "4.1.10"
   }
 }
