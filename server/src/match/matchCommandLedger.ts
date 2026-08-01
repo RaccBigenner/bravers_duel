@@ -1,4 +1,11 @@
-import type { MatchCommandCandidate, MatchCommandId, MatchRevision } from '@bravers/protocol';
+import {
+  parseMatchCommandId,
+  parseMatchId,
+  parseMatchRevision,
+  type MatchCommandCandidate,
+  type MatchCommandId,
+  type MatchRevision,
+} from '@bravers/protocol';
 
 export const MATCH_COMMAND_PAYLOAD_DOMAIN = 'bravers-match-command-v1' as const;
 export const MAX_MATCH_COMMAND_CANONICAL_BYTES = 4_096;
@@ -159,6 +166,73 @@ export async function identifyMatchCommandPayload(
   );
   if (!SHA256_HEX_PATTERN.test(payloadDigest)) throw new MatchCommandPayloadError();
   return { canonicalPayload, payloadDigest };
+}
+
+export interface StoredMatchCommandPayloadIdentity {
+  commandId: unknown;
+  matchId: unknown;
+  seatId: unknown;
+  expectedRevision: unknown;
+  canonicalPayload: unknown;
+  payloadDigest: unknown;
+}
+
+/**
+ * SQLiteから戻したcanonical payloadを再decode・再hashし、rowの索引列とも一致させる。
+ * action自体が不正なrejected commandも正しく復旧できるよう、action schemaはここでは問わない。
+ */
+export async function validateStoredMatchCommandPayloadIdentity(
+  stored: StoredMatchCommandPayloadIdentity,
+): Promise<MatchCommandPayloadIdentity> {
+  const commandId = parseMatchCommandId(stored.commandId);
+  const matchId = parseMatchId(stored.matchId);
+  const expectedRevision = parseMatchRevision(stored.expectedRevision);
+  if (
+    !commandId ||
+    !matchId ||
+    expectedRevision === null ||
+    (stored.seatId !== 'player-1' && stored.seatId !== 'player-2') ||
+    typeof stored.canonicalPayload !== 'string' ||
+    new TextEncoder().encode(stored.canonicalPayload).byteLength >
+      MAX_MATCH_COMMAND_CANONICAL_BYTES ||
+    typeof stored.payloadDigest !== 'string' ||
+    !SHA256_HEX_PATTERN.test(stored.payloadDigest)
+  ) {
+    throw new MatchCommandPayloadError();
+  }
+
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(stored.canonicalPayload);
+  } catch {
+    throw new MatchCommandPayloadError();
+  }
+  if (
+    !Array.isArray(decoded) ||
+    decoded.length !== 5 ||
+    decoded[0] !== MATCH_COMMAND_PAYLOAD_DOMAIN ||
+    decoded[1] !== matchId ||
+    decoded[2] !== stored.seatId ||
+    decoded[3] !== expectedRevision
+  ) {
+    throw new MatchCommandPayloadError();
+  }
+  const identity = await identifyMatchCommandPayload(
+    {
+      matchId,
+      commandId,
+      expectedRevision,
+      action: decoded[4],
+    },
+    stored.seatId,
+  );
+  if (
+    identity.canonicalPayload !== stored.canonicalPayload ||
+    identity.payloadDigest !== stored.payloadDigest
+  ) {
+    throw new MatchCommandPayloadError();
+  }
+  return identity;
 }
 
 interface StoredCommand<Result> {

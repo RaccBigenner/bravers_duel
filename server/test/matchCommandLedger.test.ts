@@ -13,6 +13,7 @@ import {
   MatchCommandLedgerError,
   MatchCommandPayloadError,
   identifyMatchCommandPayload,
+  validateStoredMatchCommandPayloadIdentity,
 } from '../src/match/matchCommandLedger';
 
 function candidate(overrides: Partial<MatchCommandCandidate> = {}): MatchCommandCandidate {
@@ -163,6 +164,32 @@ describe('OLG-122 MatchCommandLedger', () => {
       originalRevision: 1,
     });
     expect(ledger.size).toBe(1);
+  });
+
+  it('SQLiteから戻したcanonical payloadを索引列とSHA-256へ再束縛する', async () => {
+    const command = candidate({ action: { type: 'endPlay', extra: true } });
+    const identity = await identifyMatchCommandPayload(command, 'player-1');
+    const stored = {
+      commandId: command.commandId,
+      matchId: command.matchId,
+      seatId: 'player-1',
+      expectedRevision: command.expectedRevision,
+      ...identity,
+    };
+    await expect(validateStoredMatchCommandPayloadIdentity(stored)).resolves.toEqual(identity);
+
+    for (const changed of [
+      { ...stored, seatId: 'player-2' },
+      { ...stored, expectedRevision: 1 },
+      { ...stored, payloadDigest: '0'.repeat(64) },
+      { ...stored, canonicalPayload: `${stored.canonicalPayload} ` },
+      { ...stored, canonicalPayload: '{"not":"an array"}' },
+      { ...stored, commandId: 'cmd_invalid' },
+    ]) {
+      await expect(validateStoredMatchCommandPayloadIdentity(changed)).rejects.toBeInstanceOf(
+        MatchCommandPayloadError,
+      );
+    }
   });
 
   it('duplicate登録とbounded capacityをfail closedにする', async () => {

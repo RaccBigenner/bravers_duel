@@ -721,7 +721,7 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
 - OLG-122 `commandId + expectedRevision` — **コード実装済み（2026-08-01）**
 - OLG-123 stable `battleCardId` — **コード実装済み（2026-08-01）**
 - OLG-124 player projection
-- OLG-125 snapshot/event persistence
+- OLG-125 snapshot/event persistence — **コード実装済み（2026-08-02）**
 - OLG-126 reconnect/resume
 - OLG-127 timeout/disconnect（PvP標準クロック・切断との関係・レート反映の設計: 11.5）
 - OLG-128 authoritative NPC tutorial E2E（NPC戦は無制限＋idle suspendの設計: 4.1）
@@ -740,7 +740,8 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
 - seat token / WebSocketはDB session解決→Coordinator membership positive確認→MatchDO取得の順。
   client指定のmatch ID / seat / deck / seed / engine・content・format versionからDOを作らない
 - MatchDO SQLiteへ`provisioning / active / finished / cancelled / abandoned`を保存する。正常終了では
-  engine結果を、取消・放棄では理由を先に確定し、token/assignmentを削除してsocketを閉じる
+  engine結果を、取消・放棄では理由を先に確定し、token/assignmentを削除する。pending/verifying socketは
+  保存済み認証deadlineからalarmで閉じ、authenticated socketのACK後closeはOLG-124が担う
 - 終端後の外部cleanupは、登録済みなら`unregisterMatch`→`releaseNpcMatch`、登録前取消なら
   `releaseNpcMatch`だけを別outbox＋alarmで再試行する。応答喪失、追加参照、古いreleaseと新予約の競合、
   旧seat cleanupとの同居で新しい予約・参照を消さない
@@ -751,14 +752,15 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
 
 - 改変actionと版不一致を盤面不変で拒否し、合法actionだけをNPC応答まで適用できる
 - NPC戦を最後まで決定論的に進め、勝敗をSQLiteへ保存してからassignmentと予約を解除できる
-- active DO eviction後はseedから再生成せずfail closed。terminal lifecycle/resultはeviction後も読める
+- OLG-125完了後のactive DO evictionは保存履歴から同じruntime / revision / receiptへ復旧する。
+  改変・sequence gap・版不一致はseedから再生成せずfail closed。terminal lifecycle/resultもeviction後に読める
 - authoritative snapshot / seed / deck / engine-native actionは内部RPCだけで扱い、browser WebSocketの
-  game frameはOLG-125/124完了まで`error:game-not-ready`で盤面不変にする
+  game frameはOLG-124完了まで`error:game-not-ready`で盤面不変にする
 
 残余:
 
-- active runtime・action stream、battleCardId台帳、revision / command receiptの再構築はOLG-125、
-  player projectionはOLG-124で実装する
+- active runtime・action stream、battleCardId台帳、revision / command receiptの再構築はOLG-125で完了。
+  player projectionとterminal ACK後closeはOLG-124で実装する
 - terminal解放後まで極端に遅延した旧`POST /matches/npc`は新規開始と区別できないためOLG-129へ送る
 - logout失効後にactive lifecycleを自動終端する条件は、NPC idle suspendを扱うOLG-127で固定する
 - MatchDOのbattle lifecycle / terminal outboxは後続機能追加時に別moduleへ分割する
@@ -797,14 +799,13 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
 
 残余:
 
-- OLG-122の台帳はDO生存中のbounded memory（全2,048 record、拒否最大512 record）。active DO eviction後は
-  `MATCH_STATE_UNAVAILABLE`でfail closedし、復旧保証はOLG-125で実装する
-- OLG-125はcloneした次状態をprepareし、current revision、canonical payload / SHA-256 digest、seat、
-  成功／拒否／finalのACK-only receipt、stable steps / events、current snapshot、terminal lifecycle、
-  cleanup outboxを同一SQLite transactionへcommitしてからruntimeをswapする。失敗時はtrialを破棄して
-  旧runtimeへrollbackし、復旧時はhuman step数とrevisionを照合する。terminalはreceiptを保存→送信→closeの
-  順にし、ACK喪失後も認証session所有権でreceipt / resultを取得できる。commit前／commit後ACK前／
-  runtime swap前後／terminal close前後の各cutpointでevict→retryし、二重適用と中間状態がないことを検査する
+- OLG-125で全2,048 record・拒否最大512 recordの台帳をSQLiteへ移し、active DO eviction後もexact receiptと
+  runtime / revisionを復旧する。cloneした次状態、canonical payload / SHA-256 digest、seat、成功／拒否／finalの
+  ACK-only receipt、stable steps / events、current snapshot、terminal lifecycle、cleanup outbox / deadlineは
+  同一SQLite transactionへcommitしてからruntimeをswapする。transaction失敗ではtrialを破棄し、commit後の
+  DO reset / ACK喪失では保存済みreceiptへ収束する
+- OLG-124は保存済みreceiptとviewer projectionを配信し、terminal時は配信後にauthenticated socketを閉じる。
+  terminal送信・close前後のcutpointもOLG-124で検査する
 - OLG-124はJSON.parse前にraw WebSocket frameのUTF-8 byte上限を検査し、decode後にcanonical上限を適用する。
   receiptとは別にviewer projectionを作り、初期／current revisionだけを安全に公開する
 
@@ -835,13 +836,42 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
 
 残余:
 
-- OLG-125はheader / 初期manifest / stable steps / current snapshotを同一transactionへ保存し、
-  append-only steps + 周期checkpointからtailを再演してcurrent snapshotと照合する。監査時は初期から全再演し、
-  開始時のadapter / engine / content / format版へpinする。一致runtime不在時は現行版で再生せずfail closedにする
+- OLG-125 v1はheader / 初期manifest / stable steps / current snapshotを同一transactionへ保存し、初期から
+  全stepを再演してcurrent checkpointと照合する。開始時のadapter / engine / content / format版へpinし、
+  一致runtime不在時は現行版で再生せずfail closedにする。周期checkpoint + tail再演は、版付きrestore APIと
+  全再演監査を維持したまま履歴上限到達前に入れる将来最適化
 - G2の所持個体連携はOLG-200で、lock済みinstance poolと初期printing配置を1対1照合して
   server-only `battleCardId → instance_id`対応表を作る。キラ等の表示属性以外は同printingで同値とする
 - opponent hand / deckのIDとprintingをwireから隠すprojectionはOLG-124
-- browser向けgame frameはOLG-125/124まで`error:game-not-ready`のまま開かない
+- browser向けgame frameはOLG-124まで`error:game-not-ready`のまま開かない
+
+#### OLG-125 snapshot/event persistence
+
+状態: **コード実装済み**（2026-08-02）
+
+- `match_battle_manifest`へheader・初期card manifest / hash・初期event数、`match_battle_state`へrevision・
+  各count・current state / battleCards / hash、`match_battle_command`へcanonical / digest / seat / exact receipt、
+  `match_battle_step`へstable step、`match_battle_event`へ初期＋各step eventを保存する
+- start activationはmanifest / initial event / step / state / lifecycle、accepted commandはreceipt / step / event /
+  current stateと必要なterminal lifecycle / outbox / deadline、rejected commandはreceipt / countをそれぞれ
+  同一transactionで確定する。外部Coordinator cleanupはcommit後のalarmだけが実行する
+- constructorはrow数と16 MiB総量をJSON materialize前に検査し、sequence・exact schema・canonical / digest・
+  revision / human step・state / identity hash・assignment・terminal release/deadlineを照合する。activeは
+  初期manifestから全stepを再演し、current checkpointと完全一致した場合だけmemoryへinstallする
+
+受入:
+
+- activation / accepted / rejected / finalのtransaction途中失敗は全行rollbackし、同じ入力で一組だけ生成する
+- commit前後の明示cutpointは`ctx.abort()`でDO resetし、request終了後evictionから同じreceipt / revision /
+  盤面 / resultへ収束してcommand・human step・eventを二重追加しない
+- command digest、step gap、revision、current hash、receipt schema、cleanup outbox/deadlineの改変は実constructorで
+  繰り返しfail closedとし、seedから新しいIDを再生成しない
+
+残余:
+
+- OLG-124でviewer projection / ACKを配信し、terminal時はその後にauthenticated socketをcloseする
+- OLG-126で認証session所有権を照合するactive-match / receipt / result readとevent差分resumeを公開する
+- 周期checkpoint + tail再演は、版付きrestore APIと全再演監査を保つ将来の性能最適化
 
 ### Epic OLG-130 PWA shell
 

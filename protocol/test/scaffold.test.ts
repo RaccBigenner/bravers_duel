@@ -12,6 +12,7 @@ import {
   parseMatchCommandCandidate,
   parseMatchCommandEnvelope,
   parseMatchCommandId,
+  parseMatchCommandResult,
   parseMatchId,
   parseMatchRevision,
   type MatchAction,
@@ -281,6 +282,24 @@ describe('@bravers/protocol scaffold', () => {
     expect(conflict).not.toHaveProperty('revision');
     expect('transition' in accepted).toBe(false);
     expect('snapshot' in accepted).toBe(false);
+
+    for (const receipt of [accepted, mismatch, invalidAction, terminal, conflict]) {
+      expect(parseMatchCommandResult(receipt)).toEqual(receipt);
+    }
+    for (const invalid of [
+      { ...accepted, revision: 2 },
+      { ...accepted, transition: {} },
+      { ...mismatch, relation: 'current' },
+      { ...mismatch, relation: undefined },
+      { ...invalidAction, relation: 'ahead' },
+      { ...terminal, errorCode: 'MATCH_UNKNOWN' },
+      { ...conflict, revision: 1 },
+      { ...conflict, originalRevision: -1 },
+      null,
+      [],
+    ]) {
+      expect(parseMatchCommandResult(invalid), JSON.stringify(invalid)).toBeNull();
+    }
 
     // @ts-expect-error revision mismatchにはstale/aheadが必須
     const missingRelation: MatchCommandResult = {

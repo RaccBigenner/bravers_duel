@@ -790,9 +790,11 @@ OLG-123ではメモリ上のactive runtimeまで実装する。reload / DO evict
 OLG-125で、header / 初期manifest / stable steps / current snapshotを同一transactionへ保存する。
 相手のhand / deck IDを隠すviewer別projectionはOLG-124で固定する。
 
-OLG-125の通常復旧はappend-only stepと周期checkpointからtailだけを再演し、初期manifestからの全再演は
-監査・破損検出に使う。headerのadapter / engine / content / format versionへ一致するruntimeを進行中試合に
-pinし、デプロイ後の現行版へ読み替えない。一致版を提供できなければ新しいIDで再生成せずfail closedにする。
+OLG-125 v1の通常復旧はappend-only stepを初期manifestから全再演し、current checkpointと照合する。
+4,096 step・32,768 event・16 MiBの運用上限をJSON materialize前に検査し、改変・gap・版不一致はfail closedにする。
+周期checkpointからtailだけを再演する方式は、版付きrestore APIと初期からの全再演監査を維持して追加する将来最適化。
+headerのadapter / engine / content / format versionへ一致するruntimeを進行中試合にpinし、デプロイ後の現行版へ
+読み替えない。一致版を提供できなければ新しいIDで再生成しない。
 
 G2で所持個体を使う時は、match開始前にlockした`instance_id`集合を`printing_id`別のserver-only poolとして
 渡す。engineが初期shuffle済みのprinting配置を作った後、各出現へpoolからcanonical順で1対1に割り当て、
@@ -1512,7 +1514,8 @@ LINE/Googleのメールが同じでも、自動でアカウント統合しない
   復活させない。MatchDOは永続clockから`max(Date.now(), last+1, cancelledThrough+1)`で次epochを採番する。
   fan-outはmatch IDで重複排除する。
   OLG-121で試合の正常終了・取消・放棄を永続化した後にも同じ解除を行うよう接続済みで、
-  通算対戦数を上限にしない。
+  通算対戦数を上限にしない。OLG-125はterminal lifecycleとcleanup outbox / deadlineまでを同じtransactionで
+  確定し、commit後の外部Coordinator呼び出しはalarmだけが行う。
   ACK失敗は参照を残して上限60秒の自前backoff alarmで再送する。Workerがintent保存後のDB更新前、または
   DB更新後のfan-out前に停止しても、alarmが同じdigestで冪等なDB失効から再開する。全ACK後にdigest付きworkを
   消し、失効version floorだけを残す。DOのsingle-thread順序でinvalidateより後のcommandを拒否し、既に
@@ -2036,29 +2039,33 @@ Origin / Fetch Metadata確認
 → cloneへplayer action + NPC pumpを適用して次状態をprepare
 → receipt + canonical/digest + seat + revision + events + snapshot + lifecycle/outboxをSQLiteへatomic commit
 → commit成功後だけruntimeをswap（失敗時はtrial破棄／旧runtimeへrollback）
-→ ACK-only receiptとプレイヤー別projectionを配信
-→ terminal時だけ配信後にsocketをclose
+→ ACK-only receiptとプレイヤー別projectionを配信（OLG-124）
+→ terminal時だけ配信後にauthenticated socketをclose（OLG-124）
 ```
 
 認証・seat不正、壊れたframe、上限超過、基盤障害はcommandIdを消費しない。認証済みで構造が成立した
 commandのrevision / action / terminal拒否はreceiptへ固定し、内容を直して再試行するときは新しいIDを使う。
-最終手の永続化だけ失敗した場合も、同じIDの再送はactionを再適用せずterminal commitだけを再試行する。
+最終手の永続化が失敗した場合はtrial全体を捨てる。同じIDの再送は保存済みcurrent runtimeから決定論的に
+同じactionを再prepareし、action receipt / snapshot / terminalを一つのtransactionで一度だけ確定する。
 receiptは時刻、authoritative transition、events、lifecycleを含まないACK-onlyとし、projectionは
-OLG-124で別に生成する。terminalはreceiptを保存してから送信し、その後にsocketを閉じる。送信ACKが
+OLG-124で別に生成する。OLG-125はterminal receipt / lifecycle / cleanup outboxを保存し外部cleanupをalarmへ
+限定する。OLG-124は保存済みreceiptを送信してからauthenticated socketを閉じる。送信ACKが
 失われてassignment / coordinator membership解放後になっても、認証sessionとmatch lifecycleの所有権を
 照合するread経路から同じreceipt / resultを取得できなければならない。
 
-OLG-122時点のrevision / command台帳はDOメモリ内で、eviction後は従来どおりfail closed。OLG-125で
-cloneした次状態をprepareし、current revision、canonical payload / digest、認証済みseat、成功／拒否／finalの
-receipt、steps / events、current snapshot、terminal lifecycle、cleanup outboxを同一SQLite transactionへ
-commitしてからruntimeをswapする。拒否では盤面を変えずreceiptだけを同じtransaction境界で確定する。
+OLG-125は2026-08-02にコード実装済み。`match_battle_manifest / state / command / step / event`の5表へ、
+cloneした次状態のcurrent revision、canonical payload / digest、認証済みseat、成功／拒否／finalのreceipt、
+header / 初期ID manifest、steps / events、current snapshotを保存する。terminal lifecycle、cleanup outbox / deadlineも
+関連する同一SQLite transactionへcommitしてからruntimeをswapする。拒否では盤面を変えずreceiptだけを確定する。
 保存revisionはadapter履歴のhuman step数と照合し、NPCの複数stepをrevisionへ足さない。commit前は全不変、
 commit後のACK喪失は保存済みreceipt再送、の2状態だけにする。storage失敗時はtrialを破棄または旧runtimeへ
 rollbackし、エンジンや永続化の例外で中途半端な状態を残さない。
 
-OLG-125の受入では、prepare前、SQLite commit前、commit後ACK前、runtime swap前後、terminal receipt送信前、
-socket close前後の各cutpointへ障害を注入し、直後にDOをevictして同じcommandをretryする。成功／拒否／finalの
-全receiptについて、二重適用なし、同じrevision・盤面・receipt / resultへの収束、human step数との一致を検査する。
+OLG-125の受入では、activation / accepted / rejected / finalのtransaction失敗、commit前後、runtime swap前後へ
+障害を注入する。`ctx.abort()`による実DO resetと、request終了後の個別evictionからの復旧を分けて検査し、成功／
+拒否／finalの全receiptが二重適用なしで同じrevision・盤面・receipt / resultへ収束すること、human step数・
+event sequence・cleanup outbox / deadlineが一致することを固定する。terminal receipt送信前とsocket close前後は、
+projection / ACK配信を所有するOLG-124のcutpointとして検査する。
 OLG-124のraw frame制限とplayer projectionが完成するまでbrowser game wireは引き続き開かない。
 
 ### 11.3 秘匿情報

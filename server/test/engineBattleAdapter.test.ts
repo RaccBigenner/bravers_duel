@@ -221,6 +221,32 @@ describe('OLG-121 engine battle adapter', () => {
     }
   });
 
+  it('prepareはcurrent runtimeを変えず、commit後に採用できる次runtimeとcheckpointを返す', () => {
+    const adapter = EngineBattleAdapter.create(g1NpcBattleInput(0));
+    const before = adapter.authoritativeSnapshot();
+    const engineAction = legalActions(before.state)[0];
+    if (!engineAction) throw new Error('Expected legal human action');
+    const action = stableHumanAction(adapter, engineAction);
+
+    const prepared = adapter.prepareHumanAction(action);
+    expect(adapter.authoritativeSnapshot()).toEqual(before);
+    expect(adapter.commandRevision()).toBe(0);
+    expect(prepared.nextRuntime.commandRevision()).toBe(1);
+    expect(prepared.transition.steps[0]).toMatchObject({ source: 'human' });
+    const preparedSnapshot = prepared.nextRuntime.authoritativeSnapshot();
+    expect(prepared.nextRuntime.authoritativeCheckpoint()).toEqual({
+      state: preparedSnapshot.state,
+      battleCards: preparedSnapshot.battleCards,
+      stepCount: preparedSnapshot.steps.length,
+      currentStateHash: preparedSnapshot.currentStateHash,
+      currentIdentityHash: preparedSnapshot.currentIdentityHash,
+    });
+
+    const directlyApplied = adapter.applyHumanAction(action);
+    expect(directlyApplied).toEqual(prepared.transition);
+    expect(adapter.authoritativeSnapshot()).toEqual(preparedSnapshot);
+  });
+
   it('MatchAction union全枝をstrict decodeし、旧index・欠落・型違い・余剰keyを拒否する', () => {
     const battleCardId = parsedId('bc_00112233445566778899aabbccddeeff');
     const accepted: MatchAction[] = [

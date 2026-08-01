@@ -132,6 +132,15 @@ export interface AuthoritativeBattleSnapshot {
   currentIdentityHash: string;
 }
 
+/** append-only step列とは別に毎commandで置換する、復旧照合用の現行checkpoint。 */
+export interface AuthoritativeBattleCheckpoint {
+  state: BattleState;
+  battleCards: BattleCardLedger;
+  stepCount: number;
+  currentStateHash: string;
+  currentIdentityHash: string;
+}
+
 /** OLG-125が永続化する再演可能な最小履歴。current snapshotは別途照合する。 */
 export interface RestoreNpcBattleHistoryInput {
   header: AuthoritativeBattleHeader;
@@ -163,6 +172,17 @@ export interface NpcBattleResult {
 export interface AppliedBattleTransition {
   steps: AppliedBattleStep[];
   status: NpcBattleStatus;
+}
+
+/** current runtimeを変えずにSQLite commit可能な次状態を保持する。 */
+export interface PreparedBattleTransition {
+  nextRuntime: EngineBattleAdapter;
+  transition: AppliedBattleTransition;
+}
+
+/** MatchDO永続化境界で使う、engine版と同じ決定論的JSON。 */
+export function canonicalBattlePersistenceJson(value: unknown): string {
+  return stableStringify(value);
 }
 
 const ENGINE_ACTION_KEYS: Record<BattleAction['type'], readonly string[]> = {
@@ -1142,7 +1162,8 @@ export class EngineBattleAdapter {
 
     const trialState = structuredClone(this.stateValue);
     const trialBattleCards = structuredClone(this.battleCardsValue);
-    const trialSteps = structuredClone(this.stepsValue);
+    // 過去stepはappend-onlyで再変更しないため、配列だけをforkする。
+    const trialSteps = this.stepsValue.slice();
     const firstNewStep = trialSteps.length;
     let preparedTransition: AppliedBattleTransition;
     try {
@@ -1169,6 +1190,38 @@ export class EngineBattleAdapter {
     this.battleCardsValue = trialBattleCards;
     this.stepsValue = trialSteps;
     return preparedTransition;
+  }
+
+  /** SQLite commit前の試行用。返したruntimeだけを変更し、thisは完全に不変に保つ。 */
+  prepareHumanAction(rawAction: unknown): PreparedBattleTransition {
+    this.assertRuntime();
+    // applyHumanAction自身がstate/cards/stepsをcloneしてから変更するため、fork作成時は
+    // 読み取り専用参照を共有する。履歴全体の二重cloneを避けつつcurrentは不変のまま保つ。
+    const nextRuntime = new EngineBattleAdapter(
+      this.headerValue,
+      this.initialEventsValue,
+      this.initialBattleCardsValue,
+      this.initialIdentityHashValue,
+      this.stateValue,
+      this.battleCardsValue,
+      this.battleCardCatalogValue,
+      this.stepsValue,
+    );
+    return {
+      nextRuntime,
+      transition: nextRuntime.applyHumanAction(rawAction),
+    };
+  }
+
+  authoritativeCheckpoint(): AuthoritativeBattleCheckpoint {
+    this.assertRuntime();
+    return structuredClone({
+      state: this.stateValue,
+      battleCards: this.battleCardsValue,
+      stepCount: this.stepsValue.length,
+      currentStateHash: stateHash(this.stateValue),
+      currentIdentityHash: battleCardIdentityHash(this.battleCardsValue),
+    });
   }
 
   authoritativeSnapshot(): AuthoritativeBattleSnapshot {
@@ -1245,7 +1298,7 @@ export class EngineBattleAdapter {
   private pumpNpcIntoAuthoritativeState(): void {
     const trialState = structuredClone(this.stateValue);
     const trialBattleCards = structuredClone(this.battleCardsValue);
-    const trialSteps = structuredClone(this.stepsValue);
+    const trialSteps = this.stepsValue.slice();
     try {
       this.pumpNpc(trialState, trialBattleCards, trialSteps);
     } catch (error) {

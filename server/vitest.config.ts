@@ -24,6 +24,21 @@ const testSecretBindings = {
   }),
 };
 
+const expectedDurableObjectResetReasons = new Set([
+  'MATCH_BATTLE_PERSISTENCE_INVALID',
+  'MATCH_BATTLE_POST_ACTIVATION_COMMIT_FAILED',
+  'MATCH_COMMAND_POST_COMMIT_FAILED',
+  'MATCH_COMMAND_POST_INSTALL_FAILED',
+]);
+
+function isExpectedDurableObjectReset(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const candidate = error as { message?: unknown; durableObjectReset?: unknown };
+  return candidate.durableObjectReset === true &&
+    typeof candidate.message === 'string' &&
+    expectedDurableObjectResetReasons.has(candidate.message);
+}
+
 // Wranglerのrequired-secret検査にも、実credentialではないtest-only値を渡す。
 Object.assign(process.env, testSecretBindings);
 
@@ -36,4 +51,11 @@ export default defineConfig({
       },
     }),
   ],
+  test: {
+    // workerdのctx.abort()は意図どおりRPCをrejectした後にも同じreset errorを報告する。
+    // OLG-125の明示したcutpoint理由と改変検知だけを除外し、他は通常どおり失敗させる。
+    onUnhandledError(error) {
+      if (isExpectedDurableObjectReset(error)) return false;
+    },
+  },
 });

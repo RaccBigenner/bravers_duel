@@ -4,8 +4,11 @@ import {
   MAX_MATCH_REVISION,
   parseMatchAction,
   parseMatchCommandCandidate,
+  parseMatchCommandId,
+  parseMatchCommandResult,
   parseMatchRevision,
   type MatchCommandCandidate,
+  type MatchCommandId,
   type MatchCommandResult,
   type MatchRevision,
 } from '@bravers/protocol';
@@ -18,7 +21,10 @@ import {
   G1_NPC_POLICY_ID,
   HUMAN_PLAYER,
   NPC_PLAYER,
+  canonicalBattlePersistenceJson,
   g1NpcBattleInput,
+  type AppliedBattleStep,
+  type AuthoritativeBattleCheckpoint,
   type AuthoritativeBattleSnapshot,
   type EngineBattleVersions,
   type NpcBattleResult,
@@ -34,6 +40,9 @@ import {
   MatchCommandLedgerError,
   MatchCommandPayloadError,
   identifyMatchCommandPayload,
+  validateStoredMatchCommandPayloadIdentity,
+  MAX_MATCH_COMMAND_RECORDS,
+  MAX_MATCH_COMMAND_REJECTION_RECORDS,
   type MatchCommandPayloadIdentity,
 } from './matchCommandLedger';
 import {
@@ -59,8 +68,20 @@ const TERMINAL_RELEASE_DEADLINE_KIND = 'coordinator-terminal-release';
 const TERMINAL_RELEASE_PHASE_UNREGISTER = 'unregister_pending';
 const TERMINAL_RELEASE_PHASE_RESERVATION = 'reservation_release_pending';
 const NPC_MATCH_ID_PATTERN = /^npc-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const MATCH_TERMINAL_CLOSE_CODE = 1000;
-const MATCH_TERMINAL_CLOSE_REASON = 'MATCH_ENDED';
+const BATTLE_PERSISTENCE_VERSION = 1;
+// v1 hydrateは改変検知のため全stable stepを再演する。周期checkpoint版までのDO CPU/RAM防御上限。
+const MAX_PERSISTED_BATTLE_STEPS = 4_096;
+const MAX_PERSISTED_BATTLE_EVENTS = 32_768;
+const MAX_PERSISTED_BATTLE_HISTORY_BYTES = 16 * 1024 * 1024;
+const MAX_PERSISTED_HEADER_BYTES = 128 * 1024;
+const MAX_PERSISTED_INITIAL_CARDS_BYTES = 512 * 1024;
+const MAX_PERSISTED_STATE_BYTES = 1024 * 1024;
+const MAX_PERSISTED_BATTLE_CARDS_BYTES = 512 * 1024;
+const MAX_PERSISTED_STEP_BYTES = 32 * 1024;
+const MAX_PERSISTED_EVENT_BYTES = 8 * 1024;
+const MAX_PERSISTED_RECEIPT_BYTES = 2 * 1024;
+const STATE_HASH_PATTERN = /^[0-9a-f]{16}$/;
+const IDENTITY_HASH_PATTERN = /^i1-[0-9a-f]{16}$/;
 
 export const SEAT_TOKEN_TTL_MS = 30_000;
 export const SEAT_AUTH_FRAME_TIMEOUT_MS = 5_000;
@@ -169,6 +190,7 @@ export type MatchBattleErrorCode =
   | 'MATCH_BATTLE_NOT_STARTED'
   | 'MATCH_BATTLE_ACCESS_DENIED'
   | 'MATCH_BATTLE_ALREADY_TERMINAL'
+  | 'MATCH_BATTLE_PERSISTENCE_INVALID'
   | 'MATCH_BATTLE_STATE_INVALID'
   | 'MATCH_COMMAND_CAPACITY_EXCEEDED'
   | 'MATCH_STATE_UNAVAILABLE';
@@ -293,6 +315,109 @@ interface BattleLifecycleRow {
   turns: number | null;
   final_state_hash: string | null;
   applied_actions: number | null;
+  persistence_version: number | null;
+}
+
+interface BattleManifestRow {
+  [key: string]: string | number;
+  match_id: string;
+  schema_version: number;
+  header_json: string;
+  initial_battle_cards_json: string;
+  initial_identity_hash: string;
+  initial_event_count: number;
+  created_at_ms: number;
+}
+
+interface BattleStateRow {
+  [key: string]: string | number;
+  match_id: string;
+  revision: number;
+  step_count: number;
+  event_count: number;
+  command_count: number;
+  rejection_count: number;
+  state_json: string;
+  battle_cards_json: string;
+  current_state_hash: string;
+  current_identity_hash: string;
+  updated_at_ms: number;
+}
+
+interface BattleCommandRow {
+  [key: string]: string | number;
+  record_sequence: number;
+  command_id: string;
+  match_id: string;
+  seat_id: string;
+  expected_revision: number;
+  canonical_payload: string;
+  payload_digest: string;
+  result_state: string;
+  result_revision: number;
+  receipt_json: string;
+  terminal_flag: number;
+  created_at_ms: number;
+}
+
+interface BattleStepRow {
+  [key: string]: string | number | null;
+  step_sequence: number;
+  command_id: string | null;
+  command_revision: number;
+  player: number;
+  source: string;
+  step_json: string;
+  state_hash: string;
+  identity_hash: string;
+  event_start_sequence: number;
+  event_count: number;
+}
+
+interface BattleEventRow {
+  [key: string]: string | number;
+  event_sequence: number;
+  step_sequence: number;
+  ordinal: number;
+  event_json: string;
+}
+
+interface BattlePersistenceCounts {
+  [key: string]: number;
+  manifests: number;
+  states: number;
+  commands: number;
+  steps: number;
+  events: number;
+}
+
+interface PersistedBattleStepValue extends Omit<AppliedBattleStep, 'events'> {}
+
+interface PreparedBattleStepInsert {
+  step: AppliedBattleStep;
+  commandId: MatchCommandId | null;
+  commandRevision: MatchRevision;
+  stepJson: string;
+  eventStartSequence: number;
+  eventJson: string[];
+}
+
+interface PreparedBattleRuntimePersistence {
+  checkpoint: AuthoritativeBattleCheckpoint;
+  stateJson: string;
+  battleCardsJson: string;
+  steps: PreparedBattleStepInsert[];
+  nextEventCount: number;
+  encodedBytes: number;
+}
+
+interface PreparedBattleTerminal {
+  lifecycle: BattleLifecycleRow;
+  terminal: NpcBattleTerminalResult;
+  terminalAtEpochMs: number;
+  assignmentVersion: number | null;
+  dueAtEpochMs: number;
+  releases: TerminalReleaseRow[];
 }
 
 interface TerminalReleaseRow {
@@ -351,6 +476,62 @@ function plainObject(value: unknown): value is Record<string, unknown> {
 function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
   const keys = Object.keys(value);
   return keys.length === expected.length && expected.every((key) => Object.hasOwn(value, key));
+}
+
+function nonNegativeInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && Number(value) >= 0;
+}
+
+function jsonBytes(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
+}
+
+function encodePersistedJson(value: unknown, maxBytes: number): string {
+  const encoded = canonicalBattlePersistenceJson(value);
+  if (encoded.length === 0 || jsonBytes(encoded) > maxBytes) {
+    throw new MatchBattleError('MATCH_COMMAND_CAPACITY_EXCEEDED');
+  }
+  return encoded;
+}
+
+function decodePersistedJson(encoded: unknown, maxBytes: number): unknown {
+  if (
+    typeof encoded !== 'string' ||
+    encoded.length === 0 ||
+    jsonBytes(encoded) > maxBytes
+  ) {
+    throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+  }
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(encoded);
+  } catch {
+    throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+  }
+  if (canonicalBattlePersistenceJson(decoded) !== encoded) {
+    throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+  }
+  return decoded;
+}
+
+function isStoredMatchCommandResult(
+  result: MatchCommandResult,
+): result is StoredMatchCommandResult {
+  return !(
+    result.state === 'rejected' &&
+    result.errorCode === 'MATCH_COMMAND_ID_CONFLICT'
+  );
+}
+
+function persistedBattleStepValue(step: AppliedBattleStep): PersistedBattleStepValue {
+  return {
+    sequence: step.sequence,
+    player: step.player,
+    source: step.source,
+    action: structuredClone(step.action),
+    stateHash: step.stateHash,
+    identityHash: step.identityHash,
+  };
 }
 
 function isPrincipal(value: MatchSessionPrincipal): boolean {
@@ -603,6 +784,7 @@ export class MatchDO extends DurableObject<Env> {
           turns INTEGER,
           final_state_hash TEXT,
           applied_actions INTEGER,
+          persistence_version INTEGER,
           CHECK (lifecycle_state IN (
             'provisioning', 'active', 'finished', 'cancelled', 'abandoned'
           )),
@@ -615,7 +797,102 @@ export class MatchDO extends DurableObject<Env> {
           CHECK (terminal_at_ms IS NULL OR terminal_at_ms >= started_at_ms),
           CHECK (winner IS NULL OR winner IN (0, 1)),
           CHECK (turns IS NULL OR turns >= 0),
-          CHECK (applied_actions IS NULL OR applied_actions >= 0)
+          CHECK (applied_actions IS NULL OR applied_actions >= 0),
+          CHECK (persistence_version IS NULL OR persistence_version = 1)
+        );
+        CREATE TABLE IF NOT EXISTS match_battle_manifest (
+          manifest_key INTEGER PRIMARY KEY CHECK (manifest_key = 1),
+          match_id TEXT NOT NULL UNIQUE,
+          schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+          header_json TEXT NOT NULL,
+          initial_battle_cards_json TEXT NOT NULL,
+          initial_identity_hash TEXT NOT NULL,
+          initial_event_count INTEGER NOT NULL,
+          created_at_ms INTEGER NOT NULL,
+          CHECK (length(CAST(header_json AS BLOB)) BETWEEN 1 AND 131072),
+          CHECK (length(CAST(initial_battle_cards_json AS BLOB)) BETWEEN 1 AND 524288),
+          CHECK (length(initial_identity_hash) = 19),
+          CHECK (initial_event_count BETWEEN 0 AND ${MAX_PERSISTED_BATTLE_EVENTS}),
+          CHECK (created_at_ms >= 1)
+        );
+        CREATE TABLE IF NOT EXISTS match_battle_state (
+          state_key INTEGER PRIMARY KEY CHECK (state_key = 1),
+          match_id TEXT NOT NULL UNIQUE,
+          revision INTEGER NOT NULL,
+          step_count INTEGER NOT NULL,
+          event_count INTEGER NOT NULL,
+          command_count INTEGER NOT NULL,
+          rejection_count INTEGER NOT NULL,
+          state_json TEXT NOT NULL,
+          battle_cards_json TEXT NOT NULL,
+          current_state_hash TEXT NOT NULL,
+          current_identity_hash TEXT NOT NULL,
+          updated_at_ms INTEGER NOT NULL,
+          CHECK (revision BETWEEN 0 AND 9007199254740990),
+          CHECK (step_count BETWEEN 0 AND ${MAX_PERSISTED_BATTLE_STEPS}),
+          CHECK (event_count BETWEEN 0 AND ${MAX_PERSISTED_BATTLE_EVENTS}),
+          CHECK (command_count BETWEEN 0 AND 2048),
+          CHECK (rejection_count BETWEEN 0 AND 512),
+          CHECK (rejection_count <= command_count),
+          CHECK (length(CAST(state_json AS BLOB)) BETWEEN 1 AND 1048576),
+          CHECK (length(CAST(battle_cards_json AS BLOB)) BETWEEN 1 AND 524288),
+          CHECK (length(current_state_hash) = 16),
+          CHECK (length(current_identity_hash) = 19),
+          CHECK (updated_at_ms >= 1)
+        );
+        CREATE TABLE IF NOT EXISTS match_battle_command (
+          record_sequence INTEGER PRIMARY KEY CHECK (record_sequence >= 0),
+          command_id TEXT NOT NULL UNIQUE,
+          match_id TEXT NOT NULL,
+          seat_id TEXT NOT NULL CHECK (seat_id IN ('player-1', 'player-2')),
+          expected_revision INTEGER NOT NULL,
+          canonical_payload TEXT NOT NULL,
+          payload_digest TEXT NOT NULL,
+          result_state TEXT NOT NULL CHECK (result_state IN ('accepted', 'rejected')),
+          result_revision INTEGER NOT NULL,
+          receipt_json TEXT NOT NULL,
+          terminal_flag INTEGER NOT NULL DEFAULT 0 CHECK (terminal_flag IN (0, 1)),
+          created_at_ms INTEGER NOT NULL,
+          CHECK (expected_revision BETWEEN 0 AND 9007199254740990),
+          CHECK (result_revision BETWEEN 0 AND 9007199254740990),
+          CHECK (length(CAST(canonical_payload AS BLOB)) BETWEEN 1 AND 4096),
+          CHECK (length(payload_digest) = 64),
+          CHECK (length(CAST(receipt_json AS BLOB)) BETWEEN 1 AND 2048),
+          CHECK (created_at_ms >= 1)
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS match_battle_command_accepted_revision
+          ON match_battle_command(result_revision) WHERE result_state = 'accepted';
+        CREATE UNIQUE INDEX IF NOT EXISTS match_battle_command_terminal
+          ON match_battle_command(terminal_flag) WHERE terminal_flag = 1;
+        CREATE TABLE IF NOT EXISTS match_battle_step (
+          step_sequence INTEGER PRIMARY KEY CHECK (step_sequence >= 0),
+          command_id TEXT,
+          command_revision INTEGER NOT NULL,
+          player INTEGER NOT NULL CHECK (player IN (0, 1)),
+          source TEXT NOT NULL CHECK (source IN ('human', 'npc')),
+          step_json TEXT NOT NULL,
+          state_hash TEXT NOT NULL,
+          identity_hash TEXT NOT NULL,
+          event_start_sequence INTEGER NOT NULL,
+          event_count INTEGER NOT NULL,
+          CHECK (command_revision BETWEEN 0 AND 9007199254740990),
+          CHECK ((source = 'human' AND player = 0) OR (source = 'npc' AND player = 1)),
+          CHECK (command_id IS NOT NULL OR (source = 'npc' AND command_revision = 0)),
+          CHECK (length(CAST(step_json AS BLOB)) BETWEEN 1 AND 32768),
+          CHECK (length(state_hash) = 16),
+          CHECK (length(identity_hash) = 19),
+          CHECK (event_start_sequence BETWEEN 0 AND ${MAX_PERSISTED_BATTLE_EVENTS}),
+          CHECK (event_count BETWEEN 0 AND ${MAX_PERSISTED_BATTLE_EVENTS})
+        );
+        CREATE INDEX IF NOT EXISTS match_battle_step_command
+          ON match_battle_step(command_id, step_sequence);
+        CREATE TABLE IF NOT EXISTS match_battle_event (
+          event_sequence INTEGER PRIMARY KEY CHECK (event_sequence >= 0),
+          step_sequence INTEGER NOT NULL CHECK (step_sequence >= -1),
+          ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+          event_json TEXT NOT NULL,
+          UNIQUE (step_sequence, ordinal),
+          CHECK (length(CAST(event_json AS BLOB)) BETWEEN 1 AND 8192)
         );
         CREATE TABLE IF NOT EXISTS match_terminal_release (
           seat_id TEXT PRIMARY KEY,
@@ -656,9 +933,18 @@ export class MatchDO extends DurableObject<Env> {
           `UPDATE match_seat_assignment
               SET coordinator_registration_epoch_ms = updated_at_ms
             WHERE coordinator_registration_id IS NOT NULL
-              AND coordinator_registration_epoch_ms IS NULL`,
+          AND coordinator_registration_epoch_ms IS NULL`,
         );
       }
+      const lifecycleColumns = this.ctx.storage.sql.exec<{ name: string }>(
+        `PRAGMA table_info(match_battle_lifecycle)`,
+      ).toArray();
+      if (!lifecycleColumns.some((column) => column.name === 'persistence_version')) {
+        this.ctx.storage.sql.exec(
+          `ALTER TABLE match_battle_lifecycle ADD COLUMN persistence_version INTEGER`,
+        );
+      }
+      await this.hydrateBattlePersistence();
     });
   }
 
@@ -729,7 +1015,7 @@ export class MatchDO extends DurableObject<Env> {
       }
 
       if (command.expectedRevision !== revision) {
-        return this.rememberCommandResult(
+        return this.persistRejectedCommandResult(
           command,
           identity,
           this.revisionMismatchCommandResult(
@@ -743,7 +1029,7 @@ export class MatchDO extends DurableObject<Env> {
         throw new MatchBattleError('MATCH_STATE_UNAVAILABLE');
       }
       if (lifecycle.lifecycle_state !== 'active') {
-        return this.rememberCommandResult(
+        return this.persistRejectedCommandResult(
           command,
           identity,
           this.actionOrTerminalCommandResult(command, 'MATCH_ALREADY_TERMINAL', revision),
@@ -759,7 +1045,7 @@ export class MatchDO extends DurableObject<Env> {
           lifecycle,
           this.finishedTerminalResult(alreadyFinished),
         );
-        return this.rememberCommandResult(
+        return this.persistRejectedCommandResult(
           command,
           identity,
           this.actionOrTerminalCommandResult(command, 'MATCH_ALREADY_TERMINAL', revision),
@@ -771,18 +1057,18 @@ export class MatchDO extends DurableObject<Env> {
       }
       const action = parseMatchAction(command.action);
       if (!action) {
-        return this.rememberCommandResult(
+        return this.persistRejectedCommandResult(
           command,
           identity,
           this.actionOrTerminalCommandResult(command, 'MATCH_ACTION_INVALID', revision),
         );
       }
-      let transition: ReturnType<EngineBattleAdapter['applyHumanAction']>;
+      let prepared: ReturnType<EngineBattleAdapter['prepareHumanAction']>;
       try {
-        transition = runtime.applyHumanAction(action);
+        prepared = runtime.prepareHumanAction(action);
       } catch (error) {
         if (error instanceof EngineBattleAdapterError && error.code === 'BATTLE_ACTION_INVALID') {
-          return this.rememberCommandResult(
+          return this.persistRejectedCommandResult(
             command,
             identity,
             this.actionOrTerminalCommandResult(command, 'MATCH_ACTION_INVALID', revision),
@@ -791,32 +1077,23 @@ export class MatchDO extends DurableObject<Env> {
         throw error;
       }
       const nextRevision = parseMatchRevision(revision + 1);
-      if (nextRevision === null || runtime.commandRevision() !== nextRevision) {
+      if (
+        nextRevision === null ||
+        runtime.commandRevision() !== revision ||
+        prepared.nextRuntime.commandRevision() !== nextRevision
+      ) {
         throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
       }
-      const result = transition.status.phase === 'finished' && transition.status.endReason !== null
-        ? {
-            winner: transition.status.winner,
-            endReason: transition.status.endReason,
-            turns: transition.status.turn,
-            finalStateHash: transition.status.stateHash,
-            finalIdentityHash: transition.status.identityHash,
-            appliedActions: transition.status.appliedActions,
-          }
-        : null;
-      const applied = this.rememberCommandResult(command, identity, {
-        type: 'matchCommandResult',
-        state: 'accepted',
-        matchId: command.matchId,
-        commandId: command.commandId,
-        baseRevision: revision,
-        revision: nextRevision,
-      });
-      this.battleRevision = nextRevision;
-      if (result) {
-        await this.persistBattleTerminal(lifecycle, this.finishedTerminalResult(result));
-      }
-      return applied;
+      return this.persistAcceptedCommandResult(
+        lifecycle,
+        runtime,
+        prepared.nextRuntime,
+        prepared.transition.steps,
+        command,
+        identity,
+        revision,
+        nextRevision,
+      );
     });
   }
 
@@ -1877,38 +2154,633 @@ export class MatchDO extends DurableObject<Env> {
       return { state: 'conflict' };
     }
 
-    const activated = this.ctx.storage.sql.exec<{ lifecycle_state: string }>(
-      `UPDATE match_battle_lifecycle
-          SET lifecycle_state = 'active', assignment_version = ?
-        WHERE lifecycle_key = 1 AND lifecycle_state = 'provisioning'
-          AND match_id = ? AND account_id = ? AND session_id = ?
-          AND session_version = ? AND seed = ?
-        RETURNING lifecycle_state`,
-      assignment.assignmentVersion,
-      matchId,
-      input.principal.accountId,
-      input.principal.sessionId,
-      input.principal.sessionVersion,
-      input.seed,
-    ).toArray();
-    if (activated.length !== 1) {
-      throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
-    }
     const initialRevision = parseMatchRevision(0);
     if (initialRevision === null || runtime.commandRevision() !== initialRevision) {
       throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
     }
-    this.battleRuntime = runtime;
+    const immediateResult = runtime.result();
+    const snapshot = runtime.authoritativeSnapshot();
+    const headerJson = encodePersistedJson(snapshot.header, MAX_PERSISTED_HEADER_BYTES);
+    const initialBattleCardsJson = encodePersistedJson(
+      snapshot.initialBattleCards,
+      MAX_PERSISTED_INITIAL_CARDS_BYTES,
+    );
+    const initialEventJson = snapshot.initialEvents.map((event) =>
+      encodePersistedJson(event, MAX_PERSISTED_EVENT_BYTES));
+    const preparedRuntime = this.prepareBattleRuntimePersistence(
+      runtime,
+      snapshot.steps,
+      null,
+      initialRevision,
+      initialEventJson.length,
+    );
+    const initialBytes =
+      jsonBytes(headerJson) +
+      jsonBytes(initialBattleCardsJson) +
+      initialEventJson.reduce((sum, encoded) => sum + jsonBytes(encoded), 0) +
+      preparedRuntime.encodedBytes;
+    if (
+      initialEventJson.length > MAX_PERSISTED_BATTLE_EVENTS ||
+      !IDENTITY_HASH_PATTERN.test(snapshot.initialIdentityHash) ||
+      initialBytes > MAX_PERSISTED_BATTLE_HISTORY_BYTES
+    ) {
+      throw new MatchBattleError('MATCH_COMMAND_CAPACITY_EXCEEDED');
+    }
+    const terminal = immediateResult
+      ? this.prepareBattleTerminal(lifecycle, this.finishedTerminalResult(immediateResult))
+      : null;
+    const persistedAtEpochMs = Math.max(Date.now(), lifecycle.started_at_ms);
+    await this.ctx.storage.transaction(async (transaction) => {
+      this.ctx.storage.sql.exec(
+        `INSERT INTO match_battle_manifest (
+           manifest_key, match_id, schema_version, header_json,
+           initial_battle_cards_json, initial_identity_hash, initial_event_count,
+           created_at_ms
+         ) VALUES (1, ?, ?, ?, ?, ?, ?, ?)`,
+        matchId,
+        BATTLE_PERSISTENCE_VERSION,
+        headerJson,
+        initialBattleCardsJson,
+        snapshot.initialIdentityHash,
+        initialEventJson.length,
+        persistedAtEpochMs,
+      );
+      for (const [sequence, eventJson] of initialEventJson.entries()) {
+        this.ctx.storage.sql.exec(
+          `INSERT INTO match_battle_event (
+             event_sequence, step_sequence, ordinal, event_json
+           ) VALUES (?, -1, ?, ?)`,
+          sequence,
+          sequence,
+          eventJson,
+        );
+      }
+      this.writePreparedBattleSteps(preparedRuntime.steps);
+      this.ctx.storage.sql.exec(
+        `INSERT INTO match_battle_state (
+           state_key, match_id, revision, step_count, event_count, command_count,
+           rejection_count, state_json, battle_cards_json, current_state_hash,
+           current_identity_hash, updated_at_ms
+         ) VALUES (1, ?, 0, ?, ?, 0, 0, ?, ?, ?, ?, ?)`,
+        matchId,
+        snapshot.steps.length,
+        preparedRuntime.nextEventCount,
+        preparedRuntime.stateJson,
+        preparedRuntime.battleCardsJson,
+        snapshot.currentStateHash,
+        snapshot.currentIdentityHash,
+        persistedAtEpochMs,
+      );
+      if (terminal) {
+        this.writeBattleTerminal(terminal);
+        await this.ensureNextAlarmInTransaction(transaction);
+      } else {
+        const activated = this.ctx.storage.sql.exec<{ lifecycle_state: string }>(
+          `UPDATE match_battle_lifecycle
+              SET lifecycle_state = 'active', assignment_version = ?,
+                  persistence_version = ?
+            WHERE lifecycle_key = 1 AND lifecycle_state = 'provisioning'
+              AND match_id = ? AND account_id = ? AND session_id = ?
+              AND session_version = ? AND seed = ?
+            RETURNING lifecycle_state`,
+          assignment.assignmentVersion,
+          BATTLE_PERSISTENCE_VERSION,
+          matchId,
+          input.principal.accountId,
+          input.principal.sessionId,
+          input.principal.sessionVersion,
+          input.seed,
+        ).toArray();
+        if (activated.length !== 1) {
+          throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+        }
+      }
+    });
+    await this.runBattleCommandCutpoint(
+      () => this.afterBattleActivationCommit(),
+      'MATCH_BATTLE_POST_ACTIVATION_COMMIT_FAILED',
+    );
+    this.battleRuntime = terminal ? null : runtime;
     this.battleRevision = initialRevision;
     this.battleCommands.clear();
-
-    const immediateResult = runtime.result();
-    if (immediateResult) {
-      const active = this.battleLifecycleRow();
-      if (!active) throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
-      await this.persistBattleTerminal(active, this.finishedTerminalResult(immediateResult));
-    }
     return { state: 'ready', created };
+  }
+
+  private battlePersistenceCounts(): BattlePersistenceCounts {
+    return this.ctx.storage.sql.exec<BattlePersistenceCounts>(
+      `SELECT
+         (SELECT COUNT(*) FROM match_battle_manifest) AS manifests,
+         (SELECT COUNT(*) FROM match_battle_state) AS states,
+         (SELECT COUNT(*) FROM match_battle_command) AS commands,
+         (SELECT COUNT(*) FROM match_battle_step) AS steps,
+         (SELECT COUNT(*) FROM match_battle_event) AS events`,
+    ).one();
+  }
+
+  /** 大きなJSON rowをmaterializeする前にSQLite側で総byte数をfail closed判定する。 */
+  private battlePersistenceStoredBytes(): number {
+    return this.ctx.storage.sql.exec<{ byte_count: number }>(
+      `SELECT
+         COALESCE((SELECT SUM(length(CAST(header_json AS BLOB)) +
+                              length(CAST(initial_battle_cards_json AS BLOB)))
+                     FROM match_battle_manifest), 0) +
+         COALESCE((SELECT SUM(length(CAST(state_json AS BLOB)) +
+                              length(CAST(battle_cards_json AS BLOB)))
+                     FROM match_battle_state), 0) +
+         COALESCE((SELECT SUM(length(CAST(canonical_payload AS BLOB)) +
+                              length(CAST(receipt_json AS BLOB)))
+                     FROM match_battle_command), 0) +
+         COALESCE((SELECT SUM(length(CAST(step_json AS BLOB)))
+                     FROM match_battle_step), 0) +
+         COALESCE((SELECT SUM(length(CAST(event_json AS BLOB)))
+                     FROM match_battle_event), 0) AS byte_count`,
+    ).one().byte_count;
+  }
+
+  /** constructorのinput gate内でだけ呼び、全decode成功後にmemoryへinstallする。 */
+  private async hydrateBattlePersistence(): Promise<void> {
+    try {
+      await this.hydrateBattlePersistenceExact();
+    } catch {
+      // constructor input gate専用reason。通常operationのSTATE_INVALIDと分け、
+      // testの意図したDO resetだけをexactに観測できるようにする。
+      throw new MatchBattleError('MATCH_BATTLE_PERSISTENCE_INVALID');
+    }
+  }
+
+  private async hydrateBattlePersistenceExact(): Promise<void> {
+    this.battleRuntime = null;
+    this.battleRevision = null;
+    this.battleCommands.clear();
+    const lifecycle = this.battleLifecycleRow();
+    const counts = this.battlePersistenceCounts();
+    const assignments = this.ctx.storage.sql.exec<AssignmentReferenceRow>(
+      `SELECT seat_id, account_id, session_id, session_version, assignment_version,
+              coordinator_registration_id, coordinator_registration_epoch_ms
+         FROM match_seat_assignment ORDER BY seat_id`,
+    ).toArray();
+    const terminalReleases = this.ctx.storage.sql.exec<TerminalReleaseRow>(
+      `SELECT registration_id, registration_epoch_ms, seat_id, account_id,
+              session_id, session_version, match_id, seed, release_phase, retry_attempt
+         FROM match_terminal_release ORDER BY seat_id`,
+    ).toArray();
+    const terminalDeadlines = this.ctx.storage.sql.exec<{
+      deadline_key: string;
+      due_at_ms: number;
+    }>(
+      `SELECT deadline_key, due_at_ms FROM do_deadline
+        WHERE deadline_kind = ? ORDER BY deadline_key`,
+      TERMINAL_RELEASE_DEADLINE_KIND,
+    ).toArray();
+    const totalPersistenceRows =
+      counts.manifests + counts.states + counts.commands + counts.steps + counts.events;
+    if (!lifecycle) {
+      if (
+        totalPersistenceRows !== 0 ||
+        terminalReleases.length !== 0 ||
+        terminalDeadlines.length !== 0
+      ) {
+        throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+      }
+      return;
+    }
+    this.lifecycleFromRow(lifecycle);
+    if (
+      terminalReleases.length > 1 ||
+      terminalDeadlines.length !== terminalReleases.length
+    ) {
+      throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+    }
+    const terminalDeadlineKeys = new Set(
+      terminalDeadlines.map((deadline) => {
+        if (!positiveInteger(deadline.due_at_ms)) {
+          throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+        }
+        return deadline.deadline_key;
+      }),
+    );
+    for (const release of terminalReleases) {
+      this.validateTerminalRelease(release);
+      if (
+        release.seat_id !== 'player-1' ||
+        release.account_id !== lifecycle.account_id ||
+        release.session_id !== lifecycle.session_id ||
+        release.session_version !== lifecycle.session_version ||
+        release.match_id !== lifecycle.match_id ||
+        release.seed !== lifecycle.seed ||
+        !terminalDeadlineKeys.has(terminalReleaseDeadlineKey(release.registration_id))
+      ) {
+        throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+      }
+    }
+
+    const runtimeLessCancellation =
+      lifecycle.lifecycle_state === 'cancelled' &&
+      lifecycle.turns === null &&
+      lifecycle.final_state_hash === null &&
+      lifecycle.applied_actions === null;
+    if (lifecycle.lifecycle_state === 'provisioning') {
+      if (
+        totalPersistenceRows !== 0 ||
+        lifecycle.persistence_version !== null ||
+        terminalReleases.length !== 0
+      ) {
+        throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+      }
+      return;
+    }
+    if (runtimeLessCancellation) {
+      if (totalPersistenceRows !== 0 || lifecycle.persistence_version !== null) {
+        throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+      }
+      if (assignments.length !== 0) {
+        throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+      }
+      return;
+    }
+    if (
+      (lifecycle.lifecycle_state === 'active' && terminalReleases.length !== 0) ||
+      (lifecycle.lifecycle_state !== 'active' && assignments.length !== 0)
+    ) {
+      throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+    }
+    if (
+      lifecycle.persistence_version !== BATTLE_PERSISTENCE_VERSION ||
+      counts.manifests !== 1 ||
+      counts.states !== 1 ||
+      counts.steps > MAX_PERSISTED_BATTLE_STEPS ||
+      counts.events > MAX_PERSISTED_BATTLE_EVENTS ||
+      counts.commands > MAX_MATCH_COMMAND_RECORDS
+    ) {
+      throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+    }
+    const storedBytes = this.battlePersistenceStoredBytes();
+    if (
+      !Number.isSafeInteger(storedBytes) ||
+      storedBytes < 1 ||
+      storedBytes > MAX_PERSISTED_BATTLE_HISTORY_BYTES
+    ) {
+      throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+    }
+
+    const manifest = this.ctx.storage.sql.exec<BattleManifestRow>(
+      `SELECT match_id, schema_version, header_json, initial_battle_cards_json,
+              initial_identity_hash, initial_event_count, created_at_ms
+         FROM match_battle_manifest WHERE manifest_key = 1`,
+    ).one();
+    const storedState = this.ctx.storage.sql.exec<BattleStateRow>(
+      `SELECT match_id, revision, step_count, event_count, command_count,
+              rejection_count, state_json, battle_cards_json, current_state_hash,
+              current_identity_hash, updated_at_ms
+         FROM match_battle_state WHERE state_key = 1`,
+    ).one();
+    const commandRows = this.ctx.storage.sql.exec<BattleCommandRow>(
+      `SELECT record_sequence, command_id, match_id, seat_id, expected_revision,
+              canonical_payload, payload_digest, result_state, result_revision,
+              receipt_json, terminal_flag, created_at_ms
+         FROM match_battle_command ORDER BY record_sequence`,
+    ).toArray();
+    const stepRows = this.ctx.storage.sql.exec<BattleStepRow>(
+      `SELECT step_sequence, command_id, command_revision, player, source, step_json,
+              state_hash, identity_hash, event_start_sequence, event_count
+         FROM match_battle_step ORDER BY step_sequence`,
+    ).toArray();
+    const eventRows = this.ctx.storage.sql.exec<BattleEventRow>(
+      `SELECT event_sequence, step_sequence, ordinal, event_json
+         FROM match_battle_event ORDER BY event_sequence`,
+    ).toArray();
+
+    if (
+      manifest.match_id !== lifecycle.match_id ||
+      manifest.match_id !== this.ctx.id.name ||
+      manifest.schema_version !== BATTLE_PERSISTENCE_VERSION ||
+      !positiveInteger(manifest.created_at_ms) ||
+      manifest.created_at_ms < lifecycle.started_at_ms ||
+      !nonNegativeInteger(manifest.initial_event_count) ||
+      manifest.initial_event_count > eventRows.length ||
+      !IDENTITY_HASH_PATTERN.test(manifest.initial_identity_hash) ||
+      storedState.match_id !== manifest.match_id ||
+      storedState.step_count !== stepRows.length ||
+      storedState.event_count !== eventRows.length ||
+      storedState.command_count !== commandRows.length ||
+      !nonNegativeInteger(storedState.rejection_count) ||
+      storedState.rejection_count > MAX_MATCH_COMMAND_REJECTION_RECORDS ||
+      !positiveInteger(storedState.updated_at_ms) ||
+      storedState.updated_at_ms < manifest.created_at_ms ||
+      !STATE_HASH_PATTERN.test(storedState.current_state_hash) ||
+      !IDENTITY_HASH_PATTERN.test(storedState.current_identity_hash)
+    ) {
+      throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+    }
+    const revision = parseMatchRevision(storedState.revision);
+    if (revision === null) throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+
+    const header = decodePersistedJson(manifest.header_json, MAX_PERSISTED_HEADER_BYTES);
+    const initialBattleCards = decodePersistedJson(
+      manifest.initial_battle_cards_json,
+      MAX_PERSISTED_INITIAL_CARDS_BYTES,
+    );
+    const currentState = decodePersistedJson(storedState.state_json, MAX_PERSISTED_STATE_BYTES);
+    const currentBattleCards = decodePersistedJson(
+      storedState.battle_cards_json,
+      MAX_PERSISTED_BATTLE_CARDS_BYTES,
+    );
+    let historyBytes =
+      jsonBytes(manifest.header_json) +
+      jsonBytes(manifest.initial_battle_cards_json) +
+      jsonBytes(storedState.state_json) +
+      jsonBytes(storedState.battle_cards_json);
+
+    const decodedEvents: unknown[] = [];
+    for (const [sequence, row] of eventRows.entries()) {
+      if (
+        row.event_sequence !== sequence ||
+        !Number.isSafeInteger(row.step_sequence) ||
+        row.step_sequence < -1 ||
+        !nonNegativeInteger(row.ordinal)
+      ) {
+        throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+      }
+      historyBytes += jsonBytes(row.event_json);
+      decodedEvents.push(decodePersistedJson(row.event_json, MAX_PERSISTED_EVENT_BYTES));
+    }
+    for (let sequence = 0; sequence < manifest.initial_event_count; sequence += 1) {
+      const row = eventRows[sequence];
+      if (!row || row.step_sequence !== -1 || row.ordinal !== sequence) {
+        throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+      }
+    }
+    if (eventRows[manifest.initial_event_count]?.step_sequence === -1) {
+      throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+    }
+
+    const restoredSteps: AppliedBattleStep[] = [];
+    const stepCommandIds: Array<MatchCommandId | null> = [];
+    let eventCursor = manifest.initial_event_count;
+    let humanRevision = 0;
+    for (const [sequence, row] of stepRows.entries()) {
+      const commandRevision = parseMatchRevision(row.command_revision);
+      const commandId = row.command_id === null ? null : parseMatchCommandId(row.command_id);
+      if (
+        row.step_sequence !== sequence ||
+        commandRevision === null ||
+        (row.command_id !== null && !commandId) ||
+        (row.player !== HUMAN_PLAYER && row.player !== NPC_PLAYER) ||
+        (row.source !== 'human' && row.source !== 'npc') ||
+        !STATE_HASH_PATTERN.test(row.state_hash) ||
+        !IDENTITY_HASH_PATTERN.test(row.identity_hash) ||
+        row.event_start_sequence !== eventCursor ||
+        !nonNegativeInteger(row.event_count) ||
+        eventCursor + row.event_count > eventRows.length
+      ) {
+        throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+      }
+      const decodedStep = decodePersistedJson(row.step_json, MAX_PERSISTED_STEP_BYTES);
+      historyBytes += jsonBytes(row.step_json);
+      if (
+        !plainObject(decodedStep) ||
+        !hasExactKeys(decodedStep, [
+          'sequence',
+          'player',
+          'source',
+          'action',
+          'stateHash',
+          'identityHash',
+        ]) ||
+        decodedStep.sequence !== sequence ||
+        decodedStep.player !== row.player ||
+        decodedStep.source !== row.source ||
+        decodedStep.stateHash !== row.state_hash ||
+        decodedStep.identityHash !== row.identity_hash
+      ) {
+        throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+      }
+      if (row.source === 'human') {
+        humanRevision += 1;
+        if (
+          row.player !== HUMAN_PLAYER ||
+          commandId === null ||
+          commandRevision !== humanRevision
+        ) {
+          throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+        }
+      } else if (
+        row.player !== NPC_PLAYER ||
+        commandRevision !== humanRevision ||
+        (humanRevision === 0 ? commandId !== null : commandId === null)
+      ) {
+        throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+      }
+      const events: unknown[] = [];
+      for (let ordinal = 0; ordinal < row.event_count; ordinal += 1) {
+        const eventRow = eventRows[eventCursor + ordinal];
+        if (
+          !eventRow ||
+          eventRow.step_sequence !== sequence ||
+          eventRow.ordinal !== ordinal
+        ) {
+          throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+        }
+        events.push(decodedEvents[eventCursor + ordinal]);
+      }
+      eventCursor += row.event_count;
+      restoredSteps.push({
+        ...(decodedStep as unknown as PersistedBattleStepValue),
+        events,
+      } as AppliedBattleStep);
+      stepCommandIds.push(commandId);
+    }
+    if (
+      eventCursor !== eventRows.length ||
+      humanRevision !== revision ||
+      historyBytes > MAX_PERSISTED_BATTLE_HISTORY_BYTES
+    ) {
+      throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+    }
+
+    let runtime: EngineBattleAdapter;
+    try {
+      runtime = EngineBattleAdapter.restoreFromHistory({
+        header,
+        initialBattleCards,
+        initialIdentityHash: manifest.initial_identity_hash,
+        steps: restoredSteps,
+      });
+    } catch {
+      throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+    }
+    const restored = runtime.authoritativeSnapshot();
+    if (
+      restored.header.seed !== lifecycle.seed ||
+      !this.lifecycleVersionsMatch(lifecycle, restored.header) ||
+      canonicalBattlePersistenceJson(restored.initialEvents) !==
+        canonicalBattlePersistenceJson(decodedEvents.slice(0, manifest.initial_event_count)) ||
+      canonicalBattlePersistenceJson(restored.state) !==
+        canonicalBattlePersistenceJson(currentState) ||
+      canonicalBattlePersistenceJson(restored.battleCards) !==
+        canonicalBattlePersistenceJson(currentBattleCards) ||
+      restored.steps.length !== storedState.step_count ||
+      restored.currentStateHash !== storedState.current_state_hash ||
+      restored.currentIdentityHash !== storedState.current_identity_hash ||
+      restored.state.eventSeq !== storedState.event_count ||
+      runtime.commandRevision() !== revision
+    ) {
+      throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+    }
+
+    const hydratedCommands: Array<{
+      commandId: MatchCommandId;
+      identity: MatchCommandPayloadIdentity;
+      result: StoredMatchCommandResult;
+    }> = [];
+    const acceptedCommands = new Map<number, MatchCommandId>();
+    const trialLedger = new MatchCommandLedger<StoredMatchCommandResult>();
+    let acceptedRevision = 0;
+    let rejectedCount = 0;
+    let terminalCommandCount = 0;
+    for (const [sequence, row] of commandRows.entries()) {
+      const commandId = parseMatchCommandId(row.command_id);
+      const expectedRevision = parseMatchRevision(row.expected_revision);
+      const resultRevision = parseMatchRevision(row.result_revision);
+      const receiptValue = decodePersistedJson(row.receipt_json, MAX_PERSISTED_RECEIPT_BYTES);
+      const receipt = parseMatchCommandResult(receiptValue);
+      if (
+        row.record_sequence !== sequence ||
+        !commandId ||
+        expectedRevision === null ||
+        resultRevision === null ||
+        row.match_id !== lifecycle.match_id ||
+        row.seat_id !== 'player-1' ||
+        !positiveInteger(row.created_at_ms) ||
+        (row.result_state !== 'accepted' && row.result_state !== 'rejected') ||
+        (row.terminal_flag !== 0 && row.terminal_flag !== 1) ||
+        !receipt
+      ) {
+        throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+      }
+      if (
+        !isStoredMatchCommandResult(receipt) ||
+        receipt.matchId !== row.match_id ||
+        receipt.commandId !== commandId ||
+        receipt.state !== row.result_state ||
+        receipt.revision !== resultRevision
+      ) {
+        throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+      }
+      historyBytes +=
+        jsonBytes(row.canonical_payload) +
+        jsonBytes(row.receipt_json);
+      if (historyBytes > MAX_PERSISTED_BATTLE_HISTORY_BYTES) {
+        throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+      }
+      const identity = await validateStoredMatchCommandPayloadIdentity({
+        commandId,
+        matchId: row.match_id,
+        seatId: row.seat_id,
+        expectedRevision,
+        canonicalPayload: row.canonical_payload,
+        payloadDigest: row.payload_digest,
+      });
+      if (receipt.state === 'accepted') {
+        acceptedRevision += 1;
+        if (
+          receipt.baseRevision !== acceptedRevision - 1 ||
+          receipt.revision !== acceptedRevision ||
+          expectedRevision !== receipt.baseRevision
+        ) {
+          throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+        }
+        acceptedCommands.set(acceptedRevision, commandId);
+      } else {
+        rejectedCount += 1;
+        if (
+          receipt.revision !== acceptedRevision ||
+          (receipt.errorCode === 'MATCH_REVISION_MISMATCH' &&
+            ((receipt.relation === 'stale' && expectedRevision >= acceptedRevision) ||
+              (receipt.relation === 'ahead' && expectedRevision <= acceptedRevision))) ||
+          (receipt.errorCode !== 'MATCH_REVISION_MISMATCH' &&
+            expectedRevision !== acceptedRevision)
+        ) {
+          throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+        }
+      }
+      if (row.terminal_flag === 1) {
+        terminalCommandCount += 1;
+        if (receipt.state !== 'accepted' || receipt.revision !== storedState.revision) {
+          throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+        }
+      }
+      trialLedger.remember(commandId, identity, receipt);
+      hydratedCommands.push({ commandId, identity, result: receipt });
+    }
+    if (
+      acceptedRevision !== revision ||
+      rejectedCount !== storedState.rejection_count ||
+      trialLedger.size !== storedState.command_count ||
+      terminalCommandCount > 1
+    ) {
+      throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+    }
+    for (const [sequence, row] of stepRows.entries()) {
+      if (row.command_revision === 0) continue;
+      if (stepCommandIds[sequence] !== acceptedCommands.get(row.command_revision)) {
+        throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+      }
+    }
+
+    const runtimeResult = runtime.result();
+    const runtimeStatus = runtime.status();
+    if (lifecycle.lifecycle_state === 'active') {
+      const assignment = assignments[0];
+      if (
+        assignments.length !== 1 ||
+        !assignment ||
+        assignment.seat_id !== 'player-1' ||
+        assignment.account_id !== lifecycle.account_id ||
+        assignment.session_id !== lifecycle.session_id ||
+        assignment.session_version !== lifecycle.session_version ||
+        assignment.assignment_version !== lifecycle.assignment_version ||
+        typeof assignment.coordinator_registration_id !== 'string' ||
+        !UUID_PATTERN.test(assignment.coordinator_registration_id) ||
+        !positiveInteger(assignment.coordinator_registration_epoch_ms) ||
+        runtimeResult !== null ||
+        terminalCommandCount !== 0
+      ) {
+        throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+      }
+    } else {
+      if (assignments.length !== 0) throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+      const terminal = this.lifecycleFromRow(lifecycle).terminalResult;
+      if (!terminal) throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+      if (terminal.kind === 'finished') {
+        if (
+          !runtimeResult ||
+          runtimeResult.winner !== terminal.winner ||
+          runtimeResult.endReason !== terminal.endReason ||
+          runtimeResult.turns !== terminal.turns ||
+          runtimeResult.finalStateHash !== terminal.finalStateHash ||
+          runtimeResult.appliedActions !== terminal.appliedActions ||
+          (revision === 0 ? terminalCommandCount !== 0 : terminalCommandCount !== 1)
+        ) {
+          throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+        }
+      } else if (
+        runtimeResult !== null ||
+        terminal.turns !== runtimeStatus.turn ||
+        terminal.finalStateHash !== runtimeStatus.stateHash ||
+        terminal.appliedActions !== runtimeStatus.appliedActions ||
+        terminalCommandCount !== 0
+      ) {
+        throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+      }
+    }
+
+    this.battleCommands.clear();
+    for (const command of hydratedCommands) {
+      this.battleCommands.remember(command.commandId, command.identity, command.result);
+    }
+    this.battleRevision = revision;
+    this.battleRuntime = lifecycle.lifecycle_state === 'active' ? runtime : null;
   }
 
   private battleLifecycleRow(): BattleLifecycleRow | undefined {
@@ -1917,7 +2789,7 @@ export class MatchDO extends DurableObject<Env> {
               seat_id, assignment_version, seed, adapter_version, engine_version,
               content_version, format_version_id, npc_policy_id, started_at_ms,
               terminal_at_ms, terminal_reason, winner, engine_end_reason, turns,
-              final_state_hash, applied_actions
+              final_state_hash, applied_actions, persistence_version
          FROM match_battle_lifecycle WHERE lifecycle_key = 1`,
     ).toArray()[0];
   }
@@ -1951,11 +2823,13 @@ export class MatchDO extends DurableObject<Env> {
       typeof row.format_version_id !== 'string' ||
       !positiveInteger(row.started_at_ms) ||
       (row.assignment_version !== null && !positiveInteger(row.assignment_version)) ||
-      (row.lifecycle_state === 'provisioning' && row.assignment_version !== null) ||
+      (row.lifecycle_state === 'provisioning' &&
+        (row.assignment_version !== null || row.persistence_version !== null)) ||
       ((row.lifecycle_state === 'active' ||
         row.lifecycle_state === 'finished' ||
         row.lifecycle_state === 'abandoned') &&
-        !positiveInteger(row.assignment_version))
+        (!positiveInteger(row.assignment_version) ||
+          row.persistence_version !== BATTLE_PERSISTENCE_VERSION))
     ) {
       throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
     }
@@ -2004,7 +2878,10 @@ export class MatchDO extends DurableObject<Env> {
         row.engine_end_reason !== null ||
         (!hasNoRuntimeResult && !hasCompleteRuntimeResult) ||
         (hasNoRuntimeResult && row.assignment_version !== null) ||
-        (hasCompleteRuntimeResult && !positiveInteger(row.assignment_version))
+        (hasNoRuntimeResult && row.persistence_version !== null) ||
+        (hasCompleteRuntimeResult &&
+          (!positiveInteger(row.assignment_version) ||
+            row.persistence_version !== BATTLE_PERSISTENCE_VERSION))
       ) {
         throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
       }
@@ -2191,6 +3068,404 @@ export class MatchDO extends DurableObject<Env> {
     }
   }
 
+  private installCommittedCommandResult(
+    command: MatchCommandCandidate,
+    identity: MatchCommandPayloadIdentity,
+    result: StoredMatchCommandResult,
+  ): StoredMatchCommandResult {
+    try {
+      return this.rememberCommandResult(command, identity, result);
+    } catch (error) {
+      this.ctx.abort('MATCH_COMMAND_CACHE_INSTALL_FAILED');
+      throw error;
+    }
+  }
+
+  private battleImmutableHistoryBytes(): number {
+    return this.ctx.storage.sql.exec<{ byte_count: number }>(
+      `SELECT
+         COALESCE((SELECT SUM(length(CAST(header_json AS BLOB)) +
+                              length(CAST(initial_battle_cards_json AS BLOB)))
+                     FROM match_battle_manifest), 0) +
+         COALESCE((SELECT SUM(length(CAST(canonical_payload AS BLOB)) +
+                              length(CAST(receipt_json AS BLOB)))
+                     FROM match_battle_command), 0) +
+         COALESCE((SELECT SUM(length(CAST(step_json AS BLOB)))
+                     FROM match_battle_step), 0) +
+         COALESCE((SELECT SUM(length(CAST(event_json AS BLOB)))
+                     FROM match_battle_event), 0) AS byte_count`,
+    ).one().byte_count;
+  }
+
+  private prepareBattleRuntimePersistence(
+    runtime: EngineBattleAdapter,
+    appendedSteps: readonly AppliedBattleStep[],
+    commandId: MatchCommandId | null,
+    commandRevision: MatchRevision,
+    currentEventCount: number,
+  ): PreparedBattleRuntimePersistence {
+    const checkpoint = runtime.authoritativeCheckpoint();
+    if (
+      !nonNegativeInteger(currentEventCount) ||
+      currentEventCount > MAX_PERSISTED_BATTLE_EVENTS ||
+      checkpoint.stepCount > MAX_PERSISTED_BATTLE_STEPS ||
+      appendedSteps.length > checkpoint.stepCount ||
+      runtime.commandRevision() !== commandRevision ||
+      !STATE_HASH_PATTERN.test(checkpoint.currentStateHash) ||
+      !IDENTITY_HASH_PATTERN.test(checkpoint.currentIdentityHash)
+    ) {
+      throw new MatchBattleError('MATCH_COMMAND_CAPACITY_EXCEEDED');
+    }
+    const firstSequence = checkpoint.stepCount - appendedSteps.length;
+    let eventCursor = currentEventCount;
+    let encodedBytes = 0;
+    const steps: PreparedBattleStepInsert[] = [];
+    for (const [offset, step] of appendedSteps.entries()) {
+      if (
+        step.sequence !== firstSequence + offset ||
+        !STATE_HASH_PATTERN.test(step.stateHash) ||
+        !IDENTITY_HASH_PATTERN.test(step.identityHash) ||
+        !Array.isArray(step.events)
+      ) {
+        throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+      }
+      const stepJson = encodePersistedJson(
+        persistedBattleStepValue(step),
+        MAX_PERSISTED_STEP_BYTES,
+      );
+      const eventJson = step.events.map((event) =>
+        encodePersistedJson(event, MAX_PERSISTED_EVENT_BYTES));
+      if (eventCursor + eventJson.length > MAX_PERSISTED_BATTLE_EVENTS) {
+        throw new MatchBattleError('MATCH_COMMAND_CAPACITY_EXCEEDED');
+      }
+      encodedBytes += jsonBytes(stepJson);
+      for (const encoded of eventJson) encodedBytes += jsonBytes(encoded);
+      steps.push({
+        step: structuredClone(step),
+        commandId,
+        commandRevision,
+        stepJson,
+        eventStartSequence: eventCursor,
+        eventJson,
+      });
+      eventCursor += eventJson.length;
+    }
+    const stateJson = encodePersistedJson(checkpoint.state, MAX_PERSISTED_STATE_BYTES);
+    const battleCardsJson = encodePersistedJson(
+      checkpoint.battleCards,
+      MAX_PERSISTED_BATTLE_CARDS_BYTES,
+    );
+    encodedBytes += jsonBytes(stateJson) + jsonBytes(battleCardsJson);
+    if (
+      checkpoint.state.eventSeq !== eventCursor ||
+      (checkpoint.stepCount > 0 &&
+        (checkpoint.currentStateHash !== appendedSteps.at(-1)?.stateHash ||
+          checkpoint.currentIdentityHash !== appendedSteps.at(-1)?.identityHash))
+    ) {
+      throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+    }
+    return {
+      checkpoint,
+      stateJson,
+      battleCardsJson,
+      steps,
+      nextEventCount: eventCursor,
+      encodedBytes,
+    };
+  }
+
+  private writePreparedBattleSteps(steps: readonly PreparedBattleStepInsert[]): void {
+    for (const prepared of steps) {
+      this.ctx.storage.sql.exec(
+        `INSERT INTO match_battle_step (
+           step_sequence, command_id, command_revision, player, source, step_json,
+           state_hash, identity_hash, event_start_sequence, event_count
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        prepared.step.sequence,
+        prepared.commandId,
+        prepared.commandRevision,
+        prepared.step.player,
+        prepared.step.source,
+        prepared.stepJson,
+        prepared.step.stateHash,
+        prepared.step.identityHash,
+        prepared.eventStartSequence,
+        prepared.eventJson.length,
+      );
+      for (const [ordinal, eventJson] of prepared.eventJson.entries()) {
+        this.ctx.storage.sql.exec(
+          `INSERT INTO match_battle_event (
+             event_sequence, step_sequence, ordinal, event_json
+           ) VALUES (?, ?, ?, ?)`,
+          prepared.eventStartSequence + ordinal,
+          prepared.step.sequence,
+          ordinal,
+          eventJson,
+        );
+      }
+    }
+  }
+
+  private writeCommandRecord(
+    recordSequence: number,
+    command: MatchCommandCandidate,
+    identity: MatchCommandPayloadIdentity,
+    result: StoredMatchCommandResult,
+    receiptJson: string,
+    terminal: boolean,
+    createdAtEpochMs: number,
+  ): void {
+    this.ctx.storage.sql.exec(
+      `INSERT INTO match_battle_command (
+         record_sequence, command_id, match_id, seat_id, expected_revision,
+         canonical_payload, payload_digest, result_state, result_revision,
+         receipt_json, terminal_flag, created_at_ms
+       ) VALUES (?, ?, ?, 'player-1', ?, ?, ?, ?, ?, ?, ?, ?)`,
+      recordSequence,
+      command.commandId,
+      command.matchId,
+      command.expectedRevision,
+      identity.canonicalPayload,
+      identity.payloadDigest,
+      result.state,
+      result.revision,
+      receiptJson,
+      terminal ? 1 : 0,
+      createdAtEpochMs,
+    );
+  }
+
+  private async persistRejectedCommandResult(
+    command: MatchCommandCandidate,
+    identity: MatchCommandPayloadIdentity,
+    result: StoredMatchCommandResult & { state: 'rejected' },
+  ): Promise<StoredMatchCommandResult> {
+    if (!this.battleCommands.hasCapacity('rejected')) {
+      throw new MatchBattleError('MATCH_COMMAND_CAPACITY_EXCEEDED');
+    }
+    const state = this.ctx.storage.sql.exec<BattleStateRow>(
+      `SELECT match_id, revision, step_count, event_count, command_count,
+              rejection_count, state_json, battle_cards_json, current_state_hash,
+              current_identity_hash, updated_at_ms
+         FROM match_battle_state WHERE state_key = 1`,
+    ).toArray()[0];
+    const receiptJson = encodePersistedJson(result, MAX_PERSISTED_RECEIPT_BYTES);
+    if (
+      !state ||
+      state.match_id !== command.matchId ||
+      state.revision !== this.requireBattleRevision() ||
+      state.command_count !== this.battleCommands.size ||
+      state.rejection_count !== this.battleCommands.rejectedSize
+    ) {
+      throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+    }
+    if (
+      this.battleImmutableHistoryBytes() +
+        jsonBytes(identity.canonicalPayload) +
+        jsonBytes(receiptJson) +
+        jsonBytes(state.state_json) +
+        jsonBytes(state.battle_cards_json) >
+      MAX_PERSISTED_BATTLE_HISTORY_BYTES
+    ) {
+      throw new MatchBattleError('MATCH_COMMAND_CAPACITY_EXCEEDED');
+    }
+    const now = Math.max(Date.now(), state.updated_at_ms);
+    this.ctx.storage.transactionSync(() => {
+      this.writeCommandRecord(
+        state.command_count,
+        command,
+        identity,
+        result,
+        receiptJson,
+        false,
+        now,
+      );
+      const updated = this.ctx.storage.sql.exec<{ command_count: number }>(
+        `UPDATE match_battle_state
+            SET command_count = command_count + 1,
+                rejection_count = rejection_count + 1,
+                updated_at_ms = ?
+          WHERE state_key = 1 AND match_id = ? AND revision = ?
+            AND command_count = ? AND rejection_count = ?
+          RETURNING command_count`,
+        now,
+        command.matchId,
+        state.revision,
+        state.command_count,
+        state.rejection_count,
+      ).toArray();
+      if (updated.length !== 1) {
+        throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+      }
+    });
+    await this.runBattleCommandCutpoint(
+      () => this.afterBattleCommandCommit(),
+      'MATCH_COMMAND_POST_COMMIT_FAILED',
+    );
+    const installed = this.installCommittedCommandResult(command, identity, result);
+    await this.runBattleCommandCutpoint(
+      () => this.afterBattleCommandInstall(),
+      'MATCH_COMMAND_POST_INSTALL_FAILED',
+    );
+    return installed;
+  }
+
+  private async persistAcceptedCommandResult(
+    lifecycle: BattleLifecycleRow,
+    currentRuntime: EngineBattleAdapter,
+    nextRuntime: EngineBattleAdapter,
+    appendedSteps: readonly AppliedBattleStep[],
+    command: MatchCommandCandidate,
+    identity: MatchCommandPayloadIdentity,
+    baseRevision: MatchRevision,
+    nextRevision: MatchRevision,
+  ): Promise<AcceptedMatchCommandResult> {
+    if (!this.battleCommands.hasCapacity('accepted')) {
+      throw new MatchBattleError('MATCH_COMMAND_CAPACITY_EXCEEDED');
+    }
+    const state = this.ctx.storage.sql.exec<BattleStateRow>(
+      `SELECT match_id, revision, step_count, event_count, command_count,
+              rejection_count, state_json, battle_cards_json, current_state_hash,
+              current_identity_hash, updated_at_ms
+         FROM match_battle_state WHERE state_key = 1`,
+    ).toArray()[0];
+    const currentSnapshot = currentRuntime.authoritativeSnapshot();
+    if (
+      !state ||
+      state.match_id !== command.matchId ||
+      state.revision !== baseRevision ||
+      command.expectedRevision !== baseRevision ||
+      state.command_count !== this.battleCommands.size ||
+      state.rejection_count !== this.battleCommands.rejectedSize ||
+      state.step_count !== currentSnapshot.steps.length ||
+      state.event_count !== currentSnapshot.state.eventSeq ||
+      state.current_state_hash !== currentSnapshot.currentStateHash ||
+      state.current_identity_hash !== currentSnapshot.currentIdentityHash ||
+      state.state_json !== canonicalBattlePersistenceJson(currentSnapshot.state) ||
+      state.battle_cards_json !== canonicalBattlePersistenceJson(currentSnapshot.battleCards) ||
+      appendedSteps.length < 1 ||
+      appendedSteps[0]?.source !== 'human' ||
+      appendedSteps.filter((step) => step.source === 'human').length !== 1
+    ) {
+      throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+    }
+    const preparedRuntime = this.prepareBattleRuntimePersistence(
+      nextRuntime,
+      appendedSteps,
+      command.commandId,
+      nextRevision,
+      state.event_count,
+    );
+    if (
+      preparedRuntime.checkpoint.stepCount !== state.step_count + appendedSteps.length ||
+      preparedRuntime.checkpoint.stepCount > MAX_PERSISTED_BATTLE_STEPS
+    ) {
+      throw new MatchBattleError('MATCH_COMMAND_CAPACITY_EXCEEDED');
+    }
+    const result: AcceptedMatchCommandResult = {
+      type: 'matchCommandResult',
+      state: 'accepted',
+      matchId: command.matchId,
+      commandId: command.commandId,
+      baseRevision,
+      revision: nextRevision,
+    };
+    const receiptJson = encodePersistedJson(result, MAX_PERSISTED_RECEIPT_BYTES);
+    const terminalResult = nextRuntime.result();
+    const terminal = terminalResult
+      ? this.prepareBattleTerminal(lifecycle, this.finishedTerminalResult(terminalResult))
+      : null;
+    if (
+      this.battleImmutableHistoryBytes() +
+        jsonBytes(identity.canonicalPayload) +
+        jsonBytes(receiptJson) +
+        preparedRuntime.encodedBytes >
+      MAX_PERSISTED_BATTLE_HISTORY_BYTES
+    ) {
+      throw new MatchBattleError('MATCH_COMMAND_CAPACITY_EXCEEDED');
+    }
+    const now = Math.max(Date.now(), state.updated_at_ms);
+    await this.ctx.storage.transaction(async (transaction) => {
+      this.writeCommandRecord(
+        state.command_count,
+        command,
+        identity,
+        result,
+        receiptJson,
+        terminal !== null,
+        now,
+      );
+      this.writePreparedBattleSteps(preparedRuntime.steps);
+      const updated = this.ctx.storage.sql.exec<{ revision: number }>(
+        `UPDATE match_battle_state
+            SET revision = ?, step_count = ?, event_count = ?,
+                command_count = command_count + 1,
+                state_json = ?, battle_cards_json = ?,
+                current_state_hash = ?, current_identity_hash = ?, updated_at_ms = ?
+          WHERE state_key = 1 AND match_id = ? AND revision = ?
+            AND step_count = ? AND event_count = ? AND command_count = ?
+            AND rejection_count = ? AND current_state_hash = ?
+            AND current_identity_hash = ?
+          RETURNING revision`,
+        nextRevision,
+        preparedRuntime.checkpoint.stepCount,
+        preparedRuntime.nextEventCount,
+        preparedRuntime.stateJson,
+        preparedRuntime.battleCardsJson,
+        preparedRuntime.checkpoint.currentStateHash,
+        preparedRuntime.checkpoint.currentIdentityHash,
+        now,
+        command.matchId,
+        baseRevision,
+        state.step_count,
+        state.event_count,
+        state.command_count,
+        state.rejection_count,
+        state.current_state_hash,
+        state.current_identity_hash,
+      ).toArray();
+      if (updated.length !== 1 || updated[0]?.revision !== nextRevision) {
+        throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+      }
+      if (terminal) {
+        this.writeBattleTerminal(terminal);
+        await this.ensureNextAlarmInTransaction(transaction);
+      }
+    });
+
+    await this.runBattleCommandCutpoint(
+      () => this.afterBattleCommandCommit(),
+      'MATCH_COMMAND_POST_COMMIT_FAILED',
+    );
+    const installed = this.installCommittedCommandResult(command, identity, result);
+    this.battleRevision = nextRevision;
+    this.battleRuntime = terminal ? null : nextRuntime;
+    await this.runBattleCommandCutpoint(
+      () => this.afterBattleCommandInstall(),
+      'MATCH_COMMAND_POST_INSTALL_FAILED',
+    );
+    return installed as AcceptedMatchCommandResult;
+  }
+
+  /** crash境界を明示するno-op。testはbarrierへ差し替え、本物のDO tear-downを当てる。 */
+  private async afterBattleActivationCommit(): Promise<void> {}
+
+  private async afterBattleCommandCommit(): Promise<void> {}
+
+  private async afterBattleCommandInstall(): Promise<void> {}
+
+  private async runBattleCommandCutpoint(
+    cutpoint: () => Promise<void>,
+    abortReason: string,
+  ): Promise<void> {
+    try {
+      await cutpoint();
+    } catch (error) {
+      this.ctx.abort(abortReason);
+      throw error;
+    }
+  }
+
   private finishedTerminalResult(result: NpcBattleResult): NpcBattleTerminalResult {
     return {
       kind: 'finished',
@@ -2212,11 +3487,11 @@ export class MatchDO extends DurableObject<Env> {
       : lifecycle;
   }
 
-  /** lifecycle/outbox/token/assignment/alarmを先にatomic commitし、その後だけ外部解除する。 */
-  private async persistBattleTerminal(
+  /** 外部RPCやsocket操作をせず、同じSQLite transactionへ書ける終端planだけを作る。 */
+  private prepareBattleTerminal(
     lifecycle: BattleLifecycleRow,
     terminal: NpcBattleTerminalResult,
-  ): Promise<BattleLifecycleRow> {
+  ): PreparedBattleTerminal {
     if (
       lifecycle.lifecycle_state !== 'provisioning' &&
       lifecycle.lifecycle_state !== 'active'
@@ -2255,11 +3530,21 @@ export class MatchDO extends DurableObject<Env> {
       }
     }
 
+    const hasRuntimeState =
+      nonNegativeInteger(terminal.turns) &&
+      typeof terminal.finalStateHash === 'string' &&
+      STATE_HASH_PATTERN.test(terminal.finalStateHash) &&
+      nonNegativeInteger(terminal.appliedActions);
+    if (
+      (lifecycle.lifecycle_state === 'active' && !hasRuntimeState) ||
+      (terminal.kind !== 'cancelled' && !hasRuntimeState)
+    ) {
+      throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+    }
     const terminalAtEpochMs = Math.max(Date.now(), lifecycle.started_at_ms);
-    const terminalState = terminal.kind;
-    const terminalReason = terminal.kind === 'finished' ? null : terminal.reason;
-    const engineEndReason = terminal.kind === 'finished' ? terminal.endReason : null;
-    const assignmentVersion = assignments[0]?.assignment_version ?? lifecycle.assignment_version;
+    const assignmentVersion = hasRuntimeState
+      ? assignments[0]?.assignment_version ?? lifecycle.assignment_version
+      : lifecycle.assignment_version;
     const dueAtEpochMs = Date.now() + REFERENCE_CLEANUP_RETRY_BASE_MS;
     const releases: TerminalReleaseRow[] = assignments.map((assignment) => ({
       registration_id: assignment.coordinator_registration_id!,
@@ -2288,77 +3573,91 @@ export class MatchDO extends DurableObject<Env> {
       });
     }
 
-    await this.ctx.storage.transaction(async (transaction) => {
-      const updated = this.ctx.storage.sql.exec<{ lifecycle_state: string }>(
-        `UPDATE match_battle_lifecycle
-            SET lifecycle_state = ?, assignment_version = ?, terminal_at_ms = ?,
-                terminal_reason = ?, winner = ?, engine_end_reason = ?, turns = ?,
-                final_state_hash = ?, applied_actions = ?
-          WHERE lifecycle_key = 1 AND lifecycle_state = ?
-            AND match_id = ? AND account_id = ? AND session_id = ?
-            AND session_version = ? AND seed = ?
-          RETURNING lifecycle_state`,
-        terminalState,
-        assignmentVersion,
-        terminalAtEpochMs,
-        terminalReason,
-        terminal.winner,
-        engineEndReason,
-        terminal.turns,
-        terminal.finalStateHash,
-        terminal.appliedActions,
-        lifecycle.lifecycle_state,
-        matchId,
-        lifecycle.account_id,
-        lifecycle.session_id,
-        lifecycle.session_version,
-        lifecycle.seed,
-      ).toArray();
-      if (updated.length !== 1) {
-        throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
-      }
+    return {
+      lifecycle,
+      terminal,
+      terminalAtEpochMs,
+      assignmentVersion,
+      dueAtEpochMs,
+      releases,
+    };
+  }
 
-      for (const release of releases) {
-        this.ctx.storage.sql.exec(
-          `INSERT INTO match_terminal_release (
-             seat_id, registration_id, registration_epoch_ms, account_id,
-             session_id, session_version, match_id, seed, release_phase, retry_attempt
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
-          release.seat_id,
-          release.registration_id,
-          release.registration_epoch_ms,
-          release.account_id,
-          release.session_id,
-          release.session_version,
-          matchId,
-          lifecycle.seed,
-          release.release_phase,
-        );
-        this.upsertTerminalReleaseDeadline(release.registration_id, dueAtEpochMs);
-      }
-      this.ctx.storage.sql.exec(`DELETE FROM match_seat_token`);
-      this.ctx.storage.sql.exec(`DELETE FROM match_seat_assignment`);
-      this.ctx.storage.sql.exec(`DELETE FROM do_deadline WHERE deadline_kind = 'ws-auth'`);
+  private writeBattleTerminal(prepared: PreparedBattleTerminal): void {
+    const { lifecycle, terminal } = prepared;
+    const terminalReason = terminal.kind === 'finished' ? null : terminal.reason;
+    const engineEndReason = terminal.kind === 'finished' ? terminal.endReason : null;
+    const persistenceVersion = terminal.finalStateHash === null
+      ? null
+      : BATTLE_PERSISTENCE_VERSION;
+    const updated = this.ctx.storage.sql.exec<{ lifecycle_state: string }>(
+      `UPDATE match_battle_lifecycle
+          SET lifecycle_state = ?, assignment_version = ?, terminal_at_ms = ?,
+              terminal_reason = ?, winner = ?, engine_end_reason = ?, turns = ?,
+              final_state_hash = ?, applied_actions = ?, persistence_version = ?
+        WHERE lifecycle_key = 1 AND lifecycle_state = ?
+          AND match_id = ? AND account_id = ? AND session_id = ?
+          AND session_version = ? AND seed = ?
+        RETURNING lifecycle_state`,
+      terminal.kind,
+      prepared.assignmentVersion,
+      prepared.terminalAtEpochMs,
+      terminalReason,
+      terminal.winner,
+      engineEndReason,
+      terminal.turns,
+      terminal.finalStateHash,
+      terminal.appliedActions,
+      persistenceVersion,
+      lifecycle.lifecycle_state,
+      lifecycle.match_id,
+      lifecycle.account_id,
+      lifecycle.session_id,
+      lifecycle.session_version,
+      lifecycle.seed,
+    ).toArray();
+    if (updated.length !== 1) {
+      throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+    }
+
+    for (const release of prepared.releases) {
+      this.ctx.storage.sql.exec(
+        `INSERT INTO match_terminal_release (
+           seat_id, registration_id, registration_epoch_ms, account_id,
+           session_id, session_version, match_id, seed, release_phase, retry_attempt
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+        release.seat_id,
+        release.registration_id,
+        release.registration_epoch_ms,
+        release.account_id,
+        release.session_id,
+        release.session_version,
+        release.match_id,
+        release.seed,
+        release.release_phase,
+      );
+      this.upsertTerminalReleaseDeadline(release.registration_id, prepared.dueAtEpochMs);
+    }
+    this.ctx.storage.sql.exec(`DELETE FROM match_seat_token`);
+    this.ctx.storage.sql.exec(`DELETE FROM match_seat_assignment`);
+    // pending/verifying socketはACK対象ではない。既存ws-auth deadlineを残し、alarmで必ずcloseする。
+    // authenticated socketのprojection/ACK後closeはbrowser wireを所有するOLG-124で行う。
+  }
+
+  /** ACKを外部cleanupから独立させ、commit後はalarmだけがCoordinatorへ接触する。 */
+  private async persistBattleTerminal(
+    lifecycle: BattleLifecycleRow,
+    terminal: NpcBattleTerminalResult,
+  ): Promise<BattleLifecycleRow> {
+    const prepared = this.prepareBattleTerminal(lifecycle, terminal);
+    await this.ctx.storage.transaction(async (transaction) => {
+      this.writeBattleTerminal(prepared);
       await this.ensureNextAlarmInTransaction(transaction);
     });
-
-    this.closeTerminalConnections();
     this.battleRuntime = null;
-    for (const release of releases) {
-      await this.retryTerminalRelease(terminalReleaseDeadlineKey(release.registration_id));
-    }
     const stored = this.battleLifecycleRow();
     if (!stored) throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
     return stored;
-  }
-
-  private closeTerminalConnections(): void {
-    for (const socket of this.ctx.getWebSockets()) {
-      const attachment = socket.deserializeAttachment() as ConnectionAttachment | null;
-      if (attachment?.mode !== 'diagnostic') {
-        socket.close(MATCH_TERMINAL_CLOSE_CODE, MATCH_TERMINAL_CLOSE_REASON);
-      }
-    }
   }
 
   private upsertTerminalReleaseDeadline(

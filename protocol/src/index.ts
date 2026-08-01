@@ -274,3 +274,131 @@ export type MatchCommandResult =
   | MatchCommandRevisionMismatchResult
   | MatchCommandActionOrTerminalRejectedResult
   | MatchCommandIdConflictResult;
+
+const MATCH_COMMAND_RESULT_BASE_KEYS = ['type', 'state', 'matchId', 'commandId'] as const;
+const MATCH_COMMAND_ACCEPTED_RESULT_KEYS = [
+  ...MATCH_COMMAND_RESULT_BASE_KEYS,
+  'baseRevision',
+  'revision',
+] as const;
+const MATCH_COMMAND_REVISION_MISMATCH_RESULT_KEYS = [
+  ...MATCH_COMMAND_RESULT_BASE_KEYS,
+  'errorCode',
+  'revision',
+  'relation',
+] as const;
+const MATCH_COMMAND_ACTION_OR_TERMINAL_RESULT_KEYS = [
+  ...MATCH_COMMAND_RESULT_BASE_KEYS,
+  'errorCode',
+  'revision',
+] as const;
+const MATCH_COMMAND_ID_CONFLICT_RESULT_KEYS = [
+  ...MATCH_COMMAND_RESULT_BASE_KEYS,
+  'errorCode',
+  'originalRevision',
+] as const;
+
+/** SQLiteやwireからreceiptを戻すtrust boundary用のexact decoder。 */
+export function parseMatchCommandResult(value: unknown): MatchCommandResult | null {
+  if (
+    !plainObject(value) ||
+    value.type !== 'matchCommandResult' ||
+    (value.state !== 'accepted' && value.state !== 'rejected')
+  ) {
+    return null;
+  }
+  const matchId = parseMatchId(value.matchId);
+  const commandId = parseMatchCommandId(value.commandId);
+  if (!matchId || !commandId) return null;
+
+  if (value.state === 'accepted') {
+    if (!exactKeys(value, MATCH_COMMAND_ACCEPTED_RESULT_KEYS, MATCH_COMMAND_ACCEPTED_RESULT_KEYS)) {
+      return null;
+    }
+    const baseRevision = parseMatchRevision(value.baseRevision);
+    const revision = parseMatchRevision(value.revision);
+    return baseRevision !== null && revision !== null && revision === baseRevision + 1
+      ? {
+          type: 'matchCommandResult',
+          state: 'accepted',
+          matchId,
+          commandId,
+          baseRevision,
+          revision,
+        }
+      : null;
+  }
+
+  if (value.errorCode === 'MATCH_REVISION_MISMATCH') {
+    if (
+      !exactKeys(
+        value,
+        MATCH_COMMAND_REVISION_MISMATCH_RESULT_KEYS,
+        MATCH_COMMAND_REVISION_MISMATCH_RESULT_KEYS,
+      ) ||
+      (value.relation !== 'stale' && value.relation !== 'ahead')
+    ) {
+      return null;
+    }
+    const revision = parseMatchRevision(value.revision);
+    return revision === null
+      ? null
+      : {
+          type: 'matchCommandResult',
+          state: 'rejected',
+          matchId,
+          commandId,
+          errorCode: 'MATCH_REVISION_MISMATCH',
+          revision,
+          relation: value.relation,
+        };
+  }
+
+  if (
+    value.errorCode === 'MATCH_ACTION_INVALID' ||
+    value.errorCode === 'MATCH_ALREADY_TERMINAL'
+  ) {
+    if (
+      !exactKeys(
+        value,
+        MATCH_COMMAND_ACTION_OR_TERMINAL_RESULT_KEYS,
+        MATCH_COMMAND_ACTION_OR_TERMINAL_RESULT_KEYS,
+      )
+    ) {
+      return null;
+    }
+    const revision = parseMatchRevision(value.revision);
+    return revision === null
+      ? null
+      : {
+          type: 'matchCommandResult',
+          state: 'rejected',
+          matchId,
+          commandId,
+          errorCode: value.errorCode,
+          revision,
+        };
+  }
+
+  if (value.errorCode !== 'MATCH_COMMAND_ID_CONFLICT') return null;
+  if (
+    !exactKeys(
+      value,
+      MATCH_COMMAND_ID_CONFLICT_RESULT_KEYS,
+      MATCH_COMMAND_ID_CONFLICT_RESULT_KEYS,
+    )
+  ) {
+    return null;
+  }
+  const originalRevision = parseMatchRevision(value.originalRevision);
+  return originalRevision === null
+    ? null
+    : {
+        type: 'matchCommandResult',
+        state: 'rejected',
+        matchId,
+        commandId,
+        errorCode: 'MATCH_COMMAND_ID_CONFLICT',
+        originalRevision,
+      };
+}
