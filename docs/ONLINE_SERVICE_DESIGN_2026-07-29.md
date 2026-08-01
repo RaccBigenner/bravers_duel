@@ -1464,8 +1464,8 @@ LINE/Googleのメールが同じでも、自動でアカウント統合しない
   `Sb-Forwarded-For`を組にする
 - WebSocket接続前に、そのMatchDOがserver-sideで保持するseat assignmentとsession/accountが
   一致した場合だけ、30秒・単一match/seat・一回限りの256 bit seat tokenを発行する。
-  client指定のseatやmatch参加資格を権威情報にしない。OLG-121がassignmentを作るまでは
-  発行APIの正方向は成立せず、未参加として拒否する
+  client指定のseatやmatch参加資格を権威情報にしない。OLG-121でserver生成NPC予約からassignmentを
+  作る経路を接続済みで、SessionCoordinatorの参加台帳をpositive確認できない要求は未参加として拒否する
 - seat tokenはURL/query/cookieへ置かない。exact Originとsessionを検証してupgradeした後、
   clientは5秒以内の最初の小さなauth frameでtokenを送り、MatchDO SQLiteのdigestを条件付き
   `UPDATE`して一回だけ消費する。認証完了前はsnapshot/eventを一切送らず、不正時は詳細を
@@ -1485,7 +1485,8 @@ LINE/Googleのメールが同じでも、自動でアカウント統合しない
   取消済みIDをO(1)の`cancelledThroughEpochMs` floorへ世代圧縮し、別stub間の順序逆転で遅延registerを
   復活させない。MatchDOは永続clockから`max(Date.now(), last+1, cancelledThrough+1)`で次epochを採番する。
   fan-outはmatch IDで重複排除する。
-  OLG-121は試合の正常終了・取消・放棄を永続化した後にも同じ解除を必須とし、通算対戦数を上限にしない。
+  OLG-121で試合の正常終了・取消・放棄を永続化した後にも同じ解除を行うよう接続済みで、
+  通算対戦数を上限にしない。
   ACK失敗は参照を残して上限60秒の自前backoff alarmで再送する。Workerがintent保存後のDB更新前、または
   DB更新後のfan-out前に停止しても、alarmが同じdigestで冪等なDB失効から再開する。全ACK後にdigest付きworkを
   消し、失効version floorだけを残す。DOのsingle-thread順序でinvalidateより後のcommandを拒否し、既に
@@ -1873,8 +1874,9 @@ secretを用意するのはOLG-103以降（社長の手番を含む）。OLG-101
 - `server/`と`protocol/`は`engine`/`web`/`admin`と同じ形のnpm workspaceにする
   （パッケージ名`@bravers/server`、`@bravers/protocol`。ルート`package.json`の`workspaces`へ追加）。
   `protocol`は`server`と`web`の両方から参照される共有型（Command/Event/Snapshot）を持つため、
-  `engine`のように独立したworkspaceにする。中身（実際の型定義）はOLG-121/122（engine server
-  adapter、`commandId`+`expectedRevision`）で埋める。OLG-101の時点では、workspaceとして
+  `engine`のように独立したworkspaceにする。OLG-121のengine adapterはwire非公開のserver内部型とし、
+  browser向けの実型はOLG-122/123/124（`commandId`+`expectedRevision`、stable card ID、projection）で
+  埋める。OLG-101の時点では、workspaceとして
   解決できることを1つのプレースホルダ型と1本のテストで示すだけでよい
 - `supabase/`はnpm workspaceにしない（JS/TSパッケージではないため）。`supabase init`が作る
   `config.toml`（Supabase CLIのローカル設定）だけを置く。PostgreSQLの正本になるマイグレーション

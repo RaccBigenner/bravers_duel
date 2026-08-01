@@ -1,7 +1,7 @@
 /**
  * OLG-101ではworkspaceの解決だけを検証する。
- * Command/Event/Snapshotの実型は、engine adapterと冪等command処理を作る
- * OLG-121/122で正本と同時に追加する。
+ * OLG-121の権威engine型はserver内部に閉じる。browser向けCommand/Event/Snapshotは、
+ * stable card ID・command envelope・player projectionを作るOLG-123/122/124で追加する。
  */
 export const PROTOCOL_SCAFFOLD = {
   version: 'OLG-101',

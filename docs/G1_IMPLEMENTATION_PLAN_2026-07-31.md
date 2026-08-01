@@ -74,9 +74,13 @@ P1 exit の一言まとめ:
 
 ### Step C: MatchDO の中核（OLG-121 → OLG-123 → OLG-122 → OLG-125 → OLG-124）
 
-- **OLG-121** engine server adapter: MatchDO の中で engine を動かす。
-  engine 公開 API のみ使用（前提②）。server-owned assignment directoryを接続し、
-  試合の正常終了・取消・放棄を永続化した後にSessionCoordinatorの進行中参照を解除する。
+- **OLG-121（2026-08-01コード実装済み）** engine server adapter: MatchDO の中で engine を動かす。
+  engine 公開 API のみ使用（前提②）。`POST /matches/npc`は空objectだけを受け、SessionCoordinatorが
+  match IDとseedを生成・予約する。MatchDOは開始、合法action、権威snapshot、正常終了・取消・放棄を
+  server権威で管理し、終端をSQLiteへ先に確定してから参照解除→予約解放の二段outboxを再試行する。
+  client指定のmatch ID / seat / deck / seed / versionは受けず、seat token / WebSocketも参加台帳の
+  positive確認後だけ対象DOへ到達する。active runtimeはOLG-125までメモリ内なのでeviction後はseedから
+  再生成せず`MATCH_STATE_UNAVAILABLE`、browser向けgame frameは後続OLGまで`game-not-ready`とする。
 - **OLG-123** stable `battleCardId`: 手札 index でなくカード個体 ID で
   action を指定する（設計 §11.1。engine の action と protocol の action の変換層で吸収）
 - **OLG-122** `commandId + expectedRevision`: 重複 command と古い revision の拒否

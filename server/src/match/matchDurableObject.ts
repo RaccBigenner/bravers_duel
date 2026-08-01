@@ -466,7 +466,8 @@ export function matchIdFromPath(pathname: string): string | null {
 
 /**
  * MatchDOはmatchごとのassignment/token/connection正本。
- * OLG-121がassignSeatを呼ぶまではissueSeatTokenの正方向は成立しない。
+ * browser公開NPC経路はserver予約由来だけにし、Workerの参加台帳とlocal assignmentの
+ * 二重barrierを通らないsessionにはtokenを発行しない。
  */
 export class MatchDO extends DurableObject<Env> {
   private operationTail: Promise<void> = Promise.resolve();

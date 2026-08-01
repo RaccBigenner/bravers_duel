@@ -518,7 +518,7 @@ G1 Internal Alphaの土台。設計: `docs/ONLINE_SERVICE_DESIGN_2026-07-29.md` 
   （それらはOLG-102〜105）。OLG-101の完了だけでは何も稼働しない
 - `server`/`protocol`を`@bravers/server`/`@bravers/protocol`として`engine`/`web`/`admin`と
   同じ形のnpm workspaceにし、ルート`package.json`の`workspaces`へ追加する
-- `protocol`は中身を埋めない（Command/Event/Snapshotの実型はOLG-121/122）。workspaceとして
+- `protocol`は中身を埋めない（browser向けCommand/Event/Snapshotの実型はOLG-122/123/124）。workspaceとして
   解決できることをプレースホルダ型1つ・テスト1本で示すだけ
 - `supabase/`はnpm workspaceにしない。`supabase init`相当の`config.toml`だけを置き、
   マイグレーション（PostgreSQL正本）は`server/migrations/`に置く（10.4のリポジトリ構成案どおり。
@@ -551,7 +551,7 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
 - Workers test poolが要求するVitest 4.1.10へtest runnerを統一する。Web/Adminのunit testは専用configを
   使い、production build用Vite 5/React pluginの設定をVitest内蔵Viteへ読み込ませない
 - `MatchDO`は宣言的Durable Object exportとSQLite storageを使い、WebSocket Hibernation APIで
-  疎通確認用socketを受ける。ゲーム本体のCommand/Event/SnapshotはOLG-121/122/125へ残す
+  疎通確認用socketを受ける。ゲーム本体のbrowser向けCommand/Event/SnapshotはOLG-123/122/125/124へ残す
 - `GET /health`はWorkerだけで成功にせず、health専用MatchDOを呼び、DO SQLiteの`SELECT 1`まで確認する
 - `npm run dev:online`はlocal Supabaseの状態確認→必要なら起動→`migration up --local`→
   status/migration確認→pgTAP DB受入→Wrangler local起動の順に行う。Supabase CLIの`--workdir`は
@@ -634,7 +634,8 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
 - unsafe APIはexact Origin、same-origin Fetch Metadata、JSON、固定headerをDB/Authより先に検査。
   TurnstileはSupabase Authへ一度だけ渡し、remote client IPはCloudflare由来だけを転送する
 - MatchDOにserver-owned seat assignmentと30秒・一回限りのseat token portを置く。
-  OLG-121がassignmentを作るまではclient指定のmatch/seatで発行せず未参加として拒否する
+  OLG-121でserver生成NPC予約とassignmentを接続済み。client指定のmatch/seatでは発行せず、
+  SessionCoordinatorの参加台帳をpositive確認できない要求はMatchDO取得前に拒否する
 - WebSocketはOrigin/sessionを検証後にupgradeし、最初の5秒以内のauth frameでtokenを原子的に消費。
   認証完了前はgame payloadを送らず、attachmentへraw tokenを残さない
 - logoutはsession単位の`SessionCoordinatorDO`へHMAC digest付きintentと復旧alarmを同一transactionで
@@ -653,8 +654,8 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
 - 非参加、別match/seat、期限切れ、改変、再利用tokenを拒否し、同一tokenの並行consumeは1件だけ成功する
 - seat tokenなしの通常WebSocketは拒否する。`APP_ENV=local`の`local-smoke`だけは
   SupabaseなしのOLG-102診断用例外として残す
-- public match portはOLG-121のserver-owned assignment directory接続まで閉じ、任意match IDから
-  Durable Objectを作れない。MatchDO URLとnamed DO identityも完全一致を必須にする
+- public match portはOLG-121でNPC開始だけを開き、`POST /matches/npc`のserver予約から到達させる。
+  任意match IDからDurable Objectを作れず、MatchDO URLとnamed DO identityも完全一致を必須にする
 - assignmentごとの一意なregistration IDを持ち、seat置換では旧session参照をversion＋ID完全一致で
   解除する。遅延した古い解除で新参照を消さず、fan-outはmatch IDで重複排除する。同一matchの応答喪失中
   IDはcoordinator側で8件まで。MatchDOはregister RPC前のpendingをseatごと1件に制限し、
@@ -663,8 +664,8 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
   SQLite queue＋上限60秒backoff alarmから新stubで1件ずつ回収する。coordinatorは取消済みIDを
   O(1)の`cancelledThroughEpochMs` floorへ世代圧縮し、別stubの遅延registerを復活させない。MatchDOは
   永続clockで`max(Date.now(), last+1, cancelledThrough+1)`を次epochにし、時計逆行と同ms衝突から回復する。
-  正常終了・取消・
-  放棄時の解除はOLG-121へ接続し、最大16件を通算対戦数ではなく進行中MatchDO数の上限にする
+  正常終了・取消・放棄はOLG-121でSQLite終端確定→exact参照解除→予約解放の二段outboxへ接続し、
+  最大16件を通算対戦数ではなく進行中MatchDO数の上限にする
 - Docker互換ランタイム上でGoTrue→Worker cookie→session復元→logout→401とDB pgTAPを完走する
 
 - OLG-114 active session/複数タブ制御
@@ -715,7 +716,7 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
 ### Epic OLG-120 MatchDO
 
 - OLG-121 engine server adapter（server-owned assignment directoryと、正常終了・取消・放棄後の
-  SessionCoordinator参照解除を含む）
+  SessionCoordinator参照解除を含む）— **コード実装済み（2026-08-01）**
 - OLG-122 `commandId + expectedRevision`
 - OLG-123 stable `battleCardId`
 - OLG-124 player projection
@@ -723,6 +724,43 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
 - OLG-126 reconnect/resume
 - OLG-127 timeout/disconnect（PvP標準クロック・切断との関係・レート反映の設計: 11.5）
 - OLG-128 authoritative NPC tutorial E2E（NPC戦は無制限＋idle suspendの設計: 4.1）
+- OLG-129 battle start idempotency tombstone（終端後まで極端に遅延した旧開始要求と新規開始を区別。
+  G1では受容残余とし、G4 public前にbounded tombstoneまたはIdempotency-Keyで閉じる）
+
+#### OLG-121 engine server adapter
+
+状態: **コード実装済み**（2026-08-01）
+
+- engine package rootの公開APIだけを使う`EngineBattleAdapter`をserverに置き、G1固定デッキ・
+  server生成uint32 seedから決定論的にNPC戦を開始する。server sourceからengine deep/relative importを
+  行うとAST境界テストが失敗する
+- `POST /matches/npc`はexact `{}`だけを受け、SessionCoordinatorがsessionごとに`npc-<UUID>`とseedを
+  一件予約する。同時実行と通常の応答喪失再送は同じ予約へ収束し、responseはmatch IDだけを返す
+- seat token / WebSocketはDB session解決→Coordinator membership positive確認→MatchDO取得の順。
+  client指定のmatch ID / seat / deck / seed / engine・content・format versionからDOを作らない
+- MatchDO SQLiteへ`provisioning / active / finished / cancelled / abandoned`を保存する。正常終了では
+  engine結果を、取消・放棄では理由を先に確定し、token/assignmentを削除してsocketを閉じる
+- 終端後の外部cleanupは、登録済みなら`unregisterMatch`→`releaseNpcMatch`、登録前取消なら
+  `releaseNpcMatch`だけを別outbox＋alarmで再試行する。応答喪失、追加参照、古いreleaseと新予約の競合、
+  旧seat cleanupとの同居で新しい予約・参照を消さない
+- logout失効とbattle操作はMatchDO内の同じFIFOで順序づけ、失効が先ならstart再送・action・tokenを拒否する。
+  engine上の終了後にSQLite commitだけ失敗しても、start再送・cancelはfinishedを優先して再永続化する
+
+受入:
+
+- 改変actionと版不一致を盤面不変で拒否し、合法actionだけをNPC応答まで適用できる
+- NPC戦を最後まで決定論的に進め、勝敗をSQLiteへ保存してからassignmentと予約を解除できる
+- active DO eviction後はseedから再生成せずfail closed。terminal lifecycle/resultはeviction後も読める
+- authoritative snapshot / seed / deck / engine-native actionは内部RPCだけで扱い、browser WebSocketの
+  game frameはOLG-123/122/125/124完了まで`error:game-not-ready`で盤面不変にする
+
+残余:
+
+- active runtime・action streamの再構築はOLG-125、stable card IDはOLG-123、command冪等性はOLG-122、
+  player projectionはOLG-124で実装する
+- terminal解放後まで極端に遅延した旧`POST /matches/npc`は新規開始と区別できないためOLG-129へ送る
+- logout失効後にactive lifecycleを自動終端する条件は、NPC idle suspendを扱うOLG-127で固定する
+- MatchDOのbattle lifecycle / terminal outboxは後続機能追加時に別moduleへ分割する
 
 ### Epic OLG-130 PWA shell
 

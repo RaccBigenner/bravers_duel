@@ -128,9 +128,14 @@
   logoutは`SessionCoordinatorDO`へ失効intent＋alarmを原子的に先置きし、DB version更新後に
   関連MatchDOの全ACKを待つ。Worker応答喪失時もDB失効から自動再開する。public match正方向は
   MatchDOのRPC前pending・seat置換cleanup outbox・世代圧縮取消floorで停止/別stub順序逆転も
-  fail closedにした。OLG-121のassignment directoryまで閉じたまま。root全test、server 142 test、
-  実Worker/DO smokeはgreen。
+  fail closedにした。OLG-121でserver-owned NPC予約・assignment・membership barrierまで接続済み。
+  root全test、実Worker/DO smokeはgreen。
   残るのはDocker互換ランタイム上のGoTrue→cookie→session復元→logout→401とpgTAP受入。
+- OLG-121は2026-08-01にコード実装済み。engine公開APIだけのserver adapter、server生成match ID/seedの
+  `POST /matches/npc`、MatchDOのNPC lifecycleを接続した。正常終了・取消・放棄をSQLiteへ先に確定し、
+  SessionCoordinatorの参照解除→予約解放を二段outboxで回収する。失効後start/action、改変action、
+  active evictionからのseed再生成はfail closed。browser game frameは後続OLGまで`game-not-ready`のまま。
+  server 181 test、関連77 test、server-engine境界5 test、leak検査はgreen。
 - P2へNPCシングル市場を正式登録した。G2 Collection Closed Betaは固定買取/販売、有限な実在個体在庫、
   atomic quote/orderで開始する。固定価格のraw集計からpolicyを承認し、2〜4週間shadow計算する。
   日次±5%・基準80〜120%の動的価格を実注文へ使えるのはG8だけとし、G4以降の標本、
@@ -167,7 +172,10 @@
 - **OLG-111も実装済み・実stack受入待ち**。同じ`npm run smoke:online`でGoTrue匿名signup、
   同一UUIDのaccount行、直接read拒否、削除cascadeまで通れば完了にする。HTTP routeはOLG-113で接続済み。
 - **OLG-113も実装済み・実stack受入待ち**。同じ実stackでguest cookie発行、session復元、logout後401、
-  pgTAPを完走したら完了にする。通常matchのpublic正方向はOLG-121まで閉じる。
+  pgTAPを完走したら完了にする。通常matchはOLG-121でserver生成NPC予約からだけ正方向を開いた。
+- **OLG-121はコード実装済み**。active runtimeの再起動復旧はOLG-125、stable card IDはOLG-123、
+  command冪等性はOLG-122、player projectionはOLG-124へ続く。終端後まで極端に遅延した旧開始要求の
+  区別はOLG-129、logout失効後のactive lifecycle終端条件はOLG-127で固定する。
   OLG-003PのCloudflare作業はG0 blockerとして並行管理する。
 - ここまでの経緯は一番下の「開発の記録」を見る。
 
