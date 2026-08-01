@@ -1,7 +1,7 @@
 begin;
 
 set local search_path = extensions, public;
-select plan(90);
+select plan(92);
 
 -- schema / FK / RLS / ACL (1-27)
 select has_table('public', 'guest_bootstrap_attempt', 'bootstrap attempt table exists');
@@ -794,6 +794,75 @@ select is(
   ) ->> 'state'),
   'create_auth',
   'the same bootstrap cookie can drive a brand new signup after compensation completes'
+);
+
+-- concurrent hard-delete racing complete_guest_app_session's CLEANUP_PENDING acceptance
+-- must fail closed as 'invalid', not surface an uncaught FK violation (91-92)
+insert into olg113_session_case (case_name, bootstrap_digest_hex, account_id, session_id)
+values ('recover-auth-account-race', repeat('a1', 32), gen_random_uuid(), gen_random_uuid());
+update olg113_session_case
+set create_result = public.create_guest_bootstrap_attempt(
+      bootstrap_digest_hex,
+      1::smallint,
+      1::smallint
+    )
+where case_name = 'recover-auth-account-race';
+update olg113_session_case
+set attempt_id = (create_result ->> 'attempt_id')::uuid,
+    first_claim_result = public.claim_guest_bootstrap_attempt(bootstrap_digest_hex, 1::smallint)
+where case_name = 'recover-auth-account-race';
+update olg113_session_case
+set first_claim_id = (first_claim_result ->> 'claim_id')::uuid
+where case_name = 'recover-auth-account-race';
+
+insert into auth.users (id, is_anonymous, raw_user_meta_data)
+select account_id, true, jsonb_build_object(
+  'guest_bootstrap_attempt_id', attempt_id,
+  'guest_bootstrap_claim_id', first_claim_id
+)
+from olg113_session_case
+where case_name = 'recover-auth-account-race';
+
+update olg113_session_case
+set second_claim_result = public.claim_guest_bootstrap_attempt(bootstrap_digest_hex, 1::smallint)
+where case_name = 'recover-auth-account-race';
+update olg113_session_case
+set second_claim_id = (second_claim_result ->> 'claim_id')::uuid
+where case_name = 'recover-auth-account-race';
+
+-- a concurrent Admin API hard-delete (a separate connection in production) wins the race
+-- before this CLEANUP_PENDING claim reaches complete_guest_app_session's INSERT.
+delete from auth.users as auth_user
+using olg113_session_case as fixture
+where fixture.case_name = 'recover-auth-account-race' and auth_user.id = fixture.account_id;
+
+update olg113_session_case
+set complete_result = public.complete_guest_app_session(
+  attempt_id,
+  second_claim_id,
+  account_id,
+  session_id,
+  repeat('a2', 32),
+  1::smallint,
+  repeat('ee', 17),
+  repeat('ff', 12),
+  7::smallint,
+  extract(epoch from clock_timestamp() + interval '1 hour')::bigint
+)
+where case_name = 'recover-auth-account-race';
+select is(
+  (select complete_result ->> 'state' from olg113_session_case where case_name = 'recover-auth-account-race'),
+  'invalid',
+  'a CLEANUP_PENDING claim racing a concurrent account hard-delete fails closed instead of raising an FK violation'
+);
+select is_empty(
+  $$
+    select session.session_id
+    from public.app_session as session
+    join pg_temp.olg113_session_case as fixture on fixture.session_id = session.session_id
+    where fixture.case_name = 'recover-auth-account-race'
+  $$,
+  'the raced completion leaves no partially-created app_session row behind'
 );
 
 select * from finish();

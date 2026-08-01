@@ -595,6 +595,13 @@ begin
     return jsonb_build_object('state', 'invalid');
   end if;
 
+  -- CLEANUP_PENDING受理と、Admin APIのhard delete→reset_guest_bootstrap_after_auth_deleteは
+  -- 別connectionで並行し得る。ここでaccountの実在を再確認しないと、削除がこの直後に割り込んだ場合
+  -- INSERTがFK違反(23503)の未捕捉例外になり、他分岐と異なる失敗モードで露出する。
+  if not exists (select 1 from public.account where account_id = p_account_id) then
+    return jsonb_build_object('state', 'invalid');
+  end if;
+
   insert into public.app_session (
     session_id,
     account_id,

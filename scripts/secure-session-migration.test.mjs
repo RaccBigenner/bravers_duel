@@ -113,12 +113,13 @@ describe('OLG-113 secure session migration', () => {
     assert.match(sql, /return jsonb_build_object\('state', 'ambiguous'\)/);
     assert.doesNotMatch(sql, /\{34,65536\}/);
     assert.match(sql, /length\(p_auth_grant_ciphertext_hex\) not between 34 and 65536/);
+    assert.match(sql, /not exists \(select 1 from public\.account where account_id = p_account_id\)/);
   });
 
   it('実stack受入でschema/ACL/claim/期限/失効/cascadeを検査する', async () => {
     const sql = (await readFile(DB_TEST_PATH, 'utf8')).replace(/\s+/g, ' ').toLowerCase();
 
-    assert.match(sql, /select plan\(90\)/);
+    assert.match(sql, /select plan\(92\)/);
     assert.match(sql, /table_privs_are/);
     assert.match(sql, /function_privs_are/);
     assert.match(sql, /guest_bootstrap_claim_rejected/);
@@ -139,5 +140,7 @@ describe('OLG-113 secure session migration', () => {
     assert.match(sql, /cleanup-after-delete succeeds once the auth user and its cascaded account are both confirmed gone/);
     assert.match(sql, /compensated attempt returns to ready with every auth_linked trace cleared/);
     assert.match(sql, /the same bootstrap cookie can drive a brand new signup after compensation completes/);
+    assert.match(sql, /a cleanup_pending claim racing a concurrent account hard-delete fails closed instead of raising an fk violation/);
+    assert.match(sql, /the raced completion leaves no partially-created app_session row behind/);
   });
 });
