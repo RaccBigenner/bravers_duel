@@ -68,9 +68,12 @@ npm run dev:online
 `local-smoke` WebSocketだけはOLG-102の疎通確認用`probe:`を扱う。通常のNPC戦は
 `POST /matches/npc`（bodyは空objectだけ）でserver生成IDへ予約し、参加台帳で同じsession/matchを
 確認できた場合だけseat token発行とWebSocketのMatchDOへ到達する。client指定のmatch ID・seat・
-deck・seed・versionからDOを作る経路はない。内部RPCのactionはOLG-123でstable `battleCardId`へ
-移行済み。ゲーム本体のbrowser向けCommand/Event/Snapshotは後続のOLG-122/125/124まで閉じ、
-認証後のsocketも`error:game-not-ready`だけを返す。
+deck・seed・versionからDOを作る経路はない。内部RPCのactionはOLG-123でstable `battleCardId`へ、
+OLG-122で`commandId + expectedRevision`付きのexact replayへ移行済み。同一payload再送は1回だけ適用し、
+衝突・stale / ahead・不正actionは盤面不変で拒否する。共有wire receiptはACK-onlyで、transition / events /
+lifecycleを含めない。DO evictionを跨ぐ原子的なreceipt・snapshot・event復旧はOLG-125、raw frame上限と
+viewer別projectionはOLG-124で実装するまでbrowser game wireを閉じ、認証後のsocketも
+`error:game-not-ready`だけを返す。
 browser向け`POST /auth/guest`、`GET /auth/session`、
 `POST /auth/logout`はopaque HttpOnly sessionとして接続済みで、Supabase Auth tokenはWorker内部grantだけに保持する。
 

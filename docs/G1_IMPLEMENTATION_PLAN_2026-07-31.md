@@ -87,15 +87,25 @@ P1 exit の一言まとめ:
   malformed / stale / 他owner / 非hand IDと旧`handIndex`は盤面不変で拒否する。engineのstate hashと
   replay v1は不変。NPC pump前の初期ID manifest + stable stepsからCSPRNG再採番なしでruntimeを
   再演し、各state / identity hashを検証できる。永続化transactionはOLG-125、viewer別の秘匿はOLG-124へ続く
-- **OLG-122** `commandId + expectedRevision`: 重複 command と古い revision の拒否
-- **OLG-125** snapshot / event の永続化: DO SQLite へheader・初期battleCard manifest・
-  stable command/event・current snapshotを同一transactionでappend保存。周期checkpoint + tail再演で
-  クラッシュ後もIDを再生成せず続け、進行中試合は開始時のadapter / engine / content / format版へpinする
+- **OLG-122（2026-08-01コード実装済み）** `commandId + expectedRevision`: client CSPRNGの
+  `cmd_` + lowercase 32 hexを使い、初期revision 0からplayer command＋NPC pump全体の成功ごとに1増やす。
+  bounded canonical payload + SHA-256をmatch / seat / revision / actionへ束縛し、同一ID・同一payloadは
+  成功／拒否とも初回receiptを再送、別payloadはconflictにする。stale / ahead、invalid action、terminalを
+  revision不変で拒否し、最終手のterminal commit失敗も同一再送で二重適用せず収束する。
+  wire receiptはACK-onlyでtransition / events / lifecycleを含めない。台帳は全2,048件・拒否最大512件として
+  accepted用容量を予約する。OLG-125までDO memoryなのでeviction後はfail closed、browser wireは引き続き閉じる
+- **OLG-125** snapshot / event の永続化: actionをcloneへprepareし、current revision、canonical payload /
+  digest、seat、成功／拒否／final receipt、stable events、current snapshot、lifecycle、terminal cleanup outboxを
+  DO SQLiteの同一transactionへcommitしてからruntimeをswapする。失敗時はtrialを捨て旧runtimeへrollbackし、
+  human step数とrevisionも照合する。terminalはreceipt保存→projection/ACK送信→socket closeの順にし、
+  ACK喪失後も認証session所有権でreceipt / resultを取得できる。周期checkpoint + tail再演でクラッシュ後も
+  IDを再生成せず続け、進行中試合は開始時のadapter / engine / content / format版へpinする
 - **OLG-124** player projection: 相手手札・山札・seed を送らない
   プレイヤー別ビュー（設計 §11.3）。**command 処理パイプライン（設計 §11.2）の
-  順序をここまでで固定**: Origin / Fetch Metadata確認 → セッション確認 → seat 確認 →
+  順序をここまでで固定**。raw WebSocket frameはJSON.parse前にUTF-8 byte上限を検査し、canonicalの
+  深さ・node・文字列等の上限はdecode後の値へ適用する: Origin / Fetch Metadata確認 → セッション確認 → seat 確認 →
   commandId 重複確認 → expectedRevision 確認 → schema 検証 → ルール検証 →
-  clone 適用 → 成功時のみ commit → 永続化 → projection 配信
+  clone prepare → SQLite atomic commit → runtime swap → projection / ACK配信 → 必要ならclose
 
 ### Step D: 復帰（OLG-126 → OLG-133 → OLG-131 → OLG-114）
 
@@ -138,9 +148,9 @@ P1 exit の一言まとめ:
 | 113 | 同一bootstrapの並行/応答喪失が別accountを作らず、session cookieが本番で`__Host-`/HttpOnly/Secure/SameSite=Lax。期限切れ/失効APIは401。通常WebSocketはserver-owned assignment由来の一回限りseat tokenなしでは認証されず、logout後commandも拒否 |
 | 121 | MatchDO 内で NPC 戦が開始→終了まで進み、結果が engine 単体実行と一致する（同 seed 同結果） |
 | 123（完了） | 全カードIDが同seedから独立して一意で、重複printing・shuffle・zone移動後も保持される。手札の並びが変わっても指定個体へ当たり、旧index・未知・stale・他owner・非hand IDは盤面不変で拒否 |
-| 122 | 同じ commandId の再送は 2 回目が no-op（同じ応答を返す）。古い expectedRevision は拒否され盤面が変わらない |
-| 125 | command 適用のたびheader・初期ID manifest・stable steps・current snapshotを同一transactionへ永続化。DO を強制再起動してもCSPRNG再採番や自動NPC pumpをせず、同じID・盤面で続く |
-| 124 | projection に相手手札・山札の中身・seed が含まれないことをテストで保証 |
+| 122（完了） | 同じcommandId / payloadの逐次・並行再送は1回だけ適用され同じACK-only receipt。payload衝突、古い／未来revision、不正actionはrevision・盤面不変で拒否し、全2,048件・拒否最大512件でもaccepted用容量を失わない |
+| 125 | prepare→同一SQLite transaction→runtime swapを守り、成功／拒否／finalのreceiptとcanonical/digest・seat・revision・events・snapshot・lifecycle・outboxを原子的に保存。各commit cutpointで強制eviction→retryしても二重適用せず同じID・盤面・receiptへ復旧する |
+| 124 | raw WebSocket frameをJSON.parse前にbyte上限で拒否し、wire receiptにtransition / events / lifecycle、projectionに相手手札・山札の中身・seedが含まれないことをテストで保証 |
 | 126 | バトル中リロード→ 同じ試合・同じ操作待ちへ自動復帰。切断 30 秒→復帰も同様 |
 | 133 | 復帰導線がスマホ縦持ち・PC の両方で表示され、タップ 1 回で盤面へ戻る |
 | 131 | Lighthouse で installable 判定。縦持ちで盤面が崩れない |

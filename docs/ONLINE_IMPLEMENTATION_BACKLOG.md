@@ -551,8 +551,8 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
 - Workers test poolが要求するVitest 4.1.10へtest runnerを統一する。Web/Adminのunit testは専用configを
   使い、production build用Vite 5/React pluginの設定をVitest内蔵Viteへ読み込ませない
 - `MatchDO`は宣言的Durable Object exportとSQLite storageを使い、WebSocket Hibernation APIで
-  疎通確認用socketを受ける。内部action型はOLG-123で実装済み。ゲーム本体のbrowser向け
-  Command envelope / Event / SnapshotはOLG-122/125/124へ残す
+  疎通確認用socketを受ける。内部action型はOLG-123、Command envelope型はOLG-122で実装済み。
+  ゲーム本体のbrowser wire / Event / SnapshotはOLG-125/124へ残す
 - `GET /health`はWorkerだけで成功にせず、health専用MatchDOを呼び、DO SQLiteの`SELECT 1`まで確認する
 - `npm run dev:online`はlocal Supabaseの状態確認→必要なら起動→`migration up --local`→
   status/migration確認→pgTAP DB受入→Wrangler local起動の順に行う。Supabase CLIの`--workdir`は
@@ -718,7 +718,7 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
 
 - OLG-121 engine server adapter（server-owned assignment directoryと、正常終了・取消・放棄後の
   SessionCoordinator参照解除を含む）— **コード実装済み（2026-08-01）**
-- OLG-122 `commandId + expectedRevision`
+- OLG-122 `commandId + expectedRevision` — **コード実装済み（2026-08-01）**
 - OLG-123 stable `battleCardId` — **コード実装済み（2026-08-01）**
 - OLG-124 player projection
 - OLG-125 snapshot/event persistence
@@ -753,15 +753,60 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
 - NPC戦を最後まで決定論的に進め、勝敗をSQLiteへ保存してからassignmentと予約を解除できる
 - active DO eviction後はseedから再生成せずfail closed。terminal lifecycle/resultはeviction後も読める
 - authoritative snapshot / seed / deck / engine-native actionは内部RPCだけで扱い、browser WebSocketの
-  game frameはOLG-122/125/124完了まで`error:game-not-ready`で盤面不変にする
+  game frameはOLG-125/124完了まで`error:game-not-ready`で盤面不変にする
 
 残余:
 
-- active runtime・action streamとbattleCardId台帳の再構築はOLG-125、command冪等性はOLG-122、
+- active runtime・action stream、battleCardId台帳、revision / command receiptの再構築はOLG-125、
   player projectionはOLG-124で実装する
 - terminal解放後まで極端に遅延した旧`POST /matches/npc`は新規開始と区別できないためOLG-129へ送る
 - logout失効後にactive lifecycleを自動終端する条件は、NPC idle suspendを扱うOLG-127で固定する
 - MatchDOのbattle lifecycle / terminal outboxは後続機能追加時に別moduleへ分割する
+
+#### OLG-122 commandId + expectedRevision
+
+状態: **コード実装済み**（2026-08-01）
+
+- protocolに`cmd_` + lowercase 32 hexのbranded `MatchCommandId`、初期0の`MatchRevision`、
+  exact `MatchCommandEnvelope`、秘匿情報を含まないaccepted / rejected receiptを固定した。
+  wire receiptはACK-onlyとし、authoritative transition / events / lifecycleを絶対に含めない。
+  `parseMatchAction`もprotocolをruntime decoderの唯一の正本にし、adapterはこれを再利用する
+- revisionはengine step数でなく、player actionと後続NPC pump全体を1 transactionとして成功ごとに1増やす。
+  reject / duplicateでは変えず、adapterのhuman step数と毎回照合してdriftをfail closedにする
+- payloadはdomain、match ID、認証済みseat、expected revision、actionのbounded canonical JSONと
+  SHA-256へ束縛する。同じID・同じpayloadは成功／domain拒否とも初回結果をclone replayし、
+  同じIDでaction / revision / seatが違う場合だけ`MATCH_COMMAND_ID_CONFLICT`と初回recordの
+  `originalRevision`を返す（現在revisionは返さない）。canonicalの
+  深さ・node・配列・object key・文字列・総byte上限はdecode後の値へ適用し、sparse arrayや非JSON値を拒否する
+- MatchDOのFIFO内で本人・session・seat確認→duplicate→revision→action schema / rules→applyの順に処理する。
+  stale / aheadは待機させず`MATCH_REVISION_MISMATCH`、不正actionは`MATCH_ACTION_INVALID`で固定する
+- 台帳は全2,048件のうち拒否receiptを最大512件に制限し、残りをaccepted用に予約する。拒否spamで
+  accepted commandまで永久に塞がず、上限後の未記録拒否はstate / revision不変でfail closedにする
+- terminalを成立させたcommandはreceipt / revisionを最初のawait前に記録する。terminal SQLite commitが
+  一度失敗しても、同一再送はactionを再適用せずcommitだけを再試行し、元の成功応答へ収束する
+
+受入:
+
+- 同一commandの逐次・並行再送でactionが1回だけ適用され、応答とrevisionが同じ
+- 同一revisionの別commandはFIFOで片方だけ成功し、もう片方はstale拒否で盤面不変
+- 同一IDのpayload衝突、stale / ahead、schema / rules違反を区別し、exact再送は後のstateでも同じ結果
+- 1 commandでNPCが複数step動いてもrevisionは1だけ進み、最終手のACK喪失でも二重適用しない
+- authoritative transition / events / lifecycle / snapshot / seed / opponent情報を共有protocol receiptへ
+  一切含めず、browser wireは閉じたまま
+- 台帳を拒否receipt上限まで埋めてもaccepted用容量が残り、sparse array等の別payloadが同一identityにならない
+
+残余:
+
+- OLG-122の台帳はDO生存中のbounded memory（全2,048 record、拒否最大512 record）。active DO eviction後は
+  `MATCH_STATE_UNAVAILABLE`でfail closedし、復旧保証はOLG-125で実装する
+- OLG-125はcloneした次状態をprepareし、current revision、canonical payload / SHA-256 digest、seat、
+  成功／拒否／finalのACK-only receipt、stable steps / events、current snapshot、terminal lifecycle、
+  cleanup outboxを同一SQLite transactionへcommitしてからruntimeをswapする。失敗時はtrialを破棄して
+  旧runtimeへrollbackし、復旧時はhuman step数とrevisionを照合する。terminalはreceiptを保存→送信→closeの
+  順にし、ACK喪失後も認証session所有権でreceipt / resultを取得できる。commit前／commit後ACK前／
+  runtime swap前後／terminal close前後の各cutpointでevict→retryし、二重適用と中間状態がないことを検査する
+- OLG-124はJSON.parse前にraw WebSocket frameのUTF-8 byte上限を検査し、decode後にcanonical上限を適用する。
+  receiptとは別にviewer projectionを作り、初期／current revisionだけを安全に公開する
 
 #### OLG-123 stable battleCardId
 
@@ -796,7 +841,7 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
 - G2の所持個体連携はOLG-200で、lock済みinstance poolと初期printing配置を1対1照合して
   server-only `battleCardId → instance_id`対応表を作る。キラ等の表示属性以外は同printingで同値とする
 - opponent hand / deckのIDとprintingをwireから隠すprojectionはOLG-124
-- browser向けgame frameはOLG-122/125/124まで`error:game-not-ready`のまま開かない
+- browser向けgame frameはOLG-125/124まで`error:game-not-ready`のまま開かない
 
 ### Epic OLG-130 PWA shell
 

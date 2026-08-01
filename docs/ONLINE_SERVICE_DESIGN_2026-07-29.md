@@ -1984,13 +1984,18 @@ Supabase migrationの受入を満たさない。OLG-102をdoneにするには、
 クライアントは結果や新しい状態を送らず、「行動意図」だけを送る。
 
 ```ts
-interface CommandEnvelope {
-  matchId: string;
-  commandId: string;
-  expectedRevision: number;
+interface MatchCommandEnvelope {
+  matchId: MatchId;
+  commandId: MatchCommandId;
+  expectedRevision: MatchRevision;
   action: MatchAction;
 }
 ```
+
+`MatchCommandId`はclientがCSPRNGで作る`cmd_` + lowercase 32 hex（128-bit）で、trimや
+大文字小文字の正規化はしない。`MatchRevision`は初期値0。**player command 1件と、それに続く
+NPC pump全体**を外部から見た1 transactionとして、成功時だけ1増やす。engineの
+`AppliedBattleStep.sequence`はNPCを含む各step番号なのでrevisionには流用しない。
 
 `MatchAction`は`handIndex`ではなく、安定した`battleCardId`と対象slotを使う。カードを使う
 `playSkill / playCharacter / playEquipment / playField / playGuard / charge`は
@@ -2001,23 +2006,60 @@ serverは、行動者の**現在の手札**に同じIDがちょうど1枚あり�
 未知ID、既に別zoneへ移ったstale ID、相手所有ID、自分のdeck等の非hand IDは、存在の詳細を返さず
 同じ`BATTLE_ACTION_INVALID`として盤面不変で拒否する。engine内部の`handIndex`はprotocol / eventへ出さない。
 
+command payloadは`bravers-match-command-v1 + matchId + authenticated seat + expectedRevision + action`を
+key順に依存しないcanonical JSONへし、decode後の値に深さ・node・配列・object key・文字列・総byte上限を
+適用してからSHA-256を取る。sparse array、追加property、循環参照、非JSON値はidentity作成前に拒否する。
+同じ`commandId`・同じpayloadの
+再送は、成功でもdomain拒否でも初回receiptをそのまま返して再検証・再適用しない。同じIDでaction、
+revision、seatのどれかが違えば`MATCH_COMMAND_ID_CONFLICT`と、初回recordに結び付く
+`originalRevision`だけを返す（現在revisionとは混同しない）。stale / ahead revisionは同じ
+`MATCH_REVISION_MISMATCH`（relationだけ区別）で、待機queueへ入れず盤面とrevisionを変えない。
+
+command台帳はmatch全体で2,048 record、うち拒否receiptは最大512 recordとする。accepted用容量を
+拒否spamから予約し、拒否上限後も合法commandを受理できるようにする。wireへ返すreceiptは
+**ACK-only**で、authoritative transition / events / lifecycleを型・保存record・送信処理のどこにも混ぜない。
+
 ### 11.2 サーバー処理
 
 ```text
 Origin / Fetch Metadata確認
 → セッション確認
 → match seat確認
+→ raw WebSocket frameのUTF-8 byte上限確認（JSON.parse前、OLG-124）
+→ JSON.parse / top-level envelope・commandId形式確認
+→ decode後payloadのcanonical上限確認
+→ canonical payload / SHA-256作成
 → commandId重複確認
 → expectedRevision確認
-→ schema検証
+→ MatchAction exact schema検証
 → 手番/フェーズ/コスト/対象/所有デッキを検証
-→ cloneした状態へ行動適用
-→ 成功時だけcommit
-→ snapshot/event/commandを永続化
-→ プレイヤー別projectionを配信
+→ cloneへplayer action + NPC pumpを適用して次状態をprepare
+→ receipt + canonical/digest + seat + revision + events + snapshot + lifecycle/outboxをSQLiteへatomic commit
+→ commit成功後だけruntimeをswap（失敗時はtrial破棄／旧runtimeへrollback）
+→ ACK-only receiptとプレイヤー別projectionを配信
+→ terminal時だけ配信後にsocketをclose
 ```
 
-エンジンが例外を出した時に中途半端な状態を保存しない。
+認証・seat不正、壊れたframe、上限超過、基盤障害はcommandIdを消費しない。認証済みで構造が成立した
+commandのrevision / action / terminal拒否はreceiptへ固定し、内容を直して再試行するときは新しいIDを使う。
+最終手の永続化だけ失敗した場合も、同じIDの再送はactionを再適用せずterminal commitだけを再試行する。
+receiptは時刻、authoritative transition、events、lifecycleを含まないACK-onlyとし、projectionは
+OLG-124で別に生成する。terminalはreceiptを保存してから送信し、その後にsocketを閉じる。送信ACKが
+失われてassignment / coordinator membership解放後になっても、認証sessionとmatch lifecycleの所有権を
+照合するread経路から同じreceipt / resultを取得できなければならない。
+
+OLG-122時点のrevision / command台帳はDOメモリ内で、eviction後は従来どおりfail closed。OLG-125で
+cloneした次状態をprepareし、current revision、canonical payload / digest、認証済みseat、成功／拒否／finalの
+receipt、steps / events、current snapshot、terminal lifecycle、cleanup outboxを同一SQLite transactionへ
+commitしてからruntimeをswapする。拒否では盤面を変えずreceiptだけを同じtransaction境界で確定する。
+保存revisionはadapter履歴のhuman step数と照合し、NPCの複数stepをrevisionへ足さない。commit前は全不変、
+commit後のACK喪失は保存済みreceipt再送、の2状態だけにする。storage失敗時はtrialを破棄または旧runtimeへ
+rollbackし、エンジンや永続化の例外で中途半端な状態を残さない。
+
+OLG-125の受入では、prepare前、SQLite commit前、commit後ACK前、runtime swap前後、terminal receipt送信前、
+socket close前後の各cutpointへ障害を注入し、直後にDOをevictして同じcommandをretryする。成功／拒否／finalの
+全receiptについて、二重適用なし、同じrevision・盤面・receipt / resultへの収束、human step数との一致を検査する。
+OLG-124のraw frame制限とplayer projectionが完成するまでbrowser game wireは引き続き開かない。
 
 ### 11.3 秘匿情報
 
