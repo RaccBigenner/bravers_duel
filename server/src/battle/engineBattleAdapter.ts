@@ -119,11 +119,22 @@ export interface AuthoritativeBattleSnapshot {
   header: AuthoritativeBattleHeader;
   /** createBattle直後・NPC先攻pump前に発生した、欠落のない初期event列。 */
   initialEvents: BattleEvent[];
+  /** createBattle完了後・NPC先攻pump前のimmutableなID配置。復旧時に再採番しない。 */
+  initialBattleCards: BattleCardLedger;
+  initialIdentityHash: string;
   state: BattleState;
   battleCards: BattleCardLedger;
   steps: AppliedBattleStep[];
   currentStateHash: string;
   currentIdentityHash: string;
+}
+
+/** OLG-125が永続化する再演可能な最小履歴。current snapshotは別途照合する。 */
+export interface RestoreNpcBattleHistoryInput {
+  header: AuthoritativeBattleHeader;
+  initialBattleCards: BattleCardLedger;
+  initialIdentityHash: string;
+  steps: AppliedBattleStep[];
 }
 
 export interface NpcBattleStatus {
@@ -201,6 +212,23 @@ const HEADER_KEYS = [
   'humanPlayer',
   'manualFor',
   'decks',
+] as const;
+
+const RESTORE_HISTORY_KEYS = [
+  'header',
+  'initialBattleCards',
+  'initialIdentityHash',
+  'steps',
+] as const;
+
+const APPLIED_STEP_KEYS = [
+  'sequence',
+  'player',
+  'source',
+  'action',
+  'stateHash',
+  'identityHash',
+  'events',
 ] as const;
 
 function plainObject(value: unknown): value is Record<string, unknown> {
@@ -697,6 +725,21 @@ function battleCardIdentityHash(ledger: BattleCardLedger): string {
   return `i1-${fingerprintOf(ledger)}`;
 }
 
+function immutableCatalogFromLedger(
+  state: BattleState,
+  ledger: BattleCardLedger,
+): readonly BattleCardIdentity[] {
+  try {
+    const catalog = Object.freeze(
+      ledgerCards(ledger).map((card) => Object.freeze({ ...card })),
+    );
+    assertBattleCardLedger(state, ledger, catalog);
+    return catalog;
+  } catch {
+    throw new EngineBattleAdapterError('BATTLE_IDENTITY_INVALID');
+  }
+}
+
 function validateVersionValues(versions: EngineBattleVersions): void {
   if (!plainObject(versions)) throw new EngineBattleAdapterError('BATTLE_SETUP_INVALID');
   if (
@@ -968,6 +1011,8 @@ export class EngineBattleAdapter {
   private constructor(
     private headerValue: AuthoritativeBattleHeader,
     private initialEventsValue: BattleEvent[],
+    private readonly initialBattleCardsValue: BattleCardLedger,
+    private readonly initialIdentityHashValue: string,
     private stateValue: BattleState,
     private battleCardsValue: BattleCardLedger,
     private readonly battleCardCatalogValue: readonly BattleCardIdentity[],
@@ -1025,15 +1070,133 @@ export class EngineBattleAdapter {
     const initialEvents = completeInitialEvents(state);
     const { ledger, catalog } = createBattleCardLedger(state, generateBattleCardId);
     assertBattleCardLedger(state, ledger, catalog);
+    const initialBattleCards = structuredClone(ledger);
+    const initialIdentityHash = battleCardIdentityHash(initialBattleCards);
     const adapter = new EngineBattleAdapter(
       header,
       initialEvents,
+      initialBattleCards,
+      initialIdentityHash,
       state,
       ledger,
       catalog,
       [],
     );
     adapter.pumpNpcIntoAuthoritativeState();
+    return adapter;
+  }
+
+  /**
+   * 初期ID配置とstable stepからruntimeを再演する。CSPRNG再採番と自動NPC pumpは行わない。
+   * OLG-125ではこの結果を同一transactionのcurrent snapshot/hashと照合してから復旧する。
+   */
+  static restoreFromHistory(rawInput: unknown): EngineBattleAdapter {
+    let input: RestoreNpcBattleHistoryInput;
+    try {
+      input = structuredClone(rawInput) as RestoreNpcBattleHistoryInput;
+    } catch {
+      throw new EngineBattleAdapterError('BATTLE_RUNTIME_INVALID');
+    }
+    if (
+      !plainObject(input) ||
+      !exactKeys(input, RESTORE_HISTORY_KEYS, RESTORE_HISTORY_KEYS) ||
+      !plainObject(input.header) ||
+      !exactKeys(input.header, HEADER_KEYS, HEADER_KEYS) ||
+      !Array.isArray(input.steps) ||
+      typeof input.initialIdentityHash !== 'string'
+    ) {
+      throw new EngineBattleAdapterError('BATTLE_RUNTIME_INVALID');
+    }
+    try {
+      validateVersionValues(input.header);
+    } catch {
+      throw new EngineBattleAdapterError('BATTLE_RUNTIME_INVALID');
+    }
+    if (
+      !validSeed(input.header.seed) ||
+      !validDeckPair(input.header.decks) ||
+      input.header.humanPlayer !== HUMAN_PLAYER ||
+      input.header.manualFor !== HUMAN_PLAYER ||
+      input.header.firstPlayerFromSeed !== true
+    ) {
+      throw new EngineBattleAdapterError('BATTLE_RUNTIME_INVALID');
+    }
+    const format = formatByVersionId(input.header.formatVersionId);
+    if (!format || formatVersionId(format) !== input.header.formatVersionId) {
+      throw new EngineBattleAdapterError('BATTLE_RUNTIME_INVALID');
+    }
+
+    let state: BattleState;
+    try {
+      state = createBattle(cloneDecks(input.header.decks), input.header.seed, {
+        format,
+        manualFor: HUMAN_PLAYER,
+      });
+    } catch {
+      throw new EngineBattleAdapterError('BATTLE_RUNTIME_INVALID');
+    }
+    if (state.firstPlayer !== input.header.firstPlayer) {
+      throw new EngineBattleAdapterError('BATTLE_RUNTIME_INVALID');
+    }
+    const initialBattleCards = structuredClone(input.initialBattleCards);
+    const catalog = immutableCatalogFromLedger(state, initialBattleCards);
+    if (battleCardIdentityHash(initialBattleCards) !== input.initialIdentityHash) {
+      throw new EngineBattleAdapterError('BATTLE_IDENTITY_INVALID');
+    }
+    const adapter = new EngineBattleAdapter(
+      structuredClone(input.header),
+      completeInitialEvents(state),
+      structuredClone(initialBattleCards),
+      input.initialIdentityHash,
+      state,
+      structuredClone(initialBattleCards),
+      catalog,
+      [],
+    );
+
+    for (const [sequence, expected] of input.steps.entries()) {
+      if (
+        !plainObject(expected) ||
+        !exactKeys(expected, APPLIED_STEP_KEYS, APPLIED_STEP_KEYS) ||
+        expected.sequence !== sequence ||
+        !playerValue(expected.player) ||
+        (expected.source !== 'human' && expected.source !== 'npc') ||
+        (expected.source === 'human' && expected.player !== HUMAN_PLAYER) ||
+        (expected.source === 'npc' && expected.player !== NPC_PLAYER) ||
+        typeof expected.stateHash !== 'string' ||
+        typeof expected.identityHash !== 'string' ||
+        !Array.isArray(expected.events) ||
+        state.phase === 'finished' ||
+        actingPlayer(state) !== expected.player
+      ) {
+        throw new EngineBattleAdapterError('BATTLE_RUNTIME_INVALID');
+      }
+      const resolved = exactLegalMatchAction(
+        state,
+        adapter.battleCardsValue,
+        expected.player,
+        expected.action,
+      );
+      if (!resolved) throw new EngineBattleAdapterError('BATTLE_RUNTIME_INVALID');
+      adapter.applyStep(
+        state,
+        adapter.battleCardsValue,
+        adapter.stepsValue,
+        expected.player,
+        expected.source,
+        resolved.matchAction,
+        resolved.engineAction,
+      );
+      const actual = adapter.stepsValue[sequence];
+      if (!actual || stableStringify(actual) !== stableStringify(expected)) {
+        throw new EngineBattleAdapterError('BATTLE_RUNTIME_INVALID');
+      }
+    }
+    // create/applyはNPC pump全体を1 transactionに含めるため、途中prefixは復旧点にならない。
+    if (state.phase !== 'finished' && actingPlayer(state) !== HUMAN_PLAYER) {
+      throw new EngineBattleAdapterError('BATTLE_RUNTIME_INVALID');
+    }
+    adapter.assertRuntime();
     return adapter;
   }
 
@@ -1087,6 +1250,8 @@ export class EngineBattleAdapter {
     return structuredClone({
       header: this.headerValue,
       initialEvents: this.initialEventsValue,
+      initialBattleCards: this.initialBattleCardsValue,
+      initialIdentityHash: this.initialIdentityHashValue,
       state: this.stateValue,
       battleCards: this.battleCardsValue,
       steps: this.stepsValue,
@@ -1130,7 +1295,8 @@ export class EngineBattleAdapter {
       this.stateValue.firstPlayer !== this.headerValue.firstPlayer ||
       this.stateValue.manualFor !== HUMAN_PLAYER ||
       !Array.isArray(this.initialEventsValue) ||
-      !Array.isArray(this.stepsValue)
+      !Array.isArray(this.stepsValue) ||
+      battleCardIdentityHash(this.initialBattleCardsValue) !== this.initialIdentityHashValue
     ) {
       throw new EngineBattleAdapterError('BATTLE_RUNTIME_INVALID');
     }

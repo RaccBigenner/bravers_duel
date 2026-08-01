@@ -177,11 +177,13 @@ describe('OLG-121 engine battle adapter', () => {
     const leaked = first.authoritativeSnapshot();
     leaked.state.turn = 999;
     leaked.header.decks[0].cardIds.length = 0;
+    leaked.initialBattleCards.players[0].hand[0]!.printingId = 'tampered-initial';
     leaked.battleCards.players[0].hand[0]!.printingId = 'tampered';
     leaked.steps.push({} as never);
     const after = first.authoritativeSnapshot();
     expect(after.state.turn).not.toBe(999);
     expect(after.header.decks[0].cardIds).toHaveLength(40);
+    expect(after.initialBattleCards.players[0].hand[0]?.printingId).not.toBe('tampered-initial');
     expect(after.battleCards.players[0].hand[0]?.printingId).not.toBe('tampered');
     expect(after.steps).not.toContainEqual({});
   });
@@ -327,6 +329,86 @@ describe('OLG-121 engine battle adapter', () => {
 
     const same = EngineBattleAdapter.create(input, sequentialBattleCardIds());
     expect(same.authoritativeSnapshot()).toEqual(snapshot);
+  });
+
+  it('初期ID配置とstable stepだけからCSPRNG再採番なしで同じruntimeを再演する', () => {
+    const original = EngineBattleAdapter.create(
+      g1NpcBattleInput(42),
+      sequentialBattleCardIds(),
+    );
+    const beforeAction = original.authoritativeSnapshot();
+    const engineAction = legalActions(beforeAction.state)[0];
+    if (!engineAction) throw new Error('Expected legal action for replay fixture');
+    original.applyHumanAction(stableHumanAction(original, engineAction));
+    const saved = original.authoritativeSnapshot();
+
+    const restored = EngineBattleAdapter.restoreFromHistory({
+      header: saved.header,
+      initialBattleCards: saved.initialBattleCards,
+      initialIdentityHash: saved.initialIdentityHash,
+      steps: saved.steps,
+    });
+    expect(restored.authoritativeSnapshot()).toEqual(saved);
+    expect(saved.initialIdentityHash).toMatch(/^i1-[0-9a-f]{16}$/);
+    expect(saved.initialBattleCards).toEqual(beforeAction.initialBattleCards);
+  });
+
+  it('履歴復旧は初期ID配置・hash・stable stepの改変をfail closedにする', () => {
+    const original = EngineBattleAdapter.create(
+      g1NpcBattleInput(42),
+      sequentialBattleCardIds(),
+    );
+    const saved = original.authoritativeSnapshot();
+    expect(saved.steps.length).toBeGreaterThan(0);
+
+    const tamperedInitial = structuredClone(saved);
+    tamperedInitial.initialBattleCards.players[HUMAN_PLAYER].hand[0]!.battleCardId = parsedId(
+      'bc_fffffffffffffffffffffffffffffffe',
+    );
+    expectAdapterError(
+      () => EngineBattleAdapter.restoreFromHistory({
+        header: tamperedInitial.header,
+        initialBattleCards: tamperedInitial.initialBattleCards,
+        initialIdentityHash: tamperedInitial.initialIdentityHash,
+        steps: tamperedInitial.steps,
+      }),
+      'BATTLE_IDENTITY_INVALID',
+    );
+
+    const tamperedStep = structuredClone(saved);
+    tamperedStep.steps[0]!.identityHash = 'i1-0000000000000000';
+    expectAdapterError(
+      () => EngineBattleAdapter.restoreFromHistory({
+        header: tamperedStep.header,
+        initialBattleCards: tamperedStep.initialBattleCards,
+        initialIdentityHash: tamperedStep.initialIdentityHash,
+        steps: tamperedStep.steps,
+      }),
+      'BATTLE_RUNTIME_INVALID',
+    );
+
+    const truncatedNpcPump = structuredClone(saved);
+    truncatedNpcPump.steps.pop();
+    expectAdapterError(
+      () => EngineBattleAdapter.restoreFromHistory({
+        header: truncatedNpcPump.header,
+        initialBattleCards: truncatedNpcPump.initialBattleCards,
+        initialIdentityHash: truncatedNpcPump.initialIdentityHash,
+        steps: truncatedNpcPump.steps,
+      }),
+      'BATTLE_RUNTIME_INVALID',
+    );
+
+    expectAdapterError(
+      () => EngineBattleAdapter.restoreFromHistory({
+        header: saved.header,
+        initialBattleCards: saved.initialBattleCards,
+        initialIdentityHash: saved.initialIdentityHash,
+        steps: saved.steps,
+        extra: true,
+      }),
+      'BATTLE_RUNTIME_INVALID',
+    );
   });
 
   it('ID generatorの形式違反・衝突を開始前にfail closedにする', () => {
