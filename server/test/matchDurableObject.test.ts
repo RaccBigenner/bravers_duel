@@ -7,6 +7,8 @@ import {
   type BattleState,
 } from '@bravers/engine';
 import {
+  MATCH_PLAYER_PROJECTION_VERSION,
+  MATCH_VIEWER_EVENT_VERSION,
   parseMatchCommandId,
   parseMatchId,
   parseMatchRevision,
@@ -27,6 +29,7 @@ import {
   INTERNAL_SESSION_ID_HEADER,
   INTERNAL_SESSION_VERSION_HEADER,
   MatchDO,
+  MAX_MATCH_RESUME_EVENT_BATCHES,
   MAX_OUTSTANDING_SEAT_TOKENS,
   SEAT_AUTH_FRAME_TIMEOUT_MS,
   SEAT_TOKEN_TTL_MS,
@@ -38,6 +41,7 @@ import {
   HUMAN_PLAYER,
   NPC_PLAYER,
   matchActionFromEngineAction,
+  type AuthoritativeBattleCheckpoint,
   type AuthoritativeBattleSnapshot,
 } from '../src/battle/engineBattleAdapter';
 import {
@@ -521,6 +525,34 @@ async function authenticateBattle(
   const decoded = parseMatchServerFrame(JSON.parse(projectionMessage.data) as unknown);
   if (decoded?.type !== 'matchProjection') {
     throw new Error('Expected exact match projection frame');
+  }
+  return decoded;
+}
+
+async function resumeBattle(
+  socket: WebSocket,
+  seatToken: string,
+  lastEventSequence: number,
+): Promise<Extract<MatchServerFrame, { type: 'matchProjection' }>> {
+  const pending = socketOutcomes(socket, 2);
+  socket.send(JSON.stringify({
+    type: 'auth',
+    seatToken,
+    resume: {
+      projectionVersion: MATCH_PLAYER_PROJECTION_VERSION,
+      viewerEventVersion: MATCH_VIEWER_EVENT_VERSION,
+      lastEventSequence,
+    },
+  }));
+  const outcomes = await pending;
+  expect(outcomes[0]).toEqual({ kind: 'message', data: 'auth_ok' });
+  const projectionMessage = outcomes[1];
+  if (projectionMessage?.kind !== 'message') {
+    throw new Error('Expected resumed match projection');
+  }
+  const decoded = parseMatchServerFrame(JSON.parse(projectionMessage.data) as unknown);
+  if (decoded?.type !== 'matchProjection') {
+    throw new Error('Expected exact resumed match projection frame');
   }
   return decoded;
 }
@@ -1437,6 +1469,12 @@ describe('OLG-113 MatchDO seat authentication', () => {
         return {
           issueSeatToken: async () => ({ state: 'not_assigned' as const }),
           startNpcBattle: async () => ({ state: 'unavailable' as const }),
+          getNpcBattleRecoveryStatus: async () => ({
+            state: 'provisioning' as const,
+            matchId: 'local-smoke',
+          }),
+          getNpcBattleReceipt: async () => null,
+          getNpcBattlePublicResult: async () => null,
           fetch: async () => new Response(null, { status: 101 }),
         };
       },
@@ -1857,7 +1895,7 @@ describe('OLG-121 MatchDO authoritative NPC battle lifecycle', () => {
     );
   });
 
-  it('認証直後の秘匿projectionからcommandを適用し、exact再送を同じupdateへ収束させる', async () => {
+  it('認証直後の秘匿projectionからcommandを適用し、exact再送を同じreceipt/projectionへ収束させる', async () => {
     const battle = await startReservedNpcBattle();
     const issued = await battle.stub.issueSeatToken(battle.session);
     expect(issued.state).toBe('issued');
@@ -1908,7 +1946,17 @@ describe('OLG-121 MatchDO authoritative NPC battle lifecycle', () => {
     const duplicateOutcome = await duplicatePending;
     if (duplicateOutcome.kind !== 'message') throw new Error('Expected duplicate update');
     const duplicateUpdate = parseMatchServerFrame(JSON.parse(duplicateOutcome.data) as unknown);
-    expect(duplicateUpdate).toEqual(firstUpdate);
+    if (duplicateUpdate?.type !== 'matchCommandUpdate') {
+      throw new Error('Expected exact duplicate command update frame');
+    }
+    expect(duplicateUpdate.receipt).toEqual(firstUpdate.receipt);
+    expect(duplicateUpdate.projection).toEqual(firstUpdate.projection);
+    expect(duplicateUpdate.sync).toEqual({
+      type: 'matchViewerSync',
+      mode: 'delta',
+      afterEventSequence: firstUpdate.projection.eventSequence,
+      batches: [],
+    });
 
     const after = await battle.stub.getNpcBattleSnapshot(battle.session);
     const updateEncoded = JSON.stringify(firstUpdate);
@@ -1919,7 +1967,7 @@ describe('OLG-121 MatchDO authoritative NPC battle lifecycle', () => {
     ]) {
       expect(updateEncoded).not.toContain(card.battleCardId);
     }
-    for (const forbiddenKey of ['seed', 'rngState', 'header', 'stateHash', 'events', 'steps']) {
+    for (const forbiddenKey of ['seed', 'rngState', 'header', 'stateHash', 'steps']) {
       expect(updateEncoded).not.toContain(`"${forbiddenKey}"`);
     }
     const durable = await runInDurableObject(battle.stub, (_instance, state) => ({
@@ -1934,6 +1982,52 @@ describe('OLG-121 MatchDO authoritative NPC battle lifecycle', () => {
       battle: { revision: 1, command_count: 1 },
       humanSteps: 1,
     });
+    socket.close(1000, 'done');
+  });
+
+  it('同一socketのback-to-back exact再送は先行配信のcursor更新後も切断せずreceiptへ収束する', async () => {
+    const battle = await startReservedNpcBattle();
+    const issued = await battle.stub.issueSeatToken(battle.session);
+    expect(issued.state).toBe('issued');
+    if (issued.state !== 'issued') throw new Error('Expected issued seat token');
+    const socket = await openPlayerSocket(battle.stub, battle.id, battle.session);
+    const initial = await authenticateBattle(socket, issued.seatToken);
+    const action = initial.projection.legalActions[0];
+    if (!action) throw new Error('Expected a legal player action');
+    const command = npcCommand(battle.id, initial.projection.revision, action);
+    const encodedCommand = JSON.stringify({ type: 'matchCommand', command });
+    const pending = socketOutcomes(socket, 2);
+
+    await runInDurableObject(battle.stub, async (instance, state) => {
+      const serverSocket = state.getWebSockets()[0];
+      if (!serverSocket) throw new Error('Expected authenticated server socket');
+      await Promise.all([
+        (instance as MatchDO).webSocketMessage(serverSocket, encodedCommand),
+        (instance as MatchDO).webSocketMessage(serverSocket, encodedCommand),
+      ]);
+    });
+
+    const outcomes = await pending;
+    const updates = outcomes.map((outcome) => {
+      if (outcome.kind !== 'message') throw new Error('Expected command update without close');
+      const decoded = parseMatchServerFrame(JSON.parse(outcome.data) as unknown);
+      if (decoded?.type !== 'matchCommandUpdate') {
+        throw new Error('Expected exact command update frame');
+      }
+      return decoded;
+    });
+    expect(updates[1]?.receipt).toEqual(updates[0]?.receipt);
+    expect(updates[1]?.projection).toEqual(updates[0]?.projection);
+    expect(updates[1]?.sync).toEqual({
+      type: 'matchViewerSync',
+      mode: 'delta',
+      afterEventSequence: updates[0]?.projection.eventSequence,
+      batches: [],
+    });
+    expect(await battle.stub.getNpcBattleReceipt({
+      principal: battle.session,
+      commandId: command.commandId,
+    })).toEqual(updates[0]?.receipt);
     socket.close(1000, 'done');
   });
 
@@ -2322,8 +2416,9 @@ describe('OLG-121 MatchDO authoritative NPC battle lifecycle', () => {
     expect(otherTabFrame).toEqual({
       type: 'matchProjection',
       projection: (update as Extract<MatchServerFrame, { type: 'matchCommandUpdate' }>).projection,
+      sync: (update as Extract<MatchServerFrame, { type: 'matchCommandUpdate' }>).sync,
     });
-    expect('receipt' in (otherTabFrame as Record<string, unknown>)).toBe(false);
+    expect('receipt' in (otherTabFrame as unknown as Record<string, unknown>)).toBe(false);
 
     expect(socket.readyState).toBe(WebSocket.OPEN);
     expect(otherTabSocket.readyState).toBe(WebSocket.OPEN);
@@ -4056,4 +4151,234 @@ describe('OLG-125 MatchDO battle persistence and crash recovery', () => {
     await expect(stubFor(battle.id).getNpcBattleSnapshot(battle.session))
       .rejects.toThrow('MATCH_BATTLE_PERSISTENCE_INVALID');
   });
+});
+
+describe('OLG-126 MatchDO reconnect and recovery reads', () => {
+  it('legacy authはinitial snapshot、resumeはcurrent/1手前/aheadをdeltaまたはfallbackへ収束させる', async () => {
+    const battle = await startReservedNpcBattle();
+    const issued = await battle.stub.issueSeatToken(battle.session);
+    expect(issued.state).toBe('issued');
+    if (issued.state !== 'issued') throw new Error('Expected issued seat token');
+
+    const socket = await openPlayerSocket(battle.stub, battle.id, battle.session);
+    const initial = await authenticateBattle(socket, issued.seatToken);
+    expect(initial.sync).toEqual({
+      type: 'matchViewerSync',
+      mode: 'snapshot',
+      reason: 'initial',
+      eventSequence: initial.projection.eventSequence,
+    });
+    expect(initial.projection).toMatchObject({
+      projectionVersion: MATCH_PLAYER_PROJECTION_VERSION,
+      viewerEventVersion: MATCH_VIEWER_EVENT_VERSION,
+    });
+
+    const action = initial.projection.legalActions[0];
+    if (!action) throw new Error('Expected a legal player action');
+    const commandPending = socketOutcome(socket);
+    socket.send(JSON.stringify({
+      type: 'matchCommand',
+      command: npcCommand(battle.id, initial.projection.revision, action),
+    }));
+    const commandOutcome = await commandPending;
+    if (commandOutcome.kind !== 'message') throw new Error('Expected command update');
+    const update = parseMatchServerFrame(JSON.parse(commandOutcome.data) as unknown);
+    if (update?.type !== 'matchCommandUpdate') throw new Error('Expected command update frame');
+    const currentSequence = update.projection.eventSequence;
+    expect(currentSequence).toBeGreaterThan(initial.projection.eventSequence);
+
+    const persistedCounts = await runInDurableObject(battle.stub, (_instance, state) =>
+      state.storage.sql.exec<{ step_count: number; event_count: number }>(
+        `SELECT step_count, event_count FROM match_battle_state`,
+      ).one());
+    expect(persistedCounts.step_count).toBe(currentSequence);
+    expect(persistedCounts.event_count).toBeGreaterThan(persistedCounts.step_count);
+    expect(currentSequence).not.toBe(persistedCounts.event_count);
+    socket.close(1000, 'done');
+
+    const reconnect = async (lastEventSequence: number) => {
+      const fresh = await battle.stub.issueSeatToken(battle.session);
+      expect(fresh.state).toBe('issued');
+      if (fresh.state !== 'issued') throw new Error('Expected fresh seat token');
+      const resumedSocket = await openPlayerSocket(battle.stub, battle.id, battle.session);
+      const frame = await resumeBattle(resumedSocket, fresh.seatToken, lastEventSequence);
+      return { socket: resumedSocket, frame };
+    };
+
+    const atCurrent = await reconnect(currentSequence);
+    expect(atCurrent.frame.sync).toEqual({
+      type: 'matchViewerSync',
+      mode: 'delta',
+      afterEventSequence: currentSequence,
+      batches: [],
+    });
+    atCurrent.socket.close(1000, 'done');
+
+    const oneBehind = await reconnect(currentSequence - 1);
+    expect(oneBehind.frame.sync).toEqual({
+      type: 'matchViewerSync',
+      mode: 'delta',
+      afterEventSequence: currentSequence - 1,
+      batches: [{ sequence: currentSequence, events: expect.any(Array) }],
+    });
+    oneBehind.socket.close(1000, 'done');
+
+    const ahead = await reconnect(currentSequence + 1);
+    expect(ahead.frame.sync).toEqual({
+      type: 'matchViewerSync',
+      mode: 'snapshot',
+      reason: 'cursor_ahead',
+      eventSequence: currentSequence,
+    });
+    ahead.socket.close(1000, 'done');
+
+    const gapSequence = await runInDurableObject(battle.stub, (instance) => {
+      const target = instance as unknown as {
+        battleSteps: unknown[];
+        battleProjectionCheckpoint: AuthoritativeBattleCheckpoint | null;
+      };
+      if (!target.battleProjectionCheckpoint) {
+        throw new Error('Expected projection checkpoint');
+      }
+      const eventSequence = MAX_MATCH_RESUME_EVENT_BATCHES + 1;
+      // gap判定はbatchをmaterializeする前に行うため、長大な履歴を作らず境界だけを検査する。
+      target.battleSteps = Array.from({ length: eventSequence }, () => ({}));
+      target.battleProjectionCheckpoint = {
+        ...target.battleProjectionCheckpoint,
+        stepCount: eventSequence,
+      };
+      return eventSequence;
+    });
+    const gap = await reconnect(0);
+    expect(gap.frame.sync).toEqual({
+      type: 'matchViewerSync',
+      mode: 'snapshot',
+      reason: 'cursor_gap',
+      eventSequence: gapSequence,
+    });
+    gap.socket.close(1000, 'done');
+  });
+
+  it('DO eviction後に新しいseat tokenとcurrent cursorで復帰し、次commandを継続する', async () => {
+    const battle = await startReservedNpcBattle();
+    const firstIssued = await battle.stub.issueSeatToken(battle.session);
+    expect(firstIssued.state).toBe('issued');
+    if (firstIssued.state !== 'issued') throw new Error('Expected issued seat token');
+    const firstSocket = await openPlayerSocket(battle.stub, battle.id, battle.session);
+    const initial = await authenticateBattle(firstSocket, firstIssued.seatToken);
+    const firstAction = initial.projection.legalActions[0];
+    if (!firstAction) throw new Error('Expected a legal player action');
+
+    const firstPending = socketOutcome(firstSocket);
+    firstSocket.send(JSON.stringify({
+      type: 'matchCommand',
+      command: npcCommand(battle.id, initial.projection.revision, firstAction),
+    }));
+    const firstOutcome = await firstPending;
+    if (firstOutcome.kind !== 'message') throw new Error('Expected command update');
+    const firstUpdate = parseMatchServerFrame(JSON.parse(firstOutcome.data) as unknown);
+    if (firstUpdate?.type !== 'matchCommandUpdate') {
+      throw new Error('Expected exact command update frame');
+    }
+    firstSocket.close(1000, 'done');
+    await evictDurableObject(battle.stub);
+
+    const freshIssued = await battle.stub.issueSeatToken(battle.session);
+    expect(freshIssued.state).toBe('issued');
+    if (freshIssued.state !== 'issued') throw new Error('Expected fresh seat token after eviction');
+    expect(freshIssued.seatToken).not.toBe(firstIssued.seatToken);
+    const resumedSocket = await openPlayerSocket(battle.stub, battle.id, battle.session);
+    const resumed = await resumeBattle(
+      resumedSocket,
+      freshIssued.seatToken,
+      firstUpdate.projection.eventSequence,
+    );
+    expect(resumed.projection).toEqual(firstUpdate.projection);
+    expect(resumed.sync).toEqual({
+      type: 'matchViewerSync',
+      mode: 'delta',
+      afterEventSequence: firstUpdate.projection.eventSequence,
+      batches: [],
+    });
+
+    const nextAction = resumed.projection.legalActions[0];
+    if (!nextAction) throw new Error('Expected a legal action after resume');
+    const nextPending = socketOutcome(resumedSocket);
+    resumedSocket.send(JSON.stringify({
+      type: 'matchCommand',
+      command: npcCommand(battle.id, resumed.projection.revision, nextAction),
+    }));
+    const nextOutcome = await nextPending;
+    if (nextOutcome.kind !== 'message') throw new Error('Expected resumed command update');
+    const nextUpdate = parseMatchServerFrame(JSON.parse(nextOutcome.data) as unknown);
+    expect(nextUpdate).toMatchObject({
+      type: 'matchCommandUpdate',
+      receipt: {
+        state: 'accepted',
+        baseRevision: resumed.projection.revision,
+        revision: resumed.projection.revision + 1,
+      },
+      projection: { revision: resumed.projection.revision + 1 },
+      sync: {
+        type: 'matchViewerSync',
+        mode: 'delta',
+        afterEventSequence: resumed.projection.eventSequence,
+      },
+    });
+    if (nextUpdate?.type !== 'matchCommandUpdate') {
+      throw new Error('Expected exact resumed command update frame');
+    }
+    expect(nextUpdate.projection.eventSequence).toBeGreaterThan(
+      resumed.projection.eventSequence,
+    );
+    resumedSocket.close(1000, 'done');
+  });
+
+  it('ACK喪失時のreceiptとterminal public resultをcleanup・eviction後もsession所有者へ返す', async () => {
+    const battle = await startReservedNpcBattle();
+    const rolledBack = await runInDurableObject(battle.stub, (instance) =>
+      leaveFinalCommandRolledBack(instance as MatchDO, battle.session, battle.id));
+
+    // browserへACKを配送しないままcommandだけをcommitした状況を再現する。
+    const committedReceipt = await battle.stub.applyNpcBattleCommand({
+      principal: battle.session,
+      command: rolledBack.finalCommand,
+    });
+    expect(committedReceipt).toMatchObject({
+      state: 'accepted',
+      commandId: rolledBack.finalCommand.commandId,
+    });
+    await expect(battle.stub.getNpcBattleReceipt({
+      principal: battle.session,
+      commandId: rolledBack.finalCommand.commandId,
+    })).resolves.toEqual(committedReceipt);
+    await expect(battle.stub.getNpcBattleReceipt({
+      principal: battle.session,
+      commandId: nextCommandId(),
+    })).resolves.toBeNull();
+
+    const publicResult = await battle.stub.getNpcBattlePublicResult(battle.session);
+    expect(publicResult).toMatchObject({ state: 'finished' });
+    expect(publicResult).not.toHaveProperty('turns');
+    expect(publicResult).not.toHaveProperty('finalStateHash');
+    expect(publicResult).not.toHaveProperty('appliedActions');
+    expect(JSON.stringify(publicResult)).not.toContain(String(battle.seed));
+
+    await runTerminalCleanupAlarm(battle.stub);
+    await expect(battle.coordinator.checkNpcMatchRecoveryOwnership({
+      ...battle.session,
+      matchId: battle.id,
+    })).resolves.toEqual({ state: 'authorized' });
+    await evictDurableObject(battle.stub);
+
+    await expect(battle.stub.getNpcBattleRecoveryStatus(battle.session)).resolves.toEqual({
+      state: 'terminal',
+      matchId: battle.id,
+    });
+    await expect(battle.stub.getNpcBattleReceipt({
+      principal: battle.session,
+      commandId: rolledBack.finalCommand.commandId,
+    })).resolves.toEqual(committedReceipt);
+    await expect(battle.stub.getNpcBattlePublicResult(battle.session)).resolves.toEqual(publicResult);
+  }, 20_000);
 });

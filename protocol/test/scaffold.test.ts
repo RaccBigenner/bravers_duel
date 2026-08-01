@@ -6,8 +6,11 @@ import {
   MATCH_ID_PATTERN,
   MATCH_ACTION_TYPES,
   MATCH_PLAYER_PROJECTION_VERSION,
+  MATCH_VIEWER_EVENT_VERSION,
+  MAX_MATCH_VIEWER_DELTA_BATCHES,
   MAX_MATCH_REVISION,
   PROTOCOL_SCAFFOLD,
+  parseActiveMatchResponse,
   parseBattleCardId,
   parseMatchAction,
   parseMatchCommandCandidate,
@@ -17,18 +20,26 @@ import {
   parseMatchCommandResult,
   parseMatchId,
   parseMatchPlayerProjection,
+  parseMatchReceiptResponse,
   parseMatchRevision,
+  parseMatchResultResponse,
   parseMatchServerFrame,
+  parseMatchViewerEvent,
+  parseMatchViewerEventBatch,
+  parseMatchViewerSync,
   type MatchAction,
   type MatchCommandEnvelope,
   type MatchCommandResult,
   type MatchPlayerProjection,
+  type MatchViewerEvent,
+  type MatchViewerEventBatch,
+  type MatchViewerSync,
 } from '../src/index';
 
 describe('@bravers/protocol scaffold', () => {
-  it('OLG-124 browser command/projection wireをoperationalとして公開する', () => {
+  it('OLG-126 browser recovery wireをoperationalとして公開する', () => {
     expect(PROTOCOL_SCAFFOLD).toEqual({
-      version: 'OLG-124',
+      version: 'OLG-126',
       operational: true,
     });
   });
@@ -339,7 +350,152 @@ describe('@bravers/protocol scaffold', () => {
     expect(conflictRevision).toBeTruthy();
   });
 
-  it('OLG-124 projectionとclient/server frameをnested exact decodeする', () => {
+  it('viewer eventは公開allowlistの各枝をexact decodeする', () => {
+    expect(MATCH_VIEWER_EVENT_VERSION).toBe(1);
+    const events = [
+      { type: 'battleStarted', firstPlayer: 0 },
+      { type: 'bonusCharge', player: 1, count: 1 },
+      { type: 'turnStarted', turn: 2, player: 0 },
+      { type: 'cardsDrawn', player: 0, count: 2 },
+      { type: 'cardsCharged', player: 1, source: 'hand', count: 1 },
+      { type: 'cardsDiscarded', player: 0, count: 1 },
+      { type: 'cardsMilled', player: 1, count: 3 },
+      { type: 'apDiscarded', player: 0, count: 1 },
+      { type: 'trashReturnedToDeck', player: 1, count: 2 },
+      { type: 'skillPlayed', player: 0, characterSlot: 0, printingId: 'S-001' },
+      { type: 'characterPlayed', player: 1, printingId: 'C-001' },
+      { type: 'cardCastFromDeck', player: 0, characterSlot: 1, printingId: 'S-002' },
+      {
+        type: 'attackDeclared',
+        player: 0,
+        characterSlot: 0,
+        printingId: 'S-003',
+        value: 3,
+        noGuard: false,
+      },
+      {
+        type: 'guardPlayed',
+        player: 1,
+        characterSlot: 0,
+        printingId: 'G-001',
+        before: 3,
+        after: 1,
+      },
+      {
+        type: 'equipmentPlayed',
+        player: 0,
+        characterSlot: 0,
+        printingId: 'E-001',
+        removedPrintingId: 'E-000',
+      },
+      { type: 'equipmentDestroyed', player: 1, characterSlot: 0, printingId: 'E-002' },
+      { type: 'fieldPlayed', player: 0, printingId: 'F-001', replacedPrintingId: 'F-000' },
+      { type: 'powerChanged', player: 0, characterSlot: 0, amount: 2, total: 5 },
+      { type: 'guardBoosted', player: 1, amount: 1, remaining: 2 },
+      {
+        type: 'damageTaken',
+        player: 1,
+        characterSlot: 0,
+        amount: 2,
+        hpLeft: 1,
+        sourcePrintingId: 'S-003',
+      },
+      { type: 'standbyImmune', player: 1, characterSlot: 1 },
+      { type: 'healed', player: 0, characterSlot: 0, amount: 1 },
+      { type: 'characterKnockedOut', player: 1, characterSlot: 0 },
+      { type: 'characterRevived', player: 1, characterSlot: 0, hp: 1 },
+      { type: 'actorChanged', player: 0, characterSlot: 1, forced: true },
+      { type: 'actorLocked', player: 1, untilTurn: 3 },
+      { type: 'actorUnlocked', player: 0 },
+      { type: 'actorLockBlocked', player: 1 },
+      { type: 'deckOut', player: 1 },
+      {
+        type: 'matchEnded',
+        result: { state: 'finished', winner: 0, reason: 'wipeout' },
+      },
+    ] as const satisfies readonly MatchViewerEvent[];
+    for (const event of events) expect(parseMatchViewerEvent(event)).toEqual(event);
+
+    for (const hiddenOrInvalid of [
+      { type: 'cardsCharged', player: 1, source: 'hand', count: 1, cardId: 'hidden' },
+      { type: 'cardsCharged', player: 0, source: 'hand', count: 1, apGained: 2 },
+      { type: 'skillPlayed', player: 0, characterSlot: 0, printingId: 'S-001', label: 'secret' },
+      { type: 'info', text: 'free form' },
+      { type: 'abilityTriggered', label: 'free form', player: 0 },
+      { type: 'chargeHand', player: 1, cardId: 'hidden', ap: 2 },
+      { type: 'cardsDrawn', player: 2, count: 1 },
+      { type: 'cardsDrawn', player: 0, count: -1 },
+      { type: 'matchEnded', result: { state: 'finished', winner: 0, reason: 'secret' } },
+    ]) {
+      expect(parseMatchViewerEvent(hiddenOrInvalid), JSON.stringify(hiddenOrInvalid)).toBeNull();
+    }
+  });
+
+  it('viewer event batchとsyncは連続sequenceとexact fieldを強制する', () => {
+    const first: MatchViewerEventBatch = {
+      sequence: 1,
+      events: [{ type: 'battleStarted', firstPlayer: 0 }],
+    };
+    const second: MatchViewerEventBatch = {
+      sequence: 2,
+      events: [{ type: 'cardsDrawn', player: 0, count: 1 }],
+    };
+    expect(parseMatchViewerEventBatch(first)).toEqual(first);
+    expect(parseMatchViewerEventBatch({ ...first, extra: true })).toBeNull();
+    expect(parseMatchViewerEventBatch({ ...first, sequence: 0 })).toBeNull();
+    expect(parseMatchViewerEventBatch({ ...first, events: [] })).toEqual({
+      ...first,
+      events: [],
+    });
+
+    const delta = {
+      type: 'matchViewerSync',
+      mode: 'delta',
+      afterEventSequence: 0,
+      batches: [first, second],
+    } as const satisfies MatchViewerSync;
+    expect(parseMatchViewerSync(delta)).toEqual(delta);
+    expect(parseMatchViewerSync({ ...delta, batches: [{ ...first, sequence: 2 }] })).toBeNull();
+    expect(parseMatchViewerSync({ ...delta, batches: [first, { ...second, sequence: 3 }] })).toBeNull();
+    expect(parseMatchViewerSync({ ...delta, extra: true })).toBeNull();
+    expect(parseMatchViewerSync({
+      type: 'matchViewerSync',
+      mode: 'delta',
+      afterEventSequence: 2,
+      batches: [],
+    })).toEqual({
+      type: 'matchViewerSync',
+      mode: 'delta',
+      afterEventSequence: 2,
+      batches: [],
+    });
+    expect(parseMatchViewerSync({
+      type: 'matchViewerSync',
+      mode: 'delta',
+      afterEventSequence: 0,
+      batches: Array.from(
+        { length: MAX_MATCH_VIEWER_DELTA_BATCHES + 1 },
+        (_, index) => ({ sequence: index + 1, events: [] }),
+      ),
+    })).toBeNull();
+    for (const reason of ['initial', 'cursor_gap', 'cursor_ahead', 'delta_too_large'] as const) {
+      const snapshot = {
+        type: 'matchViewerSync',
+        mode: 'snapshot',
+        reason,
+        eventSequence: 2,
+      } as const satisfies MatchViewerSync;
+      expect(parseMatchViewerSync(snapshot)).toEqual(snapshot);
+    }
+    expect(parseMatchViewerSync({
+      type: 'matchViewerSync',
+      mode: 'snapshot',
+      reason: 'unknown',
+      eventSequence: 2,
+    })).toBeNull();
+  });
+
+  it('OLG-126 projectionとclient/server frameをnested exact decodeする', () => {
     const matchId = parseMatchId('match_projection');
     const revision = parseMatchRevision(1);
     const commandId = parseMatchCommandId('cmd_00112233445566778899aabbccddeeff');
@@ -356,6 +512,7 @@ describe('@bravers/protocol scaffold', () => {
       viewerSeat: 'player-1',
       viewerPlayer: 0,
       revision,
+      viewerEventVersion: MATCH_VIEWER_EVENT_VERSION,
       eventSequence: 3,
       contentVersion: 'content-test',
       formatVersionId: 'standard@1',
@@ -439,8 +596,20 @@ describe('@bravers/protocol scaffold', () => {
       errorCode: 'MATCH_ACTION_INVALID',
       revision,
     } as const satisfies MatchCommandResult;
-    const update = { type: 'matchCommandUpdate', receipt, projection } as const;
+    const sync = {
+      type: 'matchViewerSync',
+      mode: 'snapshot',
+      reason: 'initial',
+      eventSequence: projection.eventSequence,
+    } as const satisfies MatchViewerSync;
+    const update = { type: 'matchCommandUpdate', receipt, projection, sync } as const;
     expect(parseMatchServerFrame(update)).toEqual(update);
+    expect(parseMatchServerFrame({ type: 'matchProjection', projection, sync })).toEqual({
+      type: 'matchProjection',
+      projection,
+      sync,
+    });
+    expect(parseMatchServerFrame({ type: 'matchProjection', projection })).toBeNull();
     expect(parseMatchServerFrame({ ...update, lifecycle: 'active' })).toBeNull();
     expect(parseMatchServerFrame({
       ...update,
@@ -448,6 +617,28 @@ describe('@bravers/protocol scaffold', () => {
     })).toBeNull();
 
     expect(parseMatchPlayerProjection({ ...projection, seed: 123 })).toBeNull();
+    expect(parseMatchPlayerProjection({ ...projection, viewerEventVersion: 2 })).toBeNull();
+    expect(parseMatchServerFrame({
+      type: 'matchProjection',
+      projection,
+      sync: { ...sync, eventSequence: 2 },
+    })).toBeNull();
+    const deltaSync = {
+      type: 'matchViewerSync',
+      mode: 'delta',
+      afterEventSequence: 1,
+      batches: [
+        { sequence: 2, events: [{ type: 'cardsDrawn', player: 0, count: 1 }] },
+        { sequence: 3, events: [{ type: 'turnStarted', turn: 1, player: 0 }] },
+      ],
+    } as const satisfies MatchViewerSync;
+    expect(parseMatchServerFrame({ type: 'matchProjection', projection, sync: deltaSync }))
+      .toEqual({ type: 'matchProjection', projection, sync: deltaSync });
+    expect(parseMatchServerFrame({
+      type: 'matchProjection',
+      projection,
+      sync: { ...deltaSync, batches: deltaSync.batches.slice(0, 1) },
+    })).toBeNull();
     expect(parseMatchPlayerProjection({
       ...projection,
       viewerPlayer: 1,
@@ -495,6 +686,69 @@ describe('@bravers/protocol scaffold', () => {
       endReason: 'wipeout',
       terminal: { state: 'abandoned', winner: 1, reason: 'player_abandoned' },
       legalActions: [],
+    })).toBeNull();
+  });
+
+  it('active-match/receipt/result HTTP DTOをnested exact decodeする', () => {
+    const matchId = parseMatchId('npc-http-recovery');
+    const otherMatchId = parseMatchId('npc-other');
+    const commandId = parseMatchCommandId('cmd_00112233445566778899aabbccddeeff');
+    const revision = parseMatchRevision(1);
+    if (!matchId || !otherMatchId || !commandId || revision === null) {
+      throw new Error('Expected valid HTTP fixtures');
+    }
+    const active = {
+      type: 'activeMatch',
+      match: { kind: 'npc', matchId, seat: 'player-1', state: 'active' },
+    } as const;
+    expect(parseActiveMatchResponse(active)).toEqual(active);
+    expect(parseActiveMatchResponse({ type: 'activeMatch', match: null })).toEqual({
+      type: 'activeMatch',
+      match: null,
+    });
+    for (const invalid of [
+      { ...active, extra: true },
+      { ...active, match: { ...active.match, extra: true } },
+      { ...active, match: { ...active.match, kind: 'pvp' } },
+      { ...active, match: { ...active.match, seat: 'player-2' } },
+      { ...active, match: { ...active.match, state: 'finished' } },
+    ]) {
+      expect(parseActiveMatchResponse(invalid), JSON.stringify(invalid)).toBeNull();
+    }
+
+    const receipt = {
+      type: 'matchCommandResult',
+      state: 'rejected',
+      matchId,
+      commandId,
+      errorCode: 'MATCH_ACTION_INVALID',
+      revision,
+    } as const satisfies MatchCommandResult;
+    const receiptResponse = { type: 'matchReceipt', matchId, receipt } as const;
+    expect(parseMatchReceiptResponse(receiptResponse)).toEqual(receiptResponse);
+    expect(parseMatchReceiptResponse({ ...receiptResponse, receipt: null })).toEqual({
+      ...receiptResponse,
+      receipt: null,
+    });
+    expect(parseMatchReceiptResponse({ ...receiptResponse, extra: true })).toBeNull();
+    expect(parseMatchReceiptResponse({
+      ...receiptResponse,
+      receipt: { ...receipt, matchId: otherMatchId },
+    })).toBeNull();
+    expect(parseMatchReceiptResponse({ ...receiptResponse, receipt: { ...receipt, seed: 1 } }))
+      .toBeNull();
+
+    const result = { state: 'finished', winner: 0, reason: 'wipeout' } as const;
+    const resultResponse = { type: 'matchResult', matchId, result } as const;
+    expect(parseMatchResultResponse(resultResponse)).toEqual(resultResponse);
+    expect(parseMatchResultResponse({ ...resultResponse, result: null })).toEqual({
+      ...resultResponse,
+      result: null,
+    });
+    expect(parseMatchResultResponse({ ...resultResponse, extra: true })).toBeNull();
+    expect(parseMatchResultResponse({
+      ...resultResponse,
+      result: { ...result, finalStateHash: 'hidden' },
     })).toBeNull();
   });
 });

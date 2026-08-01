@@ -1,8 +1,9 @@
 # STATE — BRAVER'S DUEL
 
-- 最終更新: 2026-08-01
-- フェーズ: G0 FoundationはCloudflare smoke待ち。P1 / G1 Internal Alphaへ着手し、OLG-101完了、
-  OLG-102/111は実装済み。Docker互換ランタイム待ちでSupabase migration・DB/Auth実stack受入が未完
+- 最終更新: 2026-08-02
+- フェーズ: G0 FoundationはCloudflare smoke待ち。P1 / G1 Internal AlphaはOLG-126まで進み、
+  サーバー権威NPC戦の永続化・秘匿wire・reload復帰基盤を実装済み。Docker互換ランタイム待ちで
+  OLG-102/111/113のSupabase migration・DB/Auth実stack受入が未完
 
 
 ## この文書の読み方
@@ -21,7 +22,7 @@
 - 新プラットフォームは **TypeScript** に決定（理由: ブラウザβに必須＋同じエンジンで自動対戦テストができる）。
   - `engine/`: ルールエンジン + AI + シミュレーター（vitest でテスト）
   - `web/`: Vite + React のブラウザ画面
-  - `protocol/`: ブラウザ/サーバー共有型（OLG-101時点はworkspace境界だけ）
+  - `protocol/`: ブラウザ/サーバー共有型（command / projection / viewer sync / recovery HTTP DTO）
   - `server/`: サーバー権威API/MatchDOのworkspaceとPostgreSQL migration正本
   - `supabase/`: ローカルCLI設定。migrationはsymlinkで`server/migrations/`へ接続
   - npm workspaces 構成。`npm test`・`npm run sim`・`npm run dev`・`npm run build` が動くことを確認済み。
@@ -49,7 +50,7 @@
 | G7 Trade Release | 未着手 | NPC交換とescrow付きプレイヤー交換を、競合や取消でも個体を失わず完走できる |
 | G8 Live Operations | 未着手 | `LATEST_N`、新弾/翻訳、監視復旧を継続運用し、検証済みの場合だけ動的シングル価格を開放できる |
 
-## オンライン基盤の現在地（2026-08-01）
+## オンライン基盤の現在地（2026-08-02）
 
 - 作業ブランチは `feat/online-foundation`。OLG-001（現行ルール同期）とOLG-002（基準ブランチ統合）は完了。
 - **OLG-003でカードIDを二層化**:
@@ -189,7 +190,7 @@
   wire receiptはACK-onlyでtransition / events / lifecycleを絶対に含めない。メモリ台帳は全2,048件のうち
   拒否receiptを最大512件に制限してaccepted用を予約する。最終手のterminal commit失敗も同一再送で
   二重適用しない。DO evictionを跨ぐprepare→SQLite atomic commit→runtime swapはOLG-125、raw frame gateと
-  viewer別projectionはOLG-124で完了。terminal ACK喪失後にリロードした新規接続のreceipt / result readはOLG-126へ続く。
+  viewer別projectionはOLG-124、terminal ACK喪失後にリロードした新規接続のreceipt / result readはOLG-126で完了。
 - **OLG-125は2026-08-02にコード実装済み**。manifest / state / command / step / eventの5表へ初期ID配置、
   current checkpoint、canonical payload / digest・exact receipt、stable step / eventを保存し、関連lifecycle・
   terminal cleanup outbox / deadlineも同じtransactionで確定してからruntimeをswapする。constructorは16 MiBを
@@ -201,8 +202,13 @@
   terminal projection送信後の`1000 / MATCH_ENDED` closeを実装した。相手handはcount、両deck/APはcountのみ。
   seed / rng / raw state / event / header / hash / hidden IDは非公開。通常決着・取消・放棄、同一viewer複数tab、
   rejected / duplicate / conflict、raw/canonical上限、ACK喪失相当、terminal send/close後のDO再生成を自動検査する。
-  browser game frameは開いたが、active-match / receipt-result read / event delta / reload復帰はOLG-126で未実装。
-  v1の`eventSequence`はG1 NPC-onlyのraw cursorなので、PvP前にhidden event数を漏らさないviewer別cursorへversion upする。
+  OLG-126でactive-match / receipt-result read / event delta / reload復帰とviewer cursor v2まで完了した。
+- **OLG-126は2026-08-02にコード実装済み**。`GET /me/active-match`とsession所有権で守る
+  receipt / result GET、version付きWebSocket resumeを追加した。viewer cursorはraw event件数でなくstable step単位で、
+  hidden-only stepも空batchとして進む。最大128 batchのdelta、ahead / gap / 128 KiB超のsnapshot fallbackを持つ。
+  SessionCoordinatorはterminal cleanup後の所有権をsessionごと1件・90日保持し、新規試合・logout・失効で消す。
+  DO eviction後の新seat token再接続・次command、ACK喪失receipt、cleanup後result、別account / match拒否を検証済み。
+  player-visibleな「試合に戻る」導線はOLG-133、端末の未送信command outboxはOLG-132へ続く。
 - ここまでの経緯は一番下の「開発の記録」を見る。
 
 ## オープンβ要件 決定（2026-07-23）

@@ -15,6 +15,7 @@ const MATCH_REFERENCES_KEY = 'match-references-v1';
 // 初回登録を巻き込まないようにする（v1の値は新schemaと形が違うため読み捨てる）。
 const CANCELLED_REGISTRATION_FLOOR_KEY = 'cancelled-match-registration-floor-v2';
 const ACTIVE_NPC_MATCH_RESERVATION_KEY = 'active-npc-match-reservation-v1';
+const RECENT_NPC_MATCH_RECOVERY_KEY = 'recent-npc-match-recovery-v1';
 const LOGOUT_REASON = 'LOGOUT';
 
 export const MAX_SESSION_MATCH_REFERENCES = 16;
@@ -23,6 +24,7 @@ export const MAX_TRACKED_CANCELLED_MATCH_FLOORS = 64;
 export const LOGOUT_RECOVERY_DELAY_MS = 5_000;
 export const INVALIDATION_RETRY_BASE_MS = 1_000;
 export const INVALIDATION_RETRY_MAX_MS = 60_000;
+export const NPC_MATCH_RECOVERY_RETENTION_MS = 90 * 24 * 60 * 60 * 1_000;
 
 interface MatchReference {
   matchId: string;
@@ -37,6 +39,14 @@ interface ActiveNpcMatchReservation {
   matchId: string;
   seed: number;
   createdAtEpochMs: number;
+}
+
+interface RecentNpcMatchRecoveryOwnership {
+  accountId: string;
+  sessionVersion: number;
+  matchId: string;
+  seed: number;
+  releasedAtEpochMs: number;
 }
 
 interface CancelledRegistrationFloor {
@@ -103,6 +113,18 @@ export type SessionNpcMatchReleaseResult =
   | { state: 'references_remain' }
   | { state: 'conflict' };
 
+export type SessionNpcMatchReadResult =
+  | { state: 'located'; matchId: string }
+  | { state: 'none' }
+  | { state: 'invalidated'; invalidatedVersion: number }
+  | { state: 'conflict' };
+
+export type SessionNpcMatchRecoveryOwnershipStatus =
+  | { state: 'authorized' }
+  | { state: 'missing' }
+  | { state: 'invalidated'; invalidatedVersion: number }
+  | { state: 'conflict' };
+
 export type SessionLogoutPreparationResult =
   | { state: 'prepared' }
   | { state: 'fanout_pending'; invalidatedVersion: number }
@@ -145,6 +167,11 @@ export interface SessionNpcMatchReservationInput {
   sessionVersion: number;
 }
 
+export interface SessionNpcMatchRecoveryOwnershipInput
+  extends SessionNpcMatchReservationInput {
+  matchId: string;
+}
+
 export interface SessionNpcMatchReleaseInput extends SessionNpcMatchReservationInput {
   matchId: string;
   seed: number;
@@ -161,6 +188,10 @@ export interface SessionCoordinatorPort {
   reserveNpcMatch(
     input: SessionNpcMatchReservationInput,
   ): Promise<SessionNpcMatchReservationResult>;
+  readNpcMatch(input: SessionNpcMatchReservationInput): Promise<SessionNpcMatchReadResult>;
+  checkNpcMatchRecoveryOwnership(
+    input: SessionNpcMatchRecoveryOwnershipInput,
+  ): Promise<SessionNpcMatchRecoveryOwnershipStatus>;
   releaseNpcMatch(
     input: SessionNpcMatchReleaseInput,
   ): Promise<SessionNpcMatchReleaseResult>;
@@ -256,6 +287,99 @@ function validateNpcReservationInput(input: SessionNpcMatchReservationInput): vo
   ) {
     throw new TypeError('SESSION_NPC_MATCH_RESERVATION_INVALID');
   }
+}
+
+function validateNpcRecoveryOwnershipInput(
+  input: SessionNpcMatchRecoveryOwnershipInput,
+): void {
+  if (
+    !plainExactObject(input, ['sessionId', 'accountId', 'sessionVersion', 'matchId']) ||
+    typeof input.sessionId !== 'string' ||
+    !UUID_PATTERN.test(input.sessionId) ||
+    typeof input.accountId !== 'string' ||
+    !UUID_PATTERN.test(input.accountId) ||
+    !positiveInteger(input.sessionVersion) ||
+    typeof input.matchId !== 'string' ||
+    !MATCH_ID_PATTERN.test(input.matchId)
+  ) {
+    throw new TypeError('SESSION_NPC_MATCH_RECOVERY_OWNERSHIP_INVALID');
+  }
+}
+
+function validNpcMatchIdentityFields(value: Record<string, unknown>): boolean {
+  return (
+    typeof value.accountId === 'string' &&
+    UUID_PATTERN.test(value.accountId) &&
+    positiveInteger(value.sessionVersion) &&
+    typeof value.matchId === 'string' &&
+    MATCH_ID_PATTERN.test(value.matchId) &&
+    Number.isSafeInteger(value.seed) &&
+    Number(value.seed) >= 0 &&
+    Number(value.seed) <= 0xffff_ffff
+  );
+}
+
+function validActiveNpcMatchReservation(
+  value: unknown,
+): value is ActiveNpcMatchReservation {
+  return (
+    plainExactObject(value, [
+      'accountId',
+      'sessionVersion',
+      'matchId',
+      'seed',
+      'createdAtEpochMs',
+    ]) &&
+    validNpcMatchIdentityFields(value) &&
+    positiveInteger(value.createdAtEpochMs)
+  );
+}
+
+function validRecentNpcMatchRecoveryOwnership(
+  value: unknown,
+): value is RecentNpcMatchRecoveryOwnership {
+  return (
+    plainExactObject(value, [
+      'accountId',
+      'sessionVersion',
+      'matchId',
+      'seed',
+      'releasedAtEpochMs',
+    ]) &&
+    validNpcMatchIdentityFields(value) &&
+    positiveInteger(value.releasedAtEpochMs)
+  );
+}
+
+function sameNpcMatchPrincipal(
+  stored: Pick<ActiveNpcMatchReservation, 'accountId' | 'sessionVersion'>,
+  input: SessionNpcMatchReservationInput,
+): boolean {
+  return (
+    stored.accountId === input.accountId &&
+    stored.sessionVersion === input.sessionVersion
+  );
+}
+
+function sameNpcMatchRelease(
+  stored: Pick<
+    RecentNpcMatchRecoveryOwnership,
+    'accountId' | 'sessionVersion' | 'matchId' | 'seed'
+  >,
+  input: SessionNpcMatchReleaseInput,
+): boolean {
+  return (
+    sameNpcMatchPrincipal(stored, input) &&
+    stored.matchId === input.matchId &&
+    stored.seed === input.seed
+  );
+}
+
+function npcMatchRecoveryExpired(
+  recovery: RecentNpcMatchRecoveryOwnership,
+  nowEpochMs: number,
+): boolean {
+  return recovery.releasedAtEpochMs <= nowEpochMs - NPC_MATCH_RECOVERY_RETENTION_MS;
 }
 
 function randomUint32(): number {
@@ -502,28 +626,54 @@ export class SessionCoordinatorDO extends DurableObject<Env> {
     validateNpcReservationInput(input);
     validateIdentity(this.ctx.id.name, input.sessionId);
     return this.ctx.storage.transaction(async (transaction) => {
-      const [floor, work, reservation] = await Promise.all([
+      const [floor, work, reservationValue, recoveryValue] = await Promise.all([
         transaction.get<InvalidationFloor>(INVALIDATION_FLOOR_KEY),
         transaction.get<LogoutWork>(LOGOUT_WORK_KEY),
-        transaction.get<ActiveNpcMatchReservation>(ACTIVE_NPC_MATCH_RESERVATION_KEY),
+        transaction.get<unknown>(ACTIVE_NPC_MATCH_RESERVATION_KEY),
+        transaction.get<unknown>(RECENT_NPC_MATCH_RECOVERY_KEY),
       ]);
       const invalidatedVersion = blockedVersion(floor, work);
       if (invalidatedVersion !== null && invalidatedVersion > input.sessionVersion) {
-        if (reservation && reservation.sessionVersion < invalidatedVersion) {
+        if (
+          validActiveNpcMatchReservation(reservationValue) &&
+          reservationValue.sessionVersion < invalidatedVersion
+        ) {
           await transaction.delete(ACTIVE_NPC_MATCH_RESERVATION_KEY);
+        }
+        if (
+          validRecentNpcMatchRecoveryOwnership(recoveryValue) &&
+          recoveryValue.sessionVersion < invalidatedVersion
+        ) {
+          await transaction.delete(RECENT_NPC_MATCH_RECOVERY_KEY);
         }
         return { state: 'invalidated', invalidatedVersion } as const;
       }
-      if (reservation) {
-        return reservation.accountId === input.accountId &&
-          reservation.sessionVersion === input.sessionVersion
+      if (reservationValue !== undefined) {
+        if (!validActiveNpcMatchReservation(reservationValue)) {
+          return { state: 'conflict' } as const;
+        }
+        return sameNpcMatchPrincipal(reservationValue, input)
           ? {
               state: 'reserved',
-              matchId: reservation.matchId,
-              seed: reservation.seed,
+              matchId: reservationValue.matchId,
+              seed: reservationValue.seed,
               created: false,
             } as const
           : { state: 'conflict' } as const;
+      }
+
+      if (recoveryValue !== undefined) {
+        if (!validRecentNpcMatchRecoveryOwnership(recoveryValue)) {
+          return { state: 'conflict' } as const;
+        }
+        if (
+          npcMatchRecoveryExpired(recoveryValue, Date.now()) ||
+          sameNpcMatchPrincipal(recoveryValue, input)
+        ) {
+          await transaction.delete(RECENT_NPC_MATCH_RECOVERY_KEY);
+        } else {
+          return { state: 'conflict' } as const;
+        }
       }
 
       const next: ActiveNpcMatchReservation = {
@@ -543,6 +693,92 @@ export class SessionCoordinatorDO extends DurableObject<Env> {
     });
   }
 
+  /** 起動時のread-only discovery。期限切れrecentのlazy delete以外はstorageを変えない。 */
+  async readNpcMatch(
+    input: SessionNpcMatchReservationInput,
+  ): Promise<SessionNpcMatchReadResult> {
+    validateNpcReservationInput(input);
+    validateIdentity(this.ctx.id.name, input.sessionId);
+    return this.ctx.storage.transaction(async (transaction) => {
+      const [floor, work, reservationValue, recoveryValue] = await Promise.all([
+        transaction.get<InvalidationFloor>(INVALIDATION_FLOOR_KEY),
+        transaction.get<LogoutWork>(LOGOUT_WORK_KEY),
+        transaction.get<unknown>(ACTIVE_NPC_MATCH_RESERVATION_KEY),
+        transaction.get<unknown>(RECENT_NPC_MATCH_RECOVERY_KEY),
+      ]);
+      const invalidatedVersion = blockedVersion(floor, work);
+      if (invalidatedVersion !== null && invalidatedVersion > input.sessionVersion) {
+        return { state: 'invalidated', invalidatedVersion } as const;
+      }
+
+      if (reservationValue !== undefined) {
+        if (!validActiveNpcMatchReservation(reservationValue)) {
+          return { state: 'conflict' } as const;
+        }
+        return sameNpcMatchPrincipal(reservationValue, input)
+          ? { state: 'located', matchId: reservationValue.matchId } as const
+          : { state: 'conflict' } as const;
+      }
+      if (recoveryValue === undefined) return { state: 'none' } as const;
+      if (!validRecentNpcMatchRecoveryOwnership(recoveryValue)) {
+        return { state: 'conflict' } as const;
+      }
+      if (npcMatchRecoveryExpired(recoveryValue, Date.now())) {
+        await transaction.delete(RECENT_NPC_MATCH_RECOVERY_KEY);
+        return { state: 'none' } as const;
+      }
+      return sameNpcMatchPrincipal(recoveryValue, input)
+        ? { state: 'located', matchId: recoveryValue.matchId } as const
+        : { state: 'conflict' } as const;
+    });
+  }
+
+  /** active/recent ownershipをclient指定MatchDO取得前にpositive確認する。 */
+  async checkNpcMatchRecoveryOwnership(
+    input: SessionNpcMatchRecoveryOwnershipInput,
+  ): Promise<SessionNpcMatchRecoveryOwnershipStatus> {
+    validateNpcRecoveryOwnershipInput(input);
+    validateIdentity(this.ctx.id.name, input.sessionId);
+    return this.ctx.storage.transaction(async (transaction) => {
+      const [floor, work, reservationValue, recoveryValue] = await Promise.all([
+        transaction.get<InvalidationFloor>(INVALIDATION_FLOOR_KEY),
+        transaction.get<LogoutWork>(LOGOUT_WORK_KEY),
+        transaction.get<unknown>(ACTIVE_NPC_MATCH_RESERVATION_KEY),
+        transaction.get<unknown>(RECENT_NPC_MATCH_RECOVERY_KEY),
+      ]);
+      const invalidatedVersion = blockedVersion(floor, work);
+      if (invalidatedVersion !== null && invalidatedVersion > input.sessionVersion) {
+        return { state: 'invalidated', invalidatedVersion } as const;
+      }
+
+      if (reservationValue !== undefined) {
+        if (!validActiveNpcMatchReservation(reservationValue)) {
+          return { state: 'conflict' } as const;
+        }
+        if (!sameNpcMatchPrincipal(reservationValue, input)) {
+          return { state: 'conflict' } as const;
+        }
+        return reservationValue.matchId === input.matchId
+          ? { state: 'authorized' } as const
+          : { state: 'missing' } as const;
+      }
+      if (recoveryValue === undefined) return { state: 'missing' } as const;
+      if (!validRecentNpcMatchRecoveryOwnership(recoveryValue)) {
+        return { state: 'conflict' } as const;
+      }
+      if (npcMatchRecoveryExpired(recoveryValue, Date.now())) {
+        await transaction.delete(RECENT_NPC_MATCH_RECOVERY_KEY);
+        return { state: 'missing' } as const;
+      }
+      if (!sameNpcMatchPrincipal(recoveryValue, input)) {
+        return { state: 'conflict' } as const;
+      }
+      return recoveryValue.matchId === input.matchId
+        ? { state: 'authorized' } as const
+        : { state: 'missing' } as const;
+    });
+  }
+
   /** terminal永続化後にだけ呼ぶ、exact予約の明示解放。 */
   async releaseNpcMatch(
     input: SessionNpcMatchReleaseInput,
@@ -550,16 +786,24 @@ export class SessionCoordinatorDO extends DurableObject<Env> {
     validateNpcReleaseInput(input);
     validateIdentity(this.ctx.id.name, input.sessionId);
     return this.ctx.storage.transaction(async (transaction) => {
-      const [reservation, references] = await Promise.all([
-        transaction.get<ActiveNpcMatchReservation>(ACTIVE_NPC_MATCH_RESERVATION_KEY),
+      const [reservationValue, recoveryValue, references] = await Promise.all([
+        transaction.get<unknown>(ACTIVE_NPC_MATCH_RESERVATION_KEY),
+        transaction.get<unknown>(RECENT_NPC_MATCH_RECOVERY_KEY),
         transaction.get<MatchReference[]>(MATCH_REFERENCES_KEY),
       ]);
-      if (!reservation) return { state: 'missing' } as const;
+      if (reservationValue === undefined) {
+        if (recoveryValue === undefined) return { state: 'missing' } as const;
+        if (!validRecentNpcMatchRecoveryOwnership(recoveryValue)) {
+          return { state: 'conflict' } as const;
+        }
+        return sameNpcMatchRelease(recoveryValue, input)
+          ? { state: 'released' } as const
+          : { state: 'conflict' } as const;
+      }
       if (
-        reservation.accountId !== input.accountId ||
-        reservation.sessionVersion !== input.sessionVersion ||
-        reservation.matchId !== input.matchId ||
-        reservation.seed !== input.seed
+        !validActiveNpcMatchReservation(reservationValue) ||
+        !sameNpcMatchRelease(reservationValue, input) ||
+        recoveryValue !== undefined
       ) {
         return { state: 'conflict' } as const;
       }
@@ -570,6 +814,16 @@ export class SessionCoordinatorDO extends DurableObject<Env> {
       )) {
         return { state: 'references_remain' } as const;
       }
+      await transaction.put<RecentNpcMatchRecoveryOwnership>(
+        RECENT_NPC_MATCH_RECOVERY_KEY,
+        {
+          accountId: input.accountId,
+          sessionVersion: input.sessionVersion,
+          matchId: input.matchId,
+          seed: input.seed,
+          releasedAtEpochMs: Date.now(),
+        },
+      );
       await transaction.delete(ACTIVE_NPC_MATCH_RESERVATION_KEY);
       return { state: 'released' } as const;
     });
@@ -699,11 +953,12 @@ export class SessionCoordinatorDO extends DurableObject<Env> {
     validateIdentity(this.ctx.id.name, input.sessionId);
     const now = Date.now();
     const transition = await this.ctx.storage.transaction(async (transaction) => {
-      const [floor, work, references, reservation] = await Promise.all([
+      const [floor, work, references, reservation, recovery] = await Promise.all([
         transaction.get<InvalidationFloor>(INVALIDATION_FLOOR_KEY),
         transaction.get<LogoutWork>(LOGOUT_WORK_KEY),
         transaction.get<MatchReference[]>(MATCH_REFERENCES_KEY),
         transaction.get<ActiveNpcMatchReservation>(ACTIVE_NPC_MATCH_RESERVATION_KEY),
+        transaction.get<RecentNpcMatchRecoveryOwnership>(RECENT_NPC_MATCH_RECOVERY_KEY),
       ]);
       if (
         work?.phase === 'revoke_pending' &&
@@ -735,6 +990,9 @@ export class SessionCoordinatorDO extends DurableObject<Env> {
       if (reservation && reservation.sessionVersion < version) {
         await transaction.delete(ACTIVE_NPC_MATCH_RESERVATION_KEY);
       }
+      if (recovery && recovery.sessionVersion < version) {
+        await transaction.delete(RECENT_NPC_MATCH_RECOVERY_KEY);
+      }
       await ensureEarlierAlarm(transaction, now + INVALIDATION_RETRY_BASE_MS);
       return { state: 'promoted' as const };
     });
@@ -761,10 +1019,11 @@ export class SessionCoordinatorDO extends DurableObject<Env> {
   ): Promise<'promoted' | 'completed' | 'conflict'> {
     const now = Date.now();
     return this.ctx.storage.transaction(async (transaction) => {
-      const [work, floor, reservation] = await Promise.all([
+      const [work, floor, reservation, recovery] = await Promise.all([
         transaction.get<LogoutWork>(LOGOUT_WORK_KEY),
         transaction.get<InvalidationFloor>(INVALIDATION_FLOOR_KEY),
         transaction.get<ActiveNpcMatchReservation>(ACTIVE_NPC_MATCH_RESERVATION_KEY),
+        transaction.get<RecentNpcMatchRecoveryOwnership>(RECENT_NPC_MATCH_RECOVERY_KEY),
       ]);
       if (!work) {
         return floor && floor.invalidatedVersion >= input.invalidatedVersion
@@ -802,6 +1061,9 @@ export class SessionCoordinatorDO extends DurableObject<Env> {
       });
       if (reservation && reservation.sessionVersion < invalidatedVersion) {
         await transaction.delete(ACTIVE_NPC_MATCH_RESERVATION_KEY);
+      }
+      if (recovery && recovery.sessionVersion < invalidatedVersion) {
+        await transaction.delete(RECENT_NPC_MATCH_RECOVERY_KEY);
       }
       await ensureEarlierAlarm(transaction, now + INVALIDATION_RETRY_BASE_MS);
       return 'promoted';

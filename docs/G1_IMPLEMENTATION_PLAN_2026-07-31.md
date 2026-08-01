@@ -110,13 +110,14 @@ P1 exit の一言まとめ:
   `matchCommandUpdate`で返す。処理順はsession→seat→raw gate→decode/canonical→duplicate→revision→rules→
   clone prepare→SQLite atomic commit→runtime swap→update送信→terminalなら`1000 / MATCH_ENDED` close。
   通常決着・取消・放棄、同一viewer複数tab、accepted/rejected再送、ACK喪失相当、送信/close後のDO再生成を検査済み。
-  `eventSequence`はG1 NPC-onlyのraw current cursorだけを渡す。OLG-126でhidden event数を漏らさないviewer別cursor、
-  event delta / receipt read / reconnectへversion upし、G3では両seat用abandon terminalも追加する
+  OLG-126で`eventSequence`をraw current cursorからhidden event数を漏らさないstable step単位のviewer cursorへ
+  version upし、event delta / receipt read / reconnectを実装済み。G3では両seat用abandon terminalも追加する
 
 ### Step D: 復帰（OLG-126 → OLG-133 → OLG-131 → OLG-114）
 
-- **OLG-126** reconnect / resume（設計 §9.2): `GET /me/active-match` →
-  WebSocket 再接続 + `last_event_sequence` → 差分または snapshot
+- **OLG-126（2026-08-02コード実装済み）** reconnect / resume（設計 §9.2）:
+  `GET /me/active-match` → 新seat token → WebSocket authの`lastEventSequence` → 最大128 batchの差分またはsnapshot。
+  ACK喪失時のreceiptとterminal resultは同じsession ownershipからHTTPで復旧する
 - **OLG-133** active-match recovery UX: リロード後に「試合に戻る」導線が出て、
   操作待ちの状態まで自動で戻る
 - **OLG-131** manifest / installable shell: PWA の最低限（インストール可能・
@@ -157,7 +158,7 @@ P1 exit の一言まとめ:
 | 122（完了） | 同じcommandId / payloadの逐次・並行再送は1回だけ適用され同じACK-only receipt。payload衝突、古い／未来revision、不正actionはrevision・盤面不変で拒否し、全2,048件・拒否最大512件でもaccepted用容量を失わない |
 | 125（完了） | 5表とlifecycle/outboxをprepare→同一SQLite transaction→runtime swapで原子的に保存。transaction rollback、commit前後のDO reset、request終了後eviction、成功／拒否／final再送、constructor改変検知で二重適用せず同じID・盤面・receipt/resultへ復旧する |
 | 124（完了） | 16 KiB pre-parse raw gate、128 KiB output gate、nested exact decoderを通す。auth直後/current、accepted/rejected/duplicate/conflict、複数tab、terminal/cancel/abandonを配信し、相手hand/deck/AP内容・seed/raw event等を0件にしてterminal frame後だけcloseする |
-| 126 | バトル中リロード→ 同じ試合・同じ操作待ちへ自動復帰。切断 30 秒→復帰も同様 |
+| 126（完了） | active-match、session所有のreceipt/result read、viewer別stable-step cursorを実装。legacy/current/1手前/ahead/gap、DO eviction後の新token再接続・次command、ACK喪失、terminal cleanup後read、hidden canaryを自動検査 |
 | 133 | 復帰導線がスマホ縦持ち・PC の両方で表示され、タップ 1 回で盤面へ戻る |
 | 131 | Lighthouse で installable 判定。縦持ちで盤面が崩れない |
 | 114 | 2 タブ目を開くと片方だけが操作権を持ち、もう片方は観戦表示になる |

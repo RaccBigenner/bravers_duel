@@ -1,9 +1,9 @@
 /**
- * OLG-124でplayer projectionとbrowser command/update wire v1を固定した入口。
- * authoritative snapshot/raw engine eventはserver内部限定。delta/reconnectはOLG-126で追加する。
+ * OLG-126でviewer別event cursor、reload sync、HTTP recovery DTOを固定した入口。
+ * authoritative snapshot/raw engine eventはserver内部限定。
  */
 export const PROTOCOL_SCAFFOLD = {
-  version: 'OLG-124',
+  version: 'OLG-126',
   operational: true,
 } as const;
 
@@ -402,8 +402,10 @@ export function parseMatchCommandResult(value: unknown): MatchCommandResult | nu
     };
 }
 
-/** OLG-124 browser wireの版。権威snapshotやengine eventとは独立に更新する。 */
-export const MATCH_PLAYER_PROJECTION_VERSION = 1 as const;
+/** OLG-126 browser wireの版。raw engine event cursorとは独立に更新する。 */
+export const MATCH_PLAYER_PROJECTION_VERSION = 2 as const;
+export const MATCH_VIEWER_EVENT_VERSION = 1 as const;
+export const MAX_MATCH_VIEWER_DELTA_BATCHES = 128;
 
 export type MatchProjectionPlayerIndex = 0 | 1;
 export type MatchProjectionPhase = 'choice' | 'play' | 'guard' | 'charge' | 'finished';
@@ -480,6 +482,142 @@ export type MatchTerminalProjection =
     };
 
 /**
+ * viewerに見せてよい事実だけを表すevent。raw BattleEventはwireに使わない。
+ * hidden card ID、free-form info、ability labelを表現できないallowlistに限定する。
+ */
+export type MatchViewerEvent =
+  | { type: 'battleStarted'; firstPlayer: MatchProjectionPlayerIndex }
+  | { type: 'bonusCharge'; player: MatchProjectionPlayerIndex; count: number }
+  | { type: 'turnStarted'; turn: number; player: MatchProjectionPlayerIndex }
+  | { type: 'cardsDrawn'; player: MatchProjectionPlayerIndex; count: number }
+  | {
+      type: 'cardsCharged';
+      player: MatchProjectionPlayerIndex;
+      source: 'hand' | 'deck' | 'trash' | 'allHand';
+      count: number;
+    }
+  | { type: 'cardsDiscarded'; player: MatchProjectionPlayerIndex; count: number }
+  | { type: 'cardsMilled'; player: MatchProjectionPlayerIndex; count: number }
+  | { type: 'apDiscarded'; player: MatchProjectionPlayerIndex; count: number }
+  | { type: 'trashReturnedToDeck'; player: MatchProjectionPlayerIndex; count: number }
+  | {
+      type: 'skillPlayed';
+      player: MatchProjectionPlayerIndex;
+      characterSlot: number;
+      printingId: string;
+    }
+  | { type: 'characterPlayed'; player: MatchProjectionPlayerIndex; printingId: string }
+  | {
+      type: 'cardCastFromDeck';
+      player: MatchProjectionPlayerIndex;
+      characterSlot: number;
+      printingId: string;
+    }
+  | {
+      type: 'attackDeclared';
+      player: MatchProjectionPlayerIndex;
+      characterSlot: number;
+      printingId: string;
+      value: number;
+      noGuard: boolean;
+    }
+  | {
+      type: 'guardPlayed';
+      player: MatchProjectionPlayerIndex;
+      characterSlot: number;
+      printingId: string;
+      before: number;
+      after: number;
+    }
+  | {
+      type: 'equipmentPlayed';
+      player: MatchProjectionPlayerIndex;
+      characterSlot: number;
+      printingId: string;
+      removedPrintingId?: string;
+    }
+  | {
+      type: 'equipmentDestroyed';
+      player: MatchProjectionPlayerIndex;
+      characterSlot: number;
+      printingId: string;
+    }
+  | {
+      type: 'fieldPlayed';
+      player: MatchProjectionPlayerIndex;
+      printingId: string;
+      replacedPrintingId?: string;
+    }
+  | {
+      type: 'powerChanged';
+      player: MatchProjectionPlayerIndex;
+      characterSlot: number;
+      amount: number;
+      total: number;
+    }
+  | { type: 'guardBoosted'; player: MatchProjectionPlayerIndex; amount: number; remaining: number }
+  | {
+      type: 'damageTaken';
+      player: MatchProjectionPlayerIndex;
+      characterSlot: number;
+      amount: number;
+      hpLeft: number;
+      sourcePrintingId?: string;
+    }
+  | { type: 'standbyImmune'; player: MatchProjectionPlayerIndex; characterSlot: number }
+  | {
+      type: 'healed';
+      player: MatchProjectionPlayerIndex;
+      characterSlot: number;
+      amount: number;
+    }
+  | { type: 'characterKnockedOut'; player: MatchProjectionPlayerIndex; characterSlot: number }
+  | {
+      type: 'characterRevived';
+      player: MatchProjectionPlayerIndex;
+      characterSlot: number;
+      hp: number;
+    }
+  | {
+      type: 'actorChanged';
+      player: MatchProjectionPlayerIndex;
+      characterSlot: number;
+      forced: boolean;
+    }
+  | { type: 'actorLocked'; player: MatchProjectionPlayerIndex; untilTurn: number }
+  | { type: 'actorUnlocked'; player: MatchProjectionPlayerIndex }
+  | { type: 'actorLockBlocked'; player: MatchProjectionPlayerIndex }
+  | { type: 'deckOut'; player: MatchProjectionPlayerIndex }
+  | { type: 'matchEnded'; result: MatchTerminalProjection };
+
+/** sequenceはviewerごとの連続batch cursor。0はまだbatchを適用していない状態。 */
+export interface MatchViewerEventBatch {
+  sequence: number;
+  /** hidden-only stepでも空配列を残し、cursorをraw event内容から独立させる。 */
+  events: MatchViewerEvent[];
+}
+
+export type MatchViewerSnapshotReason =
+  | 'initial'
+  | 'cursor_gap'
+  | 'cursor_ahead'
+  | 'delta_too_large';
+
+export type MatchViewerSync =
+  | {
+      type: 'matchViewerSync';
+      mode: 'snapshot';
+      reason: MatchViewerSnapshotReason;
+      eventSequence: number;
+    }
+  | {
+      type: 'matchViewerSync';
+      mode: 'delta';
+      afterEventSequence: number;
+      batches: MatchViewerEventBatch[];
+    };
+
+/**
  * allowlistだけで組み立てるviewer別盤面。
  * raw BattleState/event/header/hash/seedと相手hidden zoneの配列は型として存在させない。
  */
@@ -490,6 +628,8 @@ export interface MatchPlayerProjection {
   viewerSeat: MatchViewerSeat;
   viewerPlayer: MatchProjectionPlayerIndex;
   revision: MatchRevision;
+  viewerEventVersion: typeof MATCH_VIEWER_EVENT_VERSION;
+  /** viewer別の最後に適用済みbatch cursor。raw engine event countではない。 */
   eventSequence: number;
   contentVersion: string;
   formatVersionId: string;
@@ -514,15 +654,41 @@ export interface MatchCommandClientFrame {
 export interface MatchProjectionServerFrame {
   type: 'matchProjection';
   projection: MatchPlayerProjection;
+  sync: MatchViewerSync;
 }
 
 export interface MatchCommandUpdateServerFrame {
   type: 'matchCommandUpdate';
   receipt: MatchCommandResult;
   projection: MatchPlayerProjection;
+  sync: MatchViewerSync;
 }
 
 export type MatchServerFrame = MatchProjectionServerFrame | MatchCommandUpdateServerFrame;
+
+export interface ActiveMatchDescriptor {
+  kind: 'npc';
+  matchId: MatchId;
+  seat: 'player-1';
+  state: 'provisioning' | 'active' | 'terminal';
+}
+
+export interface ActiveMatchResponse {
+  type: 'activeMatch';
+  match: ActiveMatchDescriptor | null;
+}
+
+export interface MatchReceiptResponse {
+  type: 'matchReceipt';
+  matchId: MatchId;
+  receipt: MatchCommandResult | null;
+}
+
+export interface MatchResultResponse {
+  type: 'matchResult';
+  matchId: MatchId;
+  result: MatchTerminalProjection | null;
+}
 
 const PUBLIC_CARD_KEYS = ['battleCardId', 'printingId'] as const;
 const CHARACTER_PROJECTION_KEYS = ['card', 'damage', 'addedAttributes', 'equipment'] as const;
@@ -558,6 +724,7 @@ const PLAYER_PROJECTION_KEYS = [
   'viewerSeat',
   'viewerPlayer',
   'revision',
+  'viewerEventVersion',
   'eventSequence',
   'contentVersion',
   'formatVersionId',
@@ -584,6 +751,355 @@ function projectionPlayer(value: unknown): value is MatchProjectionPlayerIndex {
 
 function boundedProjectionString(value: unknown, maxLength = 128): value is string {
   return typeof value === 'string' && value.length >= 1 && value.length <= maxLength;
+}
+
+function exactViewerEvent(
+  value: Record<string, unknown>,
+  type: MatchViewerEvent['type'],
+  allowed: readonly string[],
+  required = allowed,
+): boolean {
+  return value.type === type && exactKeys(value, ['type', ...allowed], ['type', ...required]);
+}
+
+/** raw engine eventを受け付けず、viewer allowlistのみをexact decodeする。 */
+export function parseMatchViewerEvent(value: unknown): MatchViewerEvent | null {
+  if (!plainObject(value) || typeof value.type !== 'string') return null;
+  switch (value.type) {
+    case 'battleStarted':
+      return exactViewerEvent(value, value.type, ['firstPlayer']) &&
+        projectionPlayer(value.firstPlayer)
+        ? { type: value.type, firstPlayer: value.firstPlayer }
+        : null;
+    case 'bonusCharge':
+      return exactViewerEvent(value, value.type, ['player', 'count']) &&
+        projectionPlayer(value.player) && nonNegativeSafeInteger(value.count)
+        ? { type: value.type, player: value.player, count: value.count }
+        : null;
+    case 'turnStarted':
+      return exactViewerEvent(value, value.type, ['turn', 'player']) &&
+        nonNegativeSafeInteger(value.turn) && projectionPlayer(value.player)
+        ? { type: value.type, turn: value.turn, player: value.player }
+        : null;
+    case 'cardsDrawn':
+    case 'cardsDiscarded':
+    case 'cardsMilled':
+    case 'apDiscarded':
+    case 'trashReturnedToDeck':
+      return exactViewerEvent(value, value.type, ['player', 'count']) &&
+        projectionPlayer(value.player) && nonNegativeSafeInteger(value.count)
+        ? { type: value.type, player: value.player, count: value.count }
+        : null;
+    case 'cardsCharged':
+      return exactViewerEvent(value, value.type, ['player', 'source', 'count']) &&
+        projectionPlayer(value.player) &&
+        (value.source === 'hand' || value.source === 'deck' || value.source === 'trash' ||
+          value.source === 'allHand') &&
+        nonNegativeSafeInteger(value.count)
+        ? {
+            type: value.type,
+            player: value.player,
+            source: value.source,
+            count: value.count,
+          }
+        : null;
+    case 'skillPlayed':
+    case 'cardCastFromDeck':
+    case 'equipmentDestroyed':
+      return exactViewerEvent(value, value.type, ['player', 'characterSlot', 'printingId']) &&
+        projectionPlayer(value.player) &&
+        nonNegativeSafeInteger(value.characterSlot) &&
+        boundedProjectionString(value.printingId)
+        ? {
+            type: value.type,
+            player: value.player,
+            characterSlot: value.characterSlot,
+            printingId: value.printingId,
+          }
+        : null;
+    case 'characterPlayed':
+      return exactViewerEvent(value, value.type, ['player', 'printingId']) &&
+        projectionPlayer(value.player) && boundedProjectionString(value.printingId)
+        ? { type: value.type, player: value.player, printingId: value.printingId }
+        : null;
+    case 'attackDeclared':
+      return exactViewerEvent(
+        value,
+        value.type,
+        ['player', 'characterSlot', 'printingId', 'value', 'noGuard'],
+      ) &&
+        projectionPlayer(value.player) &&
+        nonNegativeSafeInteger(value.characterSlot) &&
+        boundedProjectionString(value.printingId) &&
+        nonNegativeSafeInteger(value.value) &&
+        typeof value.noGuard === 'boolean'
+        ? {
+            type: value.type,
+            player: value.player,
+            characterSlot: value.characterSlot,
+            printingId: value.printingId,
+            value: value.value,
+            noGuard: value.noGuard,
+          }
+        : null;
+    case 'guardPlayed':
+      return exactViewerEvent(
+        value,
+        value.type,
+        ['player', 'characterSlot', 'printingId', 'before', 'after'],
+      ) &&
+        projectionPlayer(value.player) &&
+        nonNegativeSafeInteger(value.characterSlot) &&
+        boundedProjectionString(value.printingId) &&
+        nonNegativeSafeInteger(value.before) &&
+        nonNegativeSafeInteger(value.after)
+        ? {
+            type: value.type,
+            player: value.player,
+            characterSlot: value.characterSlot,
+            printingId: value.printingId,
+            before: value.before,
+            after: value.after,
+          }
+        : null;
+    case 'equipmentPlayed': {
+      if (
+        !exactViewerEvent(
+          value,
+          value.type,
+          ['player', 'characterSlot', 'printingId', 'removedPrintingId'],
+          ['player', 'characterSlot', 'printingId'],
+        ) ||
+        !projectionPlayer(value.player) ||
+        !nonNegativeSafeInteger(value.characterSlot) ||
+        !boundedProjectionString(value.printingId) ||
+        (Object.hasOwn(value, 'removedPrintingId') &&
+          !boundedProjectionString(value.removedPrintingId))
+      ) {
+        return null;
+      }
+      return {
+        type: value.type,
+        player: value.player,
+        characterSlot: value.characterSlot,
+        printingId: value.printingId,
+        ...(Object.hasOwn(value, 'removedPrintingId')
+          ? { removedPrintingId: value.removedPrintingId as string }
+          : {}),
+      };
+    }
+    case 'fieldPlayed': {
+      if (
+        !exactViewerEvent(
+          value,
+          value.type,
+          ['player', 'printingId', 'replacedPrintingId'],
+          ['player', 'printingId'],
+        ) ||
+        !projectionPlayer(value.player) ||
+        !boundedProjectionString(value.printingId) ||
+        (Object.hasOwn(value, 'replacedPrintingId') &&
+          !boundedProjectionString(value.replacedPrintingId))
+      ) {
+        return null;
+      }
+      return {
+        type: value.type,
+        player: value.player,
+        printingId: value.printingId,
+        ...(Object.hasOwn(value, 'replacedPrintingId')
+          ? { replacedPrintingId: value.replacedPrintingId as string }
+          : {}),
+      };
+    }
+    case 'powerChanged':
+      return exactViewerEvent(
+        value,
+        value.type,
+        ['player', 'characterSlot', 'amount', 'total'],
+      ) &&
+        projectionPlayer(value.player) &&
+        nonNegativeSafeInteger(value.characterSlot) &&
+        safeInteger(value.amount) && safeInteger(value.total)
+        ? {
+            type: value.type,
+            player: value.player,
+            characterSlot: value.characterSlot,
+            amount: value.amount,
+            total: value.total,
+          }
+        : null;
+    case 'guardBoosted':
+      return exactViewerEvent(value, value.type, ['player', 'amount', 'remaining']) &&
+        projectionPlayer(value.player) &&
+        safeInteger(value.amount) && nonNegativeSafeInteger(value.remaining)
+        ? {
+            type: value.type,
+            player: value.player,
+            amount: value.amount,
+            remaining: value.remaining,
+          }
+        : null;
+    case 'damageTaken': {
+      if (
+        !exactViewerEvent(
+          value,
+          value.type,
+          ['player', 'characterSlot', 'amount', 'hpLeft', 'sourcePrintingId'],
+          ['player', 'characterSlot', 'amount', 'hpLeft'],
+        ) ||
+        !projectionPlayer(value.player) ||
+        !nonNegativeSafeInteger(value.characterSlot) ||
+        !nonNegativeSafeInteger(value.amount) ||
+        !nonNegativeSafeInteger(value.hpLeft) ||
+        (Object.hasOwn(value, 'sourcePrintingId') &&
+          !boundedProjectionString(value.sourcePrintingId))
+      ) {
+        return null;
+      }
+      return {
+        type: value.type,
+        player: value.player,
+        characterSlot: value.characterSlot,
+        amount: value.amount,
+        hpLeft: value.hpLeft,
+        ...(Object.hasOwn(value, 'sourcePrintingId')
+          ? { sourcePrintingId: value.sourcePrintingId as string }
+          : {}),
+      };
+    }
+    case 'standbyImmune':
+    case 'characterKnockedOut':
+      return exactViewerEvent(value, value.type, ['player', 'characterSlot']) &&
+        projectionPlayer(value.player) && nonNegativeSafeInteger(value.characterSlot)
+        ? { type: value.type, player: value.player, characterSlot: value.characterSlot }
+        : null;
+    case 'healed':
+      return exactViewerEvent(value, value.type, ['player', 'characterSlot', 'amount']) &&
+        projectionPlayer(value.player) &&
+        nonNegativeSafeInteger(value.characterSlot) && nonNegativeSafeInteger(value.amount)
+        ? {
+            type: value.type,
+            player: value.player,
+            characterSlot: value.characterSlot,
+            amount: value.amount,
+          }
+        : null;
+    case 'characterRevived':
+      return exactViewerEvent(value, value.type, ['player', 'characterSlot', 'hp']) &&
+        projectionPlayer(value.player) &&
+        nonNegativeSafeInteger(value.characterSlot) && nonNegativeSafeInteger(value.hp)
+        ? {
+            type: value.type,
+            player: value.player,
+            characterSlot: value.characterSlot,
+            hp: value.hp,
+          }
+        : null;
+    case 'actorChanged':
+      return exactViewerEvent(value, value.type, ['player', 'characterSlot', 'forced']) &&
+        projectionPlayer(value.player) &&
+        nonNegativeSafeInteger(value.characterSlot) && typeof value.forced === 'boolean'
+        ? {
+            type: value.type,
+            player: value.player,
+            characterSlot: value.characterSlot,
+            forced: value.forced,
+          }
+        : null;
+    case 'actorLocked':
+      return exactViewerEvent(value, value.type, ['player', 'untilTurn']) &&
+        projectionPlayer(value.player) && nonNegativeSafeInteger(value.untilTurn)
+        ? { type: value.type, player: value.player, untilTurn: value.untilTurn }
+        : null;
+    case 'actorUnlocked':
+    case 'actorLockBlocked':
+    case 'deckOut':
+      return exactViewerEvent(value, value.type, ['player']) && projectionPlayer(value.player)
+        ? { type: value.type, player: value.player }
+        : null;
+    case 'matchEnded': {
+      if (!exactViewerEvent(value, value.type, ['result'])) return null;
+      const result = parseMatchTerminalProjection(value.result);
+      return result ? { type: value.type, result } : null;
+    }
+    default:
+      return null;
+  }
+}
+
+export function parseMatchViewerEventBatch(value: unknown): MatchViewerEventBatch | null {
+  if (
+    !plainObject(value) ||
+    !exactKeys(value, ['sequence', 'events'], ['sequence', 'events']) ||
+    !nonNegativeSafeInteger(value.sequence) ||
+    value.sequence < 1 ||
+    !Array.isArray(value.events) ||
+    value.events.length > 256
+  ) {
+    return null;
+  }
+  const events: MatchViewerEvent[] = [];
+  for (const raw of value.events) {
+    const event = parseMatchViewerEvent(raw);
+    if (!event) return null;
+    events.push(event);
+  }
+  return { sequence: value.sequence, events };
+}
+
+export function parseMatchViewerSync(value: unknown): MatchViewerSync | null {
+  if (!plainObject(value) || value.type !== 'matchViewerSync') return null;
+  if (value.mode === 'snapshot') {
+    if (
+      !exactKeys(
+        value,
+        ['type', 'mode', 'reason', 'eventSequence'],
+        ['type', 'mode', 'reason', 'eventSequence'],
+      ) ||
+      !['initial', 'cursor_gap', 'cursor_ahead', 'delta_too_large'].includes(
+        String(value.reason),
+      ) ||
+      !nonNegativeSafeInteger(value.eventSequence)
+    ) {
+      return null;
+    }
+    return {
+      type: 'matchViewerSync',
+      mode: 'snapshot',
+      reason: value.reason as MatchViewerSnapshotReason,
+      eventSequence: value.eventSequence,
+    };
+  }
+  if (
+    value.mode !== 'delta' ||
+    !exactKeys(
+      value,
+      ['type', 'mode', 'afterEventSequence', 'batches'],
+      ['type', 'mode', 'afterEventSequence', 'batches'],
+    ) ||
+    !nonNegativeSafeInteger(value.afterEventSequence) ||
+    !Array.isArray(value.batches) ||
+    value.batches.length > MAX_MATCH_VIEWER_DELTA_BATCHES
+  ) {
+    return null;
+  }
+  const batches: MatchViewerEventBatch[] = [];
+  let expectedSequence = value.afterEventSequence + 1;
+  for (const raw of value.batches) {
+    const batch = parseMatchViewerEventBatch(raw);
+    if (!batch || !Number.isSafeInteger(expectedSequence) || batch.sequence !== expectedSequence) {
+      return null;
+    }
+    batches.push(batch);
+    expectedSequence += 1;
+  }
+  return {
+    type: 'matchViewerSync',
+    mode: 'delta',
+    afterEventSequence: value.afterEventSequence,
+    batches,
+  };
 }
 
 function parsePublicCardProjection(value: unknown): MatchPublicCardProjection | null {
@@ -757,7 +1273,7 @@ function parsePendingAttackProjection(value: unknown): MatchPendingAttackProject
   };
 }
 
-function parseTerminalProjection(value: unknown): MatchTerminalProjection | null {
+export function parseMatchTerminalProjection(value: unknown): MatchTerminalProjection | null {
   if (
     !plainObject(value) ||
     !exactKeys(value, ['state', 'winner', 'reason'], ['state', 'winner', 'reason'])
@@ -792,6 +1308,7 @@ export function parseMatchPlayerProjection(value: unknown): MatchPlayerProjectio
     !exactKeys(value, PLAYER_PROJECTION_KEYS, PLAYER_PROJECTION_KEYS) ||
     value.type !== 'matchPlayerProjection' ||
     value.projectionVersion !== MATCH_PLAYER_PROJECTION_VERSION ||
+    value.viewerEventVersion !== MATCH_VIEWER_EVENT_VERSION ||
     (value.viewerSeat !== 'player-1' && value.viewerSeat !== 'player-2') ||
     !projectionPlayer(value.viewerPlayer) ||
     (value.viewerSeat === 'player-1' ? value.viewerPlayer !== 0 : value.viewerPlayer !== 1) ||
@@ -835,7 +1352,7 @@ export function parseMatchPlayerProjection(value: unknown): MatchPlayerProjectio
       owner: value.field.owner,
     };
   }
-  const terminal = value.terminal === null ? null : parseTerminalProjection(value.terminal);
+  const terminal = value.terminal === null ? null : parseMatchTerminalProjection(value.terminal);
   const actingPlayer = value.phase === 'guard' ? 1 - value.activePlayer : value.activePlayer;
   if (
     !matchId ||
@@ -874,6 +1391,7 @@ export function parseMatchPlayerProjection(value: unknown): MatchPlayerProjectio
     viewerSeat: value.viewerSeat,
     viewerPlayer: value.viewerPlayer,
     revision,
+    viewerEventVersion: MATCH_VIEWER_EVENT_VERSION,
     eventSequence: value.eventSequence,
     contentVersion: value.contentVersion,
     formatVersionId: value.formatVersionId,
@@ -904,28 +1422,124 @@ export function parseMatchCommandClientFrame(value: unknown): MatchCommandClient
   return command ? { type: 'matchCommand', command } : null;
 }
 
+function syncMatchesProjection(sync: MatchViewerSync, projection: MatchPlayerProjection): boolean {
+  if (sync.mode === 'snapshot') return sync.eventSequence === projection.eventSequence;
+  const lastSequence = sync.batches.length === 0
+    ? sync.afterEventSequence
+    : sync.batches[sync.batches.length - 1]!.sequence;
+  return lastSequence === projection.eventSequence;
+}
+
 export function parseMatchServerFrame(value: unknown): MatchServerFrame | null {
   if (!plainObject(value) || typeof value.type !== 'string') return null;
   if (value.type === 'matchProjection') {
-    if (!exactKeys(value, ['type', 'projection'], ['type', 'projection'])) return null;
+    if (!exactKeys(value, ['type', 'projection', 'sync'], ['type', 'projection', 'sync'])) {
+      return null;
+    }
     const projection = parseMatchPlayerProjection(value.projection);
-    return projection ? { type: 'matchProjection', projection } : null;
+    const sync = parseMatchViewerSync(value.sync);
+    return projection && sync && syncMatchesProjection(sync, projection)
+      ? { type: 'matchProjection', projection, sync }
+      : null;
   }
   if (
     value.type !== 'matchCommandUpdate' ||
-    !exactKeys(value, ['type', 'receipt', 'projection'], ['type', 'receipt', 'projection'])
+    !exactKeys(
+      value,
+      ['type', 'receipt', 'projection', 'sync'],
+      ['type', 'receipt', 'projection', 'sync'],
+    )
   ) {
     return null;
   }
   const receipt = parseMatchCommandResult(value.receipt);
   const projection = parseMatchPlayerProjection(value.projection);
-  if (!receipt || !projection || receipt.matchId !== projection.matchId) return null;
+  const sync = parseMatchViewerSync(value.sync);
+  if (
+    !receipt ||
+    !projection ||
+    !sync ||
+    receipt.matchId !== projection.matchId ||
+    !syncMatchesProjection(sync, projection)
+  ) {
+    return null;
+  }
   const receiptRevision = receipt.state === 'accepted'
     ? receipt.revision
     : receipt.errorCode === 'MATCH_COMMAND_ID_CONFLICT'
       ? receipt.originalRevision
       : receipt.revision;
   return receiptRevision <= projection.revision
-    ? { type: 'matchCommandUpdate', receipt, projection }
+    ? { type: 'matchCommandUpdate', receipt, projection, sync }
     : null;
+}
+
+export function parseActiveMatchResponse(value: unknown): ActiveMatchResponse | null {
+  if (
+    !plainObject(value) ||
+    !exactKeys(value, ['type', 'match'], ['type', 'match']) ||
+    value.type !== 'activeMatch'
+  ) {
+    return null;
+  }
+  if (value.match === null) return { type: 'activeMatch', match: null };
+  if (
+    !plainObject(value.match) ||
+    !exactKeys(
+      value.match,
+      ['kind', 'matchId', 'seat', 'state'],
+      ['kind', 'matchId', 'seat', 'state'],
+    ) ||
+    value.match.kind !== 'npc' ||
+    value.match.seat !== 'player-1' ||
+    (value.match.state !== 'provisioning' &&
+      value.match.state !== 'active' &&
+      value.match.state !== 'terminal')
+  ) {
+    return null;
+  }
+  const matchId = parseMatchId(value.match.matchId);
+  return matchId
+    ? {
+        type: 'activeMatch',
+        match: {
+          kind: 'npc',
+          matchId,
+          seat: 'player-1',
+          state: value.match.state,
+        },
+      }
+    : null;
+}
+
+export function parseMatchReceiptResponse(value: unknown): MatchReceiptResponse | null {
+  if (
+    !plainObject(value) ||
+    !exactKeys(value, ['type', 'matchId', 'receipt'], ['type', 'matchId', 'receipt']) ||
+    value.type !== 'matchReceipt'
+  ) {
+    return null;
+  }
+  const matchId = parseMatchId(value.matchId);
+  if (!matchId) return null;
+  if (value.receipt === null) return { type: 'matchReceipt', matchId, receipt: null };
+  const receipt = parseMatchCommandResult(value.receipt);
+  return receipt && receipt.matchId === matchId
+    ? { type: 'matchReceipt', matchId, receipt }
+    : null;
+}
+
+export function parseMatchResultResponse(value: unknown): MatchResultResponse | null {
+  if (
+    !plainObject(value) ||
+    !exactKeys(value, ['type', 'matchId', 'result'], ['type', 'matchId', 'result']) ||
+    value.type !== 'matchResult'
+  ) {
+    return null;
+  }
+  const matchId = parseMatchId(value.matchId);
+  if (!matchId) return null;
+  if (value.result === null) return { type: 'matchResult', matchId, result: null };
+  const result = parseMatchTerminalProjection(value.result);
+  return result ? { type: 'matchResult', matchId, result } : null;
 }

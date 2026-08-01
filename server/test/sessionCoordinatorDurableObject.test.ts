@@ -5,6 +5,7 @@ import {
   MAX_SESSION_MATCH_REGISTRATIONS_PER_MATCH,
   MAX_SESSION_MATCH_REFERENCES,
   MAX_TRACKED_CANCELLED_MATCH_FLOORS,
+  NPC_MATCH_RECOVERY_RETENTION_MS,
   type SessionCoordinatorDO,
 } from '../src/session/sessionCoordinatorDurableObject';
 
@@ -753,7 +754,7 @@ describe('OLG-121 server-owned NPC match reservation', () => {
     });
     await stub.unregisterMatch(activeReference);
     await expect(stub.releaseNpcMatch(release)).resolves.toEqual({ state: 'released' });
-    await expect(stub.releaseNpcMatch(release)).resolves.toEqual({ state: 'missing' });
+    await expect(stub.releaseNpcMatch(release)).resolves.toEqual({ state: 'released' });
   });
 
   it('named identityとexact input schemaをfail closedに検証する', async () => {
@@ -784,6 +785,318 @@ describe('OLG-121 server-owned NPC match reservation', () => {
       'SESSION_NPC_MATCH_RESERVATION_INVALID',
       'SESSION_NPC_MATCH_RESERVATION_INVALID',
       'SESSION_NPC_MATCH_RESERVATION_INVALID',
+    ]);
+  });
+});
+
+describe('OLG-126 NPC match recovery ownership', () => {
+  async function releaseNpcMatch(
+    stub: CoordinatorStub,
+    principal: { sessionId: string; accountId: string; sessionVersion: number },
+  ) {
+    const reserved = await stub.reserveNpcMatch(principal);
+    if (reserved.state !== 'reserved') throw new Error('Expected NPC reservation');
+    const release = {
+      ...principal,
+      matchId: reserved.matchId,
+      seed: reserved.seed,
+    };
+    await expect(stub.releaseNpcMatch(release)).resolves.toEqual({ state: 'released' });
+    return release;
+  }
+
+  async function storageSnapshot(stub: CoordinatorStub) {
+    return runInDurableObject(stub, async (_instance, state) => ({
+      entries: [...(await state.storage.list()).entries()],
+      alarm: await state.storage.getAlarm(),
+    }));
+  }
+
+  async function expireRecent(stub: CoordinatorStub) {
+    await runInDurableObject(stub, async (_instance, state) => {
+      const recent = [...(await state.storage.list()).entries()].find(([, value]) =>
+        typeof value === 'object' && value !== null && 'releasedAtEpochMs' in value);
+      if (!recent) throw new Error('Expected recent recovery ownership');
+      await state.storage.put(recent[0], {
+        ...(recent[1] as Record<string, unknown>),
+        releasedAtEpochMs: Date.now() - NPC_MATCH_RECOVERY_RETENTION_MS,
+      });
+    });
+  }
+
+  async function hasRecent(stub: CoordinatorStub) {
+    return runInDurableObject(stub, async (_instance, state) =>
+      [...(await state.storage.list()).values()].some((value) =>
+        typeof value === 'object' && value !== null && 'releasedAtEpochMs' in value));
+  }
+
+  it('none/activeをseedなしで発見し、ownership readをstorage無変更で行う', async () => {
+    const sessionId = crypto.randomUUID();
+    const principal = { sessionId, accountId: crypto.randomUUID(), sessionVersion: 4 };
+    const stub = coordinator(sessionId);
+    await expect(stub.readNpcMatch(principal)).resolves.toEqual({ state: 'none' });
+    const reserved = await stub.reserveNpcMatch(principal);
+    if (reserved.state !== 'reserved') throw new Error('Expected NPC reservation');
+    const before = await storageSnapshot(stub);
+
+    const located = await stub.readNpcMatch(principal);
+    expect(located).toEqual({ state: 'located', matchId: reserved.matchId });
+    expect(located).not.toHaveProperty('seed');
+    await expect(stub.checkNpcMatchRecoveryOwnership({
+      ...principal,
+      matchId: reserved.matchId,
+    })).resolves.toEqual({ state: 'authorized' });
+    await expect(stub.checkNpcMatchRecoveryOwnership({
+      ...principal,
+      matchId: 'another-safe-match',
+    })).resolves.toEqual({ state: 'missing' });
+    await expect(storageSnapshot(stub)).resolves.toEqual(before);
+  });
+
+  it('active reservationをrecentより優先し、壊れたactive storageはrecentへfallbackしない', async () => {
+    const sessionId = crypto.randomUUID();
+    const principal = { sessionId, accountId: crypto.randomUUID(), sessionVersion: 4 };
+    const stub = coordinator(sessionId);
+    const recent = await releaseNpcMatch(stub, principal);
+    const activeMatchId = `npc-${crypto.randomUUID()}`;
+    await runInDurableObject(stub, async (_instance, state) => {
+      await state.storage.put('active-npc-match-reservation-v1', {
+        accountId: principal.accountId,
+        sessionVersion: principal.sessionVersion,
+        matchId: activeMatchId,
+        seed: 123,
+        createdAtEpochMs: Date.now(),
+      });
+    });
+
+    await expect(stub.readNpcMatch(principal)).resolves.toEqual({
+      state: 'located',
+      matchId: activeMatchId,
+    });
+    await expect(stub.checkNpcMatchRecoveryOwnership({
+      ...principal,
+      matchId: recent.matchId,
+    })).resolves.toEqual({ state: 'missing' });
+    await runInDurableObject(stub, async (_instance, state) => {
+      await state.storage.put('active-npc-match-reservation-v1', {
+        accountId: principal.accountId,
+        sessionVersion: principal.sessionVersion,
+        matchId: activeMatchId,
+        seed: 123,
+        createdAtEpochMs: Date.now(),
+        unexpected: true,
+      });
+    });
+    await expect(stub.readNpcMatch(principal)).resolves.toEqual({ state: 'conflict' });
+    await expect(stub.checkNpcMatchRecoveryOwnership({
+      ...principal,
+      matchId: recent.matchId,
+    })).resolves.toEqual({ state: 'conflict' });
+  });
+
+  it('releaseをrecentへ移し、応答喪失再送と同じreadへ冪等収束する', async () => {
+    const sessionId = crypto.randomUUID();
+    const principal = { sessionId, accountId: crypto.randomUUID(), sessionVersion: 6 };
+    const stub = coordinator(sessionId);
+    const release = await releaseNpcMatch(stub, principal);
+    const before = await storageSnapshot(stub);
+
+    await expect(stub.releaseNpcMatch(release)).resolves.toEqual({ state: 'released' });
+    await expect(stub.releaseNpcMatch({ ...release, seed: (release.seed + 1) >>> 0 }))
+      .resolves.toEqual({ state: 'conflict' });
+    await expect(stub.readNpcMatch(principal)).resolves.toEqual({
+      state: 'located',
+      matchId: release.matchId,
+    });
+    await expect(stub.checkNpcMatchRecoveryOwnership({
+      ...principal,
+      matchId: release.matchId,
+    })).resolves.toEqual({ state: 'authorized' });
+    await expect(storageSnapshot(stub)).resolves.toEqual(before);
+    expect(before.entries).toEqual(expect.arrayContaining([
+      expect.arrayContaining([
+        expect.any(String),
+        expect.objectContaining({
+          accountId: principal.accountId,
+          sessionVersion: principal.sessionVersion,
+          matchId: release.matchId,
+          seed: release.seed,
+          releasedAtEpochMs: expect.any(Number),
+        }),
+      ]),
+    ]));
+    expect(before.entries).not.toEqual(expect.arrayContaining([
+      expect.arrayContaining([
+        expect.any(String),
+        expect.objectContaining({ createdAtEpochMs: expect.any(Number) }),
+      ]),
+    ]));
+  });
+
+  it('90日境界のrecentをread/check時にmissingへ倒してlazy deleteする', async () => {
+    const firstSessionId = crypto.randomUUID();
+    const firstPrincipal = {
+      sessionId: firstSessionId,
+      accountId: crypto.randomUUID(),
+      sessionVersion: 2,
+    };
+    const firstStub = coordinator(firstSessionId);
+    await releaseNpcMatch(firstStub, firstPrincipal);
+    await expireRecent(firstStub);
+    await expect(firstStub.readNpcMatch(firstPrincipal)).resolves.toEqual({ state: 'none' });
+    expect(await hasRecent(firstStub)).toBe(false);
+
+    const secondSessionId = crypto.randomUUID();
+    const secondPrincipal = {
+      sessionId: secondSessionId,
+      accountId: crypto.randomUUID(),
+      sessionVersion: 2,
+    };
+    const secondStub = coordinator(secondSessionId);
+    const second = await releaseNpcMatch(secondStub, secondPrincipal);
+    await expireRecent(secondStub);
+    await expect(secondStub.checkNpcMatchRecoveryOwnership({
+      ...secondPrincipal,
+      matchId: second.matchId,
+    })).resolves.toEqual({ state: 'missing' });
+    expect(await hasRecent(secondStub)).toBe(false);
+  });
+
+  it('新規activeは同principal/期限切れrecentを削除し、foreign recentは上書きしない', async () => {
+    const sessionId = crypto.randomUUID();
+    const owner = { sessionId, accountId: crypto.randomUUID(), sessionVersion: 3 };
+    const stub = coordinator(sessionId);
+    const first = await releaseNpcMatch(stub, owner);
+    const second = await stub.reserveNpcMatch(owner);
+    expect(second).toMatchObject({ state: 'reserved', created: true });
+    if (second.state !== 'reserved') throw new Error('Expected next NPC reservation');
+    expect(second.matchId).not.toBe(first.matchId);
+    expect(await hasRecent(stub)).toBe(false);
+
+    const foreignSessionId = crypto.randomUUID();
+    const foreignOwner = {
+      sessionId: foreignSessionId,
+      accountId: crypto.randomUUID(),
+      sessionVersion: 1,
+    };
+    const foreignStub = coordinator(foreignSessionId);
+    const foreign = await releaseNpcMatch(foreignStub, foreignOwner);
+    const intruder = { ...foreignOwner, accountId: crypto.randomUUID() };
+    await expect(foreignStub.reserveNpcMatch(intruder)).resolves.toEqual({ state: 'conflict' });
+    await expect(foreignStub.readNpcMatch(intruder)).resolves.toEqual({ state: 'conflict' });
+    await expect(foreignStub.checkNpcMatchRecoveryOwnership({
+      ...intruder,
+      matchId: foreign.matchId,
+    })).resolves.toEqual({ state: 'conflict' });
+    await expect(foreignStub.readNpcMatch(foreignOwner)).resolves.toEqual({
+      state: 'located',
+      matchId: foreign.matchId,
+    });
+
+    const expiredSessionId = crypto.randomUUID();
+    const expiredOwner = {
+      sessionId: expiredSessionId,
+      accountId: crypto.randomUUID(),
+      sessionVersion: 1,
+    };
+    const expiredStub = coordinator(expiredSessionId);
+    await releaseNpcMatch(expiredStub, expiredOwner);
+    await expireRecent(expiredStub);
+    await expect(expiredStub.reserveNpcMatch({
+      ...expiredOwner,
+      accountId: crypto.randomUUID(),
+    })).resolves.toMatchObject({ state: 'reserved', created: true });
+  });
+
+  it('blockedVersionを期限判定より先に返し、read時にrecentを変更しない', async () => {
+    const sessionId = crypto.randomUUID();
+    const principal = { sessionId, accountId: crypto.randomUUID(), sessionVersion: 7 };
+    const stub = coordinator(sessionId);
+    const released = await releaseNpcMatch(stub, principal);
+    await expireRecent(stub);
+    await stub.prepareLogout({
+      ...principal,
+      sessionDigestHex: 'da'.repeat(32),
+      sessionDigestKeyVersion: 1,
+    });
+    const before = await storageSnapshot(stub);
+
+    await expect(stub.readNpcMatch(principal)).resolves.toEqual({
+      state: 'invalidated',
+      invalidatedVersion: 8,
+    });
+    await expect(stub.checkNpcMatchRecoveryOwnership({
+      ...principal,
+      matchId: released.matchId,
+    })).resolves.toEqual({ state: 'invalidated', invalidatedVersion: 8 });
+    await expect(storageSnapshot(stub)).resolves.toEqual(before);
+  });
+
+  it('direct invalidationとlogout confirmationで古いrecentを削除する', async () => {
+    const directSessionId = crypto.randomUUID();
+    const directPrincipal = {
+      sessionId: directSessionId,
+      accountId: crypto.randomUUID(),
+      sessionVersion: 2,
+    };
+    const directStub = coordinator(directSessionId);
+    await releaseNpcMatch(directStub, directPrincipal);
+    await directStub.invalidateSession({ sessionId: directSessionId, invalidatedVersion: 3 });
+    expect(await hasRecent(directStub)).toBe(false);
+
+    const logoutSessionId = crypto.randomUUID();
+    const logoutPrincipal = {
+      sessionId: logoutSessionId,
+      accountId: crypto.randomUUID(),
+      sessionVersion: 5,
+    };
+    const logoutStub = coordinator(logoutSessionId);
+    await releaseNpcMatch(logoutStub, logoutPrincipal);
+    const intent = {
+      ...logoutPrincipal,
+      sessionDigestHex: 'db'.repeat(32),
+      sessionDigestKeyVersion: 1,
+    };
+    await logoutStub.prepareLogout(intent);
+    await logoutStub.confirmLogout({ ...intent, invalidatedVersion: 6 });
+    expect(await hasRecent(logoutStub)).toBe(false);
+  });
+
+  it('read APIのnamed identity・exact principal・safe match IDをstrictに拒否する', async () => {
+    const sessionId = crypto.randomUUID();
+    const accountId = crypto.randomUUID();
+    const messages = await runInDurableObject(coordinator(sessionId), async (instance) => {
+      const target = instance as SessionCoordinatorDO;
+      const calls = [
+        () => target.readNpcMatch({
+          sessionId: crypto.randomUUID(), accountId, sessionVersion: 1,
+        }),
+        () => target.readNpcMatch({
+          sessionId, accountId, sessionVersion: 1, extra: true,
+        } as never),
+        () => target.checkNpcMatchRecoveryOwnership({
+          sessionId, accountId, sessionVersion: 1, matchId: '../unsafe',
+        }),
+        () => target.checkNpcMatchRecoveryOwnership({
+          sessionId, accountId, sessionVersion: 1, matchId: 'safe', extra: true,
+        } as never),
+      ];
+      const outcomes: string[] = [];
+      for (const call of calls) {
+        try {
+          await call();
+          outcomes.push('accepted');
+        } catch (error) {
+          outcomes.push(error instanceof Error ? error.message : 'unknown');
+        }
+      }
+      return outcomes;
+    });
+    expect(messages).toEqual([
+      'SESSION_COORDINATOR_IDENTITY_INVALID',
+      'SESSION_NPC_MATCH_RESERVATION_INVALID',
+      'SESSION_NPC_MATCH_RECOVERY_OWNERSHIP_INVALID',
+      'SESSION_NPC_MATCH_RECOVERY_OWNERSHIP_INVALID',
     ]);
   });
 });

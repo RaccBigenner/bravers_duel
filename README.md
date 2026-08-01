@@ -72,8 +72,9 @@ deck・seed・versionからDOを作る経路はない。内部RPCのactionはOLG
 OLG-122で`commandId + expectedRevision`付きのexact replayへ移行済み。同一payload再送は1回だけ適用し、
 衝突・stale / ahead・不正actionは盤面不変で拒否する。共有wire receiptはACK-onlyで、transition / events /
 lifecycleを含めない。DO evictionを跨ぐ原子的なreceipt・snapshot・event復旧はOLG-125、raw frame上限と
-viewer別projectionはOLG-124で実装するまでbrowser game wireを閉じ、認証後のsocketも
-`error:game-not-ready`だけを返す。
+viewer別projectionはOLG-124で実装済み。OLG-126では`GET /me/active-match`、session所有権で守る
+receipt / result GET、version付き`lastEventSequence`によるWebSocket resumeを追加した。cursorはraw event件数でなく
+stable step単位で、最大128 batchのdeltaまたはsnapshotへ復帰する。相手のhidden eventはcursorにも本文にも出さない。
 browser向け`POST /auth/guest`、`GET /auth/session`、
 `POST /auth/logout`はopaque HttpOnly sessionとして接続済みで、Supabase Auth tokenはWorker内部grantだけに保持する。
 

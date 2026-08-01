@@ -1,6 +1,9 @@
 import { DurableObject } from 'cloudflare:workers';
 import {
   MATCH_ID_PATTERN,
+  MATCH_PLAYER_PROJECTION_VERSION,
+  MATCH_VIEWER_EVENT_VERSION,
+  MAX_MATCH_VIEWER_DELTA_BATCHES,
   MAX_MATCH_REVISION,
   parseMatchAction,
   parseMatchCommandCandidate,
@@ -15,6 +18,9 @@ import {
   type MatchRevision,
   type MatchServerFrame,
   type MatchTerminalProjection,
+  type MatchViewerEventBatch,
+  type MatchViewerSeat,
+  type MatchViewerSync,
 } from '@bravers/protocol';
 import { createSessionRuntimeConfig } from '../auth/sessionRuntimeConfig';
 import type { TokenDigestCandidate } from '../auth/sessionCrypto';
@@ -61,6 +67,10 @@ import {
   seatTokenDigestCandidates,
   seatTokenDigestHex,
 } from './seatToken';
+import {
+  ViewerEventProjectionError,
+  createMatchViewerEventBatch,
+} from './viewerEventProjection';
 
 const MATCH_PATH = /^\/matches\/([A-Za-z0-9_-]{1,64})\/ws$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -97,6 +107,7 @@ const MAX_PERSISTED_BATTLE_CARDS_BYTES = 512 * 1024;
 const MAX_PERSISTED_STEP_BYTES = 32 * 1024;
 const MAX_PERSISTED_EVENT_BYTES = 8 * 1024;
 const MAX_PERSISTED_RECEIPT_BYTES = 2 * 1024;
+export const MAX_MATCH_RESUME_EVENT_BATCHES = MAX_MATCH_VIEWER_DELTA_BATCHES;
 const STATE_HASH_PATTERN = /^[0-9a-f]{16}$/;
 const IDENTITY_HASH_PATTERN = /^i1-[0-9a-f]{16}$/;
 
@@ -178,6 +189,16 @@ export type StartNpcBattleResult =
 export interface ApplyNpcBattleCommandInput {
   principal: MatchSessionPrincipal;
   command: unknown;
+}
+
+export type NpcBattleRecoveryStatus = {
+  state: 'provisioning' | 'active' | 'terminal';
+  matchId: string;
+};
+
+export interface GetNpcBattleReceiptInput {
+  principal: MatchSessionPrincipal;
+  commandId: unknown;
 }
 
 type AcceptedMatchCommandResult = Extract<MatchCommandResult, { state: 'accepted' }>;
@@ -266,6 +287,9 @@ interface AuthenticatedAttachment extends MatchSessionPrincipal {
   connectionId: string;
   seatId: MatchSeatId;
   assignmentVersion: number;
+  projectionVersion: typeof MATCH_PLAYER_PROJECTION_VERSION;
+  viewerEventVersion: typeof MATCH_VIEWER_EVENT_VERSION;
+  viewerEventSequence: number;
 }
 
 type ConnectionAttachment =
@@ -596,6 +620,19 @@ function validateApplyNpcBattleCommandInput(
   }
 }
 
+function validateGetNpcBattleReceiptInput(
+  value: unknown,
+): asserts value is GetNpcBattleReceiptInput {
+  if (
+    !plainObject(value) ||
+    !hasExactKeys(value, ['principal', 'commandId']) ||
+    !isExactPrincipal(value.principal) ||
+    !parseMatchCommandId(value.commandId)
+  ) {
+    throw new MatchBattleError('MATCH_BATTLE_INPUT_INVALID');
+  }
+}
+
 function samePrincipal(row: BattleLifecycleRow, principal: MatchSessionPrincipal): boolean {
   return (
     row.account_id === principal.accountId &&
@@ -642,6 +679,9 @@ function isExactAuthenticatedAttachment(value: unknown): value is AuthenticatedA
       'sessionVersion',
       'seatId',
       'assignmentVersion',
+      'projectionVersion',
+      'viewerEventVersion',
+      'viewerEventSequence',
     ]) &&
     value.mode === 'authenticated' &&
     typeof value.matchId === 'string' &&
@@ -652,7 +692,10 @@ function isExactAuthenticatedAttachment(value: unknown): value is AuthenticatedA
     typeof value.sessionId === 'string' &&
     isPrincipal(value as unknown as MatchSessionPrincipal) &&
     isSeatId(value.seatId) &&
-    positiveInteger(value.assignmentVersion)
+    positiveInteger(value.assignmentVersion) &&
+    value.projectionVersion === MATCH_PLAYER_PROJECTION_VERSION &&
+    value.viewerEventVersion === MATCH_VIEWER_EVENT_VERSION &&
+    nonNegativeInteger(value.viewerEventSequence)
   );
 }
 
@@ -740,6 +783,8 @@ export class MatchDO extends DurableObject<Env> {
   private battleRuntime: EngineBattleAdapter | null = null;
   private battleProjectionCheckpoint: AuthoritativeBattleCheckpoint | null = null;
   private battleRevision: MatchRevision | null = null;
+  /** viewer cursorはraw event数ではなく、このstable step列の1-based batch連番。 */
+  private battleSteps: AppliedBattleStep[] = [];
   private readonly battleCommands = new MatchCommandLedger<StoredMatchCommandResult>();
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -1209,6 +1254,89 @@ export class MatchDO extends DurableObject<Env> {
         throw new MatchBattleError('MATCH_STATE_UNAVAILABLE');
       }
       return this.lifecycleFromRow(lifecycle).terminalResult;
+    });
+  }
+
+  /** Coordinatorがserver-owned matchIdをpositive確認した後だけ呼ぶbrowser recovery read。 */
+  async getNpcBattleRecoveryStatus(
+    principal: MatchSessionPrincipal,
+  ): Promise<NpcBattleRecoveryStatus> {
+    if (!isExactPrincipal(principal)) {
+      throw new MatchBattleError('MATCH_BATTLE_INPUT_INVALID');
+    }
+    return this.withOperationLock(async () => {
+      const existing = this.battleLifecycleRow();
+      if (!existing) {
+        const matchId = this.ctx.id.name;
+        if (!matchId || !NPC_MATCH_ID_PATTERN.test(matchId)) {
+          throw new MatchBattleError('MATCH_BATTLE_NOT_STARTED');
+        }
+        return { state: 'provisioning', matchId };
+      }
+      const lifecycle = await this.reconcileFinishedRuntime(
+        this.requireBattleLifecycle(principal, true),
+      );
+      const stored = this.lifecycleFromRow(lifecycle);
+      return {
+        state:
+          stored.state === 'provisioning'
+            ? 'provisioning'
+            : stored.state === 'active'
+              ? 'active'
+              : 'terminal',
+        matchId: stored.matchId,
+      };
+    });
+  }
+
+  /** ACK-only保存値をexact commandIdで読む。unknown IDは台帳を増やさずnullへ収束する。 */
+  async getNpcBattleReceipt(
+    input: GetNpcBattleReceiptInput,
+  ): Promise<MatchCommandResult | null> {
+    validateGetNpcBattleReceiptInput(input);
+    return this.withOperationLock(async () => {
+      const lifecycle = await this.reconcileFinishedRuntime(
+        this.requireBattleLifecycle(input.principal, true),
+      );
+      const commandId = parseMatchCommandId(input.commandId)!;
+      const row = this.ctx.storage.sql.exec<Pick<
+        BattleCommandRow,
+        'command_id' | 'match_id' | 'seat_id' | 'receipt_json'
+      >>(
+        `SELECT command_id, match_id, seat_id, receipt_json
+           FROM match_battle_command WHERE command_id = ?`,
+        commandId,
+      ).toArray()[0];
+      if (!row) return null;
+      const receipt = parseMatchCommandResult(
+        decodePersistedJson(row.receipt_json, MAX_PERSISTED_RECEIPT_BYTES),
+      );
+      if (
+        !receipt ||
+        row.command_id !== commandId ||
+        row.match_id !== lifecycle.match_id ||
+        row.seat_id !== lifecycle.seat_id ||
+        receipt.matchId !== lifecycle.match_id ||
+        receipt.commandId !== commandId
+      ) {
+        throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+      }
+      return receipt;
+    });
+  }
+
+  /** hash/turn数/seedを含む内部resultを出さず、browser-safe terminal summaryだけを返す。 */
+  async getNpcBattlePublicResult(
+    principal: MatchSessionPrincipal,
+  ): Promise<MatchTerminalProjection | null> {
+    if (!isExactPrincipal(principal)) {
+      throw new MatchBattleError('MATCH_BATTLE_INPUT_INVALID');
+    }
+    return this.withOperationLock(async () => {
+      const lifecycle = await this.reconcileFinishedRuntime(
+        this.requireBattleLifecycle(principal, true),
+      );
+      return this.terminalProjectionFor(this.lifecycleFromRow(lifecycle));
     });
   }
 
@@ -1935,6 +2063,9 @@ export class MatchDO extends DurableObject<Env> {
           sessionVersion: verifying.sessionVersion,
           seatId: consumed.seatId,
           assignmentVersion: consumed.assignmentVersion,
+          projectionVersion: MATCH_PLAYER_PROJECTION_VERSION,
+          viewerEventVersion: MATCH_VIEWER_EVENT_VERSION,
+          viewerEventSequence: frame.resume?.lastEventSequence ?? 0,
         } satisfies AuthenticatedAttachment;
         socket.serializeAttachment(authenticated);
         this.ctx.storage.sql.exec(
@@ -1942,7 +2073,7 @@ export class MatchDO extends DurableObject<Env> {
           pendingDeadlineKey(verifying.connectionId),
         );
         await this.ensureNextAlarm();
-        await this.sendAuthenticatedReady(socket, authenticated);
+        await this.sendAuthenticatedReady(socket, authenticated, frame.resume !== null);
       });
     } catch (error) {
       if (isDurableObjectResetError(error)) throw error;
@@ -2038,7 +2169,7 @@ export class MatchDO extends DurableObject<Env> {
     await this.ensureNextAlarm();
   }
 
-  private sameAuthenticatedAttachment(
+  private sameAuthenticatedIdentity(
     left: AuthenticatedAttachment,
     right: AuthenticatedAttachment,
   ): boolean {
@@ -2050,7 +2181,9 @@ export class MatchDO extends DurableObject<Env> {
       left.sessionId === right.sessionId &&
       left.sessionVersion === right.sessionVersion &&
       left.seatId === right.seatId &&
-      left.assignmentVersion === right.assignmentVersion
+      left.assignmentVersion === right.assignmentVersion &&
+      left.projectionVersion === right.projectionVersion &&
+      left.viewerEventVersion === right.viewerEventVersion
     );
   }
 
@@ -2160,7 +2293,8 @@ export class MatchDO extends DurableObject<Env> {
       lifecycle.seatId !== attachment.seatId ||
       lifecycle.assignmentVersion !== attachment.assignmentVersion ||
       !samePrincipal(lifecycleRow, attachment) ||
-      !this.battleProjectionCheckpoint
+      !this.battleProjectionCheckpoint ||
+      this.battleProjectionCheckpoint.stepCount !== this.battleSteps.length
     ) {
       throw new MatchBattleError('MATCH_BATTLE_ACCESS_DENIED');
     }
@@ -2168,10 +2302,101 @@ export class MatchDO extends DurableObject<Env> {
       matchId,
       viewerSeat: attachment.seatId,
       revision: this.requireBattleRevision(),
+      eventSequence: this.battleSteps.length,
       contentVersion: lifecycle.versions.contentVersion,
       formatVersionId: lifecycle.versions.formatVersionId,
       terminal: this.terminalProjectionFor(lifecycle),
     });
+  }
+
+  private viewerSyncFor(
+    attachment: AuthenticatedAttachment,
+    projection: MatchPlayerProjection,
+    initialSnapshot: boolean,
+  ): MatchViewerSync {
+    const currentSequence = projection.eventSequence;
+    if (
+      projection.viewerSeat !== attachment.seatId ||
+      projection.viewerEventVersion !== MATCH_VIEWER_EVENT_VERSION ||
+      currentSequence !== this.battleSteps.length
+    ) {
+      throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+    }
+    if (initialSnapshot) {
+      return {
+        type: 'matchViewerSync',
+        mode: 'snapshot',
+        reason: 'initial',
+        eventSequence: currentSequence,
+      };
+    }
+    const after = attachment.viewerEventSequence;
+    if (after > currentSequence) {
+      return {
+        type: 'matchViewerSync',
+        mode: 'snapshot',
+        reason: 'cursor_ahead',
+        eventSequence: currentSequence,
+      };
+    }
+    if (currentSequence - after > MAX_MATCH_RESUME_EVENT_BATCHES) {
+      return {
+        type: 'matchViewerSync',
+        mode: 'snapshot',
+        reason: 'cursor_gap',
+        eventSequence: currentSequence,
+      };
+    }
+    const batches: MatchViewerEventBatch[] = this.battleSteps
+      .slice(after)
+      .map((step) => createMatchViewerEventBatch(step, attachment.seatId));
+    return {
+      type: 'matchViewerSync',
+      mode: 'delta',
+      afterEventSequence: after,
+      batches,
+    };
+  }
+
+  private serializeViewerFrame(
+    attachment: AuthenticatedAttachment,
+    projection: MatchPlayerProjection,
+    receipt: MatchCommandResult | null,
+    initialSnapshot = false,
+  ): string {
+    let sync = this.viewerSyncFor(attachment, projection, initialSnapshot);
+    const frame = (): MatchServerFrame => receipt
+      ? { type: 'matchCommandUpdate', receipt, projection, sync }
+      : { type: 'matchProjection', projection, sync };
+    try {
+      return serializeMatchServerFrame(frame());
+    } catch (error) {
+      if (
+        !(error instanceof MatchWireFrameError) ||
+        error.code !== 'MATCH_FRAME_OUTPUT_TOO_LARGE' ||
+        sync.mode !== 'delta'
+      ) {
+        throw error;
+      }
+      sync = {
+        type: 'matchViewerSync',
+        mode: 'snapshot',
+        reason: 'delta_too_large',
+        eventSequence: projection.eventSequence,
+      };
+      return serializeMatchServerFrame(frame());
+    }
+  }
+
+  private advanceViewerCursor(
+    socket: WebSocket,
+    attachment: AuthenticatedAttachment,
+    eventSequence: number,
+  ): void {
+    socket.serializeAttachment({
+      ...attachment,
+      viewerEventSequence: eventSequence,
+    } satisfies AuthenticatedAttachment);
   }
 
   private closeMatchSocket(socket: WebSocket, code: number, reason: string): void {
@@ -2185,11 +2410,12 @@ export class MatchDO extends DurableObject<Env> {
   private async sendAuthenticatedReady(
     socket: WebSocket,
     expected: AuthenticatedAttachment,
+    resumeRequested: boolean,
   ): Promise<void> {
     const current = socket.deserializeAttachment() as unknown;
     if (
       !isExactAuthenticatedAttachment(current) ||
-      !this.sameAuthenticatedAttachment(current, expected) ||
+      !this.sameAuthenticatedIdentity(current, expected) ||
       current.matchId !== this.ctx.id.name
     ) {
       this.closeMatchSocket(socket, AUTHENTICATION_CLOSE_CODE, AUTHENTICATION_CLOSE_REASON);
@@ -2214,16 +2440,21 @@ export class MatchDO extends DurableObject<Env> {
       return;
     }
 
+    let projection: MatchPlayerProjection;
     let encodedProjection: string;
     try {
-      encodedProjection = serializeMatchServerFrame({
-        type: 'matchProjection',
-        projection: this.playerProjectionFor(current, lifecycle),
-      });
+      projection = this.playerProjectionFor(current, lifecycle);
+      encodedProjection = this.serializeViewerFrame(
+        current,
+        projection,
+        null,
+        !resumeRequested,
+      );
     } catch (error) {
       if (
         error instanceof MatchBattleError ||
         error instanceof EngineBattleAdapterError ||
+        error instanceof ViewerEventProjectionError ||
         error instanceof MatchWireFrameError
       ) {
         this.closeMatchSocket(socket, MATCH_UNAVAILABLE_CLOSE_CODE, MATCH_UNAVAILABLE_CLOSE_REASON);
@@ -2234,6 +2465,7 @@ export class MatchDO extends DurableObject<Env> {
     try {
       socket.send('auth_ok');
       socket.send(encodedProjection);
+      this.advanceViewerCursor(socket, current, projection.eventSequence);
     } catch {
       this.closeMatchSocket(socket, MATCH_UNAVAILABLE_CLOSE_CODE, MATCH_UNAVAILABLE_CLOSE_REASON);
     }
@@ -2245,17 +2477,40 @@ export class MatchDO extends DurableObject<Env> {
     projection: MatchPlayerProjection,
     receipt: MatchCommandResult | null,
   ): Promise<void> {
-    let originPayload: string;
-    let peerPayload: string;
+    const affected = recipients.includes(origin) ? [...recipients] : [origin, ...recipients];
+    const deliveries: Array<{
+      socket: WebSocket;
+      attachment: AuthenticatedAttachment;
+      payload: string;
+    }> = [];
     try {
-      const originFrame: MatchServerFrame = receipt
-        ? { type: 'matchCommandUpdate', receipt, projection }
-        : { type: 'matchProjection', projection };
-      originPayload = serializeMatchServerFrame(originFrame);
-      peerPayload = serializeMatchServerFrame({ type: 'matchProjection', projection });
+      for (const socket of affected) {
+        const attachment = socket.deserializeAttachment() as unknown;
+        if (
+          !isExactAuthenticatedAttachment(attachment) ||
+          attachment.matchId !== projection.matchId ||
+          attachment.seatId !== projection.viewerSeat
+        ) {
+          throw new MatchBattleError('MATCH_BATTLE_ACCESS_DENIED');
+        }
+        deliveries.push({
+          socket,
+          attachment,
+          payload: this.serializeViewerFrame(
+            attachment,
+            projection,
+            socket === origin ? receipt : null,
+          ),
+        });
+      }
     } catch (error) {
-      if (!(error instanceof MatchWireFrameError)) throw error;
-      const affected = recipients.includes(origin) ? recipients : [origin, ...recipients];
+      if (
+        !(error instanceof MatchWireFrameError) &&
+        !(error instanceof MatchBattleError) &&
+        !(error instanceof ViewerEventProjectionError)
+      ) {
+        throw error;
+      }
       for (const socket of affected) {
         this.closeMatchSocket(
           socket,
@@ -2266,18 +2521,17 @@ export class MatchDO extends DurableObject<Env> {
       return;
     }
 
-    try {
-      origin.send(originPayload);
-    } catch {
-      this.closeMatchSocket(origin, MATCH_UNAVAILABLE_CLOSE_CODE, MATCH_UNAVAILABLE_CLOSE_REASON);
-    }
-    for (const socket of recipients) {
-      if (socket === origin) continue;
+    for (const delivery of deliveries) {
       try {
-        socket.send(peerPayload);
+        delivery.socket.send(delivery.payload);
+        this.advanceViewerCursor(
+          delivery.socket,
+          delivery.attachment,
+          projection.eventSequence,
+        );
       } catch {
         this.closeMatchSocket(
-          socket,
+          delivery.socket,
           MATCH_UNAVAILABLE_CLOSE_CODE,
           MATCH_UNAVAILABLE_CLOSE_REASON,
         );
@@ -2289,7 +2543,6 @@ export class MatchDO extends DurableObject<Env> {
       () => this.afterTerminalFrameSend(),
       'MATCH_TERMINAL_POST_SEND_FAILED',
     );
-    const affected = recipients.includes(origin) ? recipients : [origin, ...recipients];
     for (const socket of affected) {
       this.closeMatchSocket(socket, MATCH_ENDED_CLOSE_CODE, MATCH_ENDED_CLOSE_REASON);
     }
@@ -2338,7 +2591,7 @@ export class MatchDO extends DurableObject<Env> {
     const current = socket.deserializeAttachment() as unknown;
     if (
       !isExactAuthenticatedAttachment(current) ||
-      !this.sameAuthenticatedAttachment(current, expected) ||
+      !this.sameAuthenticatedIdentity(current, expected) ||
       current.matchId !== this.ctx.id.name
     ) {
       this.closeMatchSocket(socket, AUTHENTICATION_CLOSE_CODE, AUTHENTICATION_CLOSE_REASON);
@@ -2767,6 +3020,7 @@ export class MatchDO extends DurableObject<Env> {
     this.battleRuntime = terminal ? null : runtime;
     this.battleProjectionCheckpoint = structuredClone(preparedRuntime.checkpoint);
     this.battleRevision = initialRevision;
+    this.battleSteps = structuredClone(snapshot.steps);
     this.battleCommands.clear();
     return { state: 'ready', created };
   }
@@ -2817,6 +3071,7 @@ export class MatchDO extends DurableObject<Env> {
     this.battleRuntime = null;
     this.battleProjectionCheckpoint = null;
     this.battleRevision = null;
+    this.battleSteps = [];
     this.battleCommands.clear();
     const lifecycle = this.battleLifecycleRow();
     const counts = this.battlePersistenceCounts();
@@ -3287,6 +3542,7 @@ export class MatchDO extends DurableObject<Env> {
     }
     this.battleRevision = revision;
     this.battleProjectionCheckpoint = runtime.authoritativeCheckpoint();
+    this.battleSteps = structuredClone(restoredSteps);
     this.battleRuntime = lifecycle.lifecycle_state === 'active' ? runtime : null;
   }
 
@@ -3845,6 +4101,7 @@ export class MatchDO extends DurableObject<Env> {
       state.command_count !== this.battleCommands.size ||
       state.rejection_count !== this.battleCommands.rejectedSize ||
       state.step_count !== currentSnapshot.steps.length ||
+      state.step_count !== this.battleSteps.length ||
       state.event_count !== currentSnapshot.state.eventSeq ||
       state.current_state_hash !== currentSnapshot.currentStateHash ||
       state.current_identity_hash !== currentSnapshot.currentIdentityHash ||
@@ -3856,6 +4113,7 @@ export class MatchDO extends DurableObject<Env> {
     ) {
       throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
     }
+    const nextBattleSteps = this.battleSteps.concat(structuredClone(appendedSteps));
     const preparedRuntime = this.prepareBattleRuntimePersistence(
       nextRuntime,
       appendedSteps,
@@ -3947,6 +4205,7 @@ export class MatchDO extends DurableObject<Env> {
     const installed = this.installCommittedCommandResult(command, identity, result);
     this.battleRevision = nextRevision;
     this.battleProjectionCheckpoint = structuredClone(preparedRuntime.checkpoint);
+    this.battleSteps = nextBattleSteps;
     this.battleRuntime = terminal ? null : nextRuntime;
     await this.runBattleCommandCutpoint(
       () => this.afterBattleCommandInstall(),

@@ -1677,11 +1677,49 @@ PWAやIndexedDBがバトルを維持するのではない。**サーバー上の
 起動時:
 
 1. `GET /me/active-match`
-2. 進行中なら自動で復帰画面へ
-3. WebSocketを再接続
-4. `last_event_sequence`を送る
-5. 差分が残っていれば差分、足りなければsnapshotを受け取る
-6. 演出を短縮再生または最新状態へ追いつく
+2. `active`なら新しい一回性seat tokenを取得してWebSocketを再接続
+3. 最初のauth frameで、端末が最後に適用した`lastEventSequence`とprojection / event versionを送る
+4. 差分が残っていれば連続delta、足りない・未来cursorならsnapshotを受け取る
+5. 演出を短縮再生または最新状態へ追いつく
+6. `terminal`ならsocketを作らず、保存済みreceipt / resultをHTTPで読む
+
+OLG-126のbrowser wireは次で固定する。JSON fieldはcamelCaseとし、文書中の概念名
+`last_event_sequence`に対応する実fieldは`lastEventSequence`である。
+
+```ts
+type SeatAuthFrame =
+  | { type: 'auth'; seatToken: string } // 旧client: current snapshotを返す
+  | {
+      type: 'auth';
+      seatToken: string;
+      resume: {
+        projectionVersion: 2;
+        viewerEventVersion: 1;
+        lastEventSequence: number;
+      };
+    };
+```
+
+viewerの`eventSequence`はraw engine event件数ではない。永続化済みのstable stepを0始まりで並べ、
+各stepを`sequence = step.sequence + 1`のviewer batch 1件へ変換した**最後に適用済みのbatch番号**である。
+相手のhidden eventしかないstepも空`events` batchを残す。これにより、相手のサーチや手札移動の
+event数がcursorの飛び方から漏れない。resumeはexclusive境界で、`lastEventSequence`の次のbatchから返す。
+
+- cursorがcurrentと同じ: 空delta
+- currentより後: `cursor_ahead` snapshot
+- 未適用が128 batch以内: 連続delta
+- 128 batch超: `cursor_gap` snapshot
+- delta込みframeが128 KiBを超える: `delta_too_large` snapshot
+
+snapshot / deltaのどちらもcurrent player projectionを同じframeへ含み、受信側はframe全体をexact decodeしてから
+projectionとcursorを同時に進める。raw `BattleEvent`は送らず、viewer公開allowlistへ変換したeventだけをdeltaへ入れる。
+
+復帰用HTTPは`GET /me/active-match`、
+`GET /matches/:matchId/commands/:commandId/receipt`、`GET /matches/:matchId/result`とする。
+opaque session、same-origin Fetch Metadata、固定client headerを必須にし、全応答は`private, no-store`。
+SessionCoordinatorがactive reservationまたはrecent terminal ownershipをpositive確認する前に、client指定名の
+MatchDO stubを解決してはいけない。terminal cleanup後はsessionごと最大1件を90日保持し、新規NPC戦、logout、
+session invalidationで消す。terminalではassignmentが既に無いためseat tokenを再発行せず、HTTP readだけを許可する。
 
 同じアカウントの複数タブは、1つだけ操作権を持ち、残りは観戦状態にする。
 
@@ -2040,7 +2078,7 @@ Origin / Fetch Metadata確認
 → cloneへplayer action + NPC pumpを適用して次状態をprepare
 → receipt + canonical/digest + seat + revision + events + snapshot + lifecycle/outboxをSQLiteへatomic commit
 → commit成功後だけruntimeをswap（失敗時はtrial破棄／旧runtimeへrollback）
-→ ACK-only receiptと同revision以上のプレイヤー別projectionを単一update frameで配信（OLG-124）
+→ ACK-only receipt、同revision以上のプレイヤー別projection、viewer syncを単一update frameで配信
 → terminal時だけ配信後にauthenticated socketをclose（OLG-124）
 ```
 
@@ -2049,14 +2087,15 @@ commandのrevision / action / terminal拒否はreceiptへ固定し、内容を�
 最終手の永続化が失敗した場合はtrial全体を捨てる。同じIDの再送は保存済みcurrent runtimeから決定論的に
 同じactionを再prepareし、action receipt / snapshot / terminalを一つのtransactionで一度だけ確定する。
 receiptは時刻、authoritative transition、events、lifecycleを含まないACK-onlyとし、projectionは
-OLG-124で別のallowlist DTOとして生成する。wireでは両者を`matchCommandUpdate { receipt, projection }`という
-1つのexact frameへ束ね、ACKだけ届いて盤面が届かない中間状態を作らない。認証直後と同viewerの別tabには
-`matchProjection`を送る。OLG-125はterminal receipt / lifecycle / cleanup outboxを保存し外部cleanupをalarmへ
+OLG-124で別のallowlist DTOとして生成する。OLG-126以後のwireでは
+`matchCommandUpdate { receipt, projection, sync }`へ束ね、ACKだけ届いて盤面やcursorが届かない中間状態を作らない。
+認証直後と同viewerの別tabには`matchProjection { projection, sync }`を送る。OLG-125はterminal receipt /
+lifecycle / cleanup outboxを保存し外部cleanupをalarmへ
 限定する。OLG-124は通常決着・取消・放棄ともterminal projectionを送信してから同viewerのauthenticated socketを
 `1000 / MATCH_ENDED`で閉じる。送信ACKが
 失われてassignment / coordinator membership解放後になっても、認証sessionとmatch lifecycleの所有権を
 照合するread経路から同じreceipt / resultを取得できなければならない。既存authenticated socketのexact再送は
-OLG-124で保存receiptへ収束させるが、リロード後のactive-match / receipt / result readはOLG-126が担う。
+OLG-124で保存receiptへ収束させ、リロード後のactive-match / receipt / result readはOLG-126で実装済み。
 
 OLG-124のbrowser入力はJSON.parse前のUTF-8で16 KiB、server出力はexact decode後128 KiBを上限とする。
 入力はその後も既存canonical上限（4 KiB、深さ8、node 128、object key 32、array 64、文字列512）を通す。
@@ -2077,11 +2116,11 @@ OLG-125の受入では、activation / accepted / rejected / finalのtransaction�
 event sequence・cleanup outbox / deadlineが一致することを固定する。terminal frame送信後・socket close後は、
 OLG-124の実`ctx.abort()` cutpointでもcommit済みterminal / receiptが巻き戻らないことを検査する。
 
-OLG-124は2026-08-02にコード実装済み。browser game wireを開き、G1 NPC-only v1の`eventSequence`は
-raw current cursorの数値だけをprojectionへ含める。raw event本文や差分配信はまだ公開しない。OLG-126では
-viewer-visible eventへの変換、inclusive/exclusive境界、cursor gap、snapshot fallbackを固定し、PvP前に
-hidden event数を推測できないviewer別の単調cursorへversion upする。G3 PvPで相手seatへ配信する時はviewerごとに
-projectionを再生成し、G1の「同一viewer複数tab向けprojection」を相手やspectatorへ転送してはいけない。
+OLG-126は2026-08-02にコード実装済み。projection v2の`eventSequence`をraw current cursorから
+viewer-visible stable step batchの単調cursorへ置換し、exclusive delta境界、ahead / gap / frame-sizeの
+snapshot fallbackを固定した。1 step中のraw event数やhidden eventの有無はcursorへ影響しない。
+G3 PvPで相手seatへ配信する時はviewerごとにprojection / event batchを再生成し、G1の
+「同一viewer複数tab向けframe」を相手やspectatorへ転送してはいけない。
 NPC専用の`abandoned { winner: 1 }`も、離脱seatと勝者を両向きに表せるterminal unionへversion upする。
 
 ### 11.3 秘匿情報
@@ -2124,8 +2163,11 @@ incomingDamageReduction / chargedThisTurn / suppressRotate`までをv1 allowlist
 engineへ追加してもprojectionへ自動露出させない。seedは進行中・terminalのplayer wireでは常時非公開とし、
 将来replay endpointで公開する場合はlive projectionと分離したpolicy / schemaで扱う。
 
-イベントの`info.text`は廃止し、`code + params`へ変更して、秘匿情報と翻訳の両方をサーバーで制御する。
-OLG-124はraw eventを一切送らず、公開event unionはOLG-126で追加する。
+OLG-126もraw eventを一切送らず、公開event unionはbattle start / turn / countだけのzone移動 / 公開された
+使用カード / combat / damage / heal / KO / actor lock / terminalに閉じる。相手の`chargeHand.cardId`、
+`searchToHand.cardId`、`info.text`、`abilityTriggered.label`、`attributeAdded`はdropし、hidden-only stepは
+空batchとしてcursorだけを進める。将来イベント文言が必要な場合もraw `info.text`を復活させず、locale非依存の
+`code + bounded params`を新しいevent versionで追加し、秘匿情報と翻訳をサーバーで制御する。
 
 ### 11.4 決定論とリプレイ
 

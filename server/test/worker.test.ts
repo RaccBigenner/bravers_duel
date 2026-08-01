@@ -23,10 +23,10 @@ function nextMessage(socket: WebSocket): Promise<string> {
 }
 
 describe('@bravers/server OLG-102 foundation', () => {
-  it('workspaceとOLG-124 game protocolを実行可能として公開する', () => {
+  it('workspaceとOLG-126 game protocolを実行可能として公開する', () => {
     expect(SERVER_FOUNDATION).toEqual({
       packageName: '@bravers/server',
-      protocolVersion: 'OLG-124',
+      protocolVersion: 'OLG-126',
       operational: true,
       gameProtocolOperational: true,
     });

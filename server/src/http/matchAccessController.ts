@@ -1,4 +1,12 @@
 import {
+  MATCH_COMMAND_ID_PATTERN,
+  parseActiveMatchResponse,
+  parseMatchReceiptResponse,
+  parseMatchResultResponse,
+  type MatchCommandResult,
+  type MatchTerminalProjection,
+} from '@bravers/protocol';
+import {
   clearOpaqueCookie,
   parseOpaqueCookie,
   resolveCookieProfile,
@@ -38,12 +46,16 @@ import {
   hasOnlyObjectKeys,
   readAuthJsonObject,
   validateUnsafeAuthRequest,
+  validateSafeAuthRequest,
   validateWebSocketAuthRequest,
 } from './authRequest';
 
 const SEAT_TOKEN_PATH = /^\/matches\/([A-Za-z0-9_-]{1,64})\/seat-token$/;
 const WEB_SOCKET_PATH = /^\/matches\/([A-Za-z0-9_-]{1,64})\/ws$/;
+const MATCH_RECEIPT_PATH = /^\/matches\/([A-Za-z0-9_-]{1,64})\/commands\/(cmd_[0-9a-f]{32})\/receipt$/;
+const MATCH_RESULT_PATH = /^\/matches\/([A-Za-z0-9_-]{1,64})\/result$/;
 const NPC_MATCH_START_PATH = '/matches/npc';
+const ACTIVE_MATCH_PATH = '/me/active-match';
 const LOCAL_SMOKE_MATCH_ID = 'local-smoke';
 
 /** server-owned予約とmembership preflightを必ず通すpublic match port。 */
@@ -60,6 +72,17 @@ interface MatchStub {
     principal: MatchSessionPrincipal;
     seed: number;
   }): Promise<NpcBattleStartResult>;
+  getNpcBattleRecoveryStatus(principal: MatchSessionPrincipal): Promise<{
+    state: 'provisioning' | 'active' | 'terminal';
+    matchId: string;
+  }>;
+  getNpcBattleReceipt(input: {
+    principal: MatchSessionPrincipal;
+    commandId: string;
+  }): Promise<MatchCommandResult | null>;
+  getNpcBattlePublicResult(
+    principal: MatchSessionPrincipal,
+  ): Promise<MatchTerminalProjection | null>;
   fetch(request: Request): Promise<Response>;
 }
 
@@ -190,6 +213,35 @@ function readyNpcBattle(
   );
 }
 
+function locatedNpcMatch(
+  value: unknown,
+): value is { state: 'located'; matchId: string } {
+  return (
+    exactRpcObject(value, ['state', 'matchId']) &&
+    value.state === 'located' &&
+    typeof value.matchId === 'string' &&
+    NPC_MATCH_ID_PATTERN.test(value.matchId)
+  );
+}
+
+function recoveryStatus(
+  value: unknown,
+  matchId: string,
+): value is {
+  state: 'provisioning' | 'active' | 'terminal';
+  matchId: string;
+} {
+  return (
+    exactRpcObject(value, ['state', 'matchId']) &&
+    (value.state === 'provisioning' || value.state === 'active' || value.state === 'terminal') &&
+    value.matchId === matchId
+  );
+}
+
+function recoveryAuthorized(value: unknown): boolean {
+  return exactState(value, 'authorized');
+}
+
 function issuedSeatToken(
   value: unknown,
   nowEpochMs: number,
@@ -260,14 +312,24 @@ function internalWebSocketRequest(
 
 function route(pathname: string):
   | { kind: 'npc-start'; method: 'POST' }
+  | { kind: 'active-match'; method: 'GET' }
   | { kind: 'seat-token'; matchId: string; method: 'POST' }
   | { kind: 'websocket'; matchId: string; method: 'GET' }
+  | { kind: 'receipt'; matchId: string; commandId: string; method: 'GET' }
+  | { kind: 'result'; matchId: string; method: 'GET' }
   | null {
   if (pathname === NPC_MATCH_START_PATH) return { kind: 'npc-start', method: 'POST' };
+  if (pathname === ACTIVE_MATCH_PATH) return { kind: 'active-match', method: 'GET' };
   const seatToken = pathname.match(SEAT_TOKEN_PATH)?.[1];
   if (seatToken) return { kind: 'seat-token', matchId: seatToken, method: 'POST' };
   const webSocket = pathname.match(WEB_SOCKET_PATH)?.[1];
   if (webSocket) return { kind: 'websocket', matchId: webSocket, method: 'GET' };
+  const receipt = pathname.match(MATCH_RECEIPT_PATH);
+  if (receipt?.[1] && receipt[2] && MATCH_COMMAND_ID_PATTERN.test(receipt[2])) {
+    return { kind: 'receipt', matchId: receipt[1], commandId: receipt[2], method: 'GET' };
+  }
+  const result = pathname.match(MATCH_RESULT_PATH)?.[1];
+  if (result) return { kind: 'result', matchId: result, method: 'GET' };
   return null;
 }
 
@@ -314,8 +376,10 @@ export function createMatchAccessRequestHandler(
         if (!hasOnlyObjectKeys(body, [])) {
           throw new AuthRequestError('AUTH_BODY_INVALID', 400);
         }
-      } else {
+      } else if (matched.kind === 'websocket') {
         validateWebSocketAuthRequest(request, policy.appOrigin);
+      } else {
+        validateSafeAuthRequest(request, policy.appOrigin);
       }
 
       if (!dependencies.publicPortEnabled) return matchUnavailable();
@@ -333,6 +397,36 @@ export function createMatchAccessRequestHandler(
         bindings,
         matchPrincipal.sessionId,
       );
+
+      if (matched.kind === 'active-match') {
+        const located = await coordinator.readNpcMatch({
+          sessionId: matchPrincipal.sessionId,
+          accountId: matchPrincipal.accountId,
+          sessionVersion: matchPrincipal.sessionVersion,
+        });
+        if (invalidatedState(located)) return sessionRequired(profile, true);
+        if (exactState(located, 'none')) {
+          const body = parseActiveMatchResponse({ type: 'activeMatch', match: null });
+          return body ? matchJson(body, 200) : unavailable();
+        }
+        if (exactState(located, 'conflict')) return matchUnavailable();
+        if (!locatedNpcMatch(located)) return unavailable();
+
+        // Coordinatorがserver-owned IDを返すまで、MatchDO stubを取得しない。
+        const stub = dependencies.matchStub(bindings, located.matchId);
+        const status = await stub.getNpcBattleRecoveryStatus(matchPrincipal);
+        if (!recoveryStatus(status, located.matchId)) return unavailable();
+        const body = parseActiveMatchResponse({
+          type: 'activeMatch',
+          match: {
+            kind: 'npc',
+            matchId: located.matchId,
+            seat: 'player-1',
+            state: status.state,
+          },
+        });
+        return body ? matchJson(body, 200) : unavailable();
+      }
 
       if (matched.kind === 'npc-start') {
         const reservation = await coordinator.reserveNpcMatch({
@@ -356,6 +450,46 @@ export function createMatchAccessRequestHandler(
           { matchId: reservation.matchId },
           started.created ? 201 : 200,
         );
+      }
+
+      if (matched.kind === 'receipt' || matched.kind === 'result') {
+        const ownership = await coordinator.checkNpcMatchRecoveryOwnership({
+          sessionId: matchPrincipal.sessionId,
+          accountId: matchPrincipal.accountId,
+          sessionVersion: matchPrincipal.sessionVersion,
+          matchId: matched.matchId,
+        });
+        if (invalidatedState(ownership)) return sessionRequired(profile, true);
+        if (exactState(ownership, 'missing') || exactState(ownership, 'conflict')) {
+          return matchUnavailable();
+        }
+        if (!recoveryAuthorized(ownership)) return unavailable();
+
+        // recovery ownershipのpositive proof後だけclient指定名を解決する。
+        const stub = dependencies.matchStub(bindings, matched.matchId);
+        if (matched.kind === 'receipt') {
+          const receipt = await stub.getNpcBattleReceipt({
+            principal: matchPrincipal,
+            commandId: matched.commandId,
+          });
+          if (receipt !== null && receipt.commandId !== matched.commandId) {
+            return unavailable();
+          }
+          const body = parseMatchReceiptResponse({
+            type: 'matchReceipt',
+            matchId: matched.matchId,
+            receipt,
+          });
+          return body ? matchJson(body, 200) : unavailable();
+        }
+
+        const result = await stub.getNpcBattlePublicResult(matchPrincipal);
+        const body = parseMatchResultResponse({
+          type: 'matchResult',
+          matchId: matched.matchId,
+          result,
+        });
+        return body ? matchJson(body, 200) : unavailable();
       }
 
       const membership = await coordinator.checkMatchMembership({

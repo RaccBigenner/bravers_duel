@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { MatchCommandResult, MatchTerminalProjection } from '@bravers/protocol';
 import { generateOpaqueToken } from '../src/auth/sessionCrypto';
 import type {
   SessionPrincipal,
@@ -18,12 +19,15 @@ import {
   INTERNAL_ACCOUNT_ID_HEADER,
   INTERNAL_SESSION_ID_HEADER,
   INTERNAL_SESSION_VERSION_HEADER,
+  type NpcBattleRecoveryStatus,
   type MatchSessionPrincipal,
   type SeatTokenIssueResult,
 } from '../src/match/matchDurableObject';
 import type {
   SessionCoordinatorPort,
   SessionMatchMembershipStatus,
+  SessionNpcMatchReadResult,
+  SessionNpcMatchRecoveryOwnershipStatus,
   SessionNpcMatchReservationResult,
 } from '../src/session/sessionCoordinatorDurableObject';
 
@@ -47,6 +51,9 @@ const opaqueToken = (byte: number) =>
 
 const SESSION_TOKEN = opaqueToken(8);
 const SEAT_TOKEN = opaqueToken(9);
+const NPC_MATCH_ID = 'npc-11111111-2222-4333-8444-555555555555';
+const COMMAND_ID = 'cmd_00112233445566778899aabbccddeeff';
+const DIFFERENT_COMMAND_ID = 'cmd_ffeeddccbbaa99887766554433221100';
 
 function keyring(keyVersion: number, byte: number): string {
   return JSON.stringify({
@@ -129,20 +136,36 @@ function testFlow(
     state: 'ready' as const,
     created: true,
   }));
+  const getNpcBattleRecoveryStatus = vi.fn(async (): Promise<NpcBattleRecoveryStatus> => ({
+    state: 'active' as const,
+    matchId: NPC_MATCH_ID,
+  }));
+  const getNpcBattleReceipt = vi.fn(async (): Promise<MatchCommandResult | null> => null);
+  const getNpcBattlePublicResult = vi.fn(
+    async (): Promise<MatchTerminalProjection | null> => null,
+  );
   const checkMatchMembership = vi.fn(
     async (): Promise<SessionMatchMembershipStatus> => ({ state: 'registered' }),
   );
   const reserveNpcMatch = vi.fn(async (): Promise<SessionNpcMatchReservationResult> => ({
     state: 'reserved' as const,
-    matchId: 'npc-11111111-2222-4333-8444-555555555555',
+    matchId: NPC_MATCH_ID,
     seed: 0x1234_5678,
     created: true,
   }));
+  const readNpcMatch = vi.fn(
+    async (): Promise<SessionNpcMatchReadResult> => ({ state: 'none' }),
+  );
+  const checkNpcMatchRecoveryOwnership = vi.fn(
+    async (): Promise<SessionNpcMatchRecoveryOwnershipStatus> => ({ state: 'authorized' }),
+  );
   const coordinator = {
     registerMatch: vi.fn(),
     checkMatch: vi.fn(),
     checkMatchMembership,
     reserveNpcMatch,
+    readNpcMatch,
+    checkNpcMatchRecoveryOwnership,
     releaseNpcMatch: vi.fn(),
     unregisterMatch: vi.fn(),
     prepareLogout: vi.fn(),
@@ -156,6 +179,9 @@ function testFlow(
     (_bindings: MatchAccessBindings, _matchId: string) => ({
       issueSeatToken,
       startNpcBattle,
+      getNpcBattleRecoveryStatus,
+      getNpcBattleReceipt,
+      getNpcBattlePublicResult,
       fetch: fetchMatch,
     }),
   );
@@ -171,11 +197,16 @@ function testFlow(
     createStore,
     issueSeatToken,
     startNpcBattle,
+    getNpcBattleRecoveryStatus,
+    getNpcBattleReceipt,
+    getNpcBattlePublicResult,
     fetchMatch,
     matchStub,
     coordinatorStub,
     checkMatchMembership,
     reserveNpcMatch,
+    readNpcMatch,
+    checkNpcMatchRecoveryOwnership,
   };
 }
 
@@ -237,6 +268,36 @@ function webSocketRequest(options: WebSocketRequestOptions = {}): Request {
     method: 'GET',
     headers,
   });
+}
+
+interface ReadRequestOptions {
+  method?: string;
+  fetchSite?: string | null;
+  clientHeader?: string | null;
+  cookie?: string;
+  requestOrigin?: string;
+  extraHeaders?: HeadersInit;
+}
+
+function readRequest(path: string, options: ReadRequestOptions = {}): Request {
+  const headers = new Headers(options.extraHeaders);
+  if (options.fetchSite !== null) {
+    headers.set('Sec-Fetch-Site', options.fetchSite ?? 'same-origin');
+  }
+  if (options.clientHeader !== null) {
+    headers.set(AUTH_CLIENT_HEADER, options.clientHeader ?? AUTH_CLIENT_HEADER_VALUE);
+  }
+  if (options.cookie) headers.set('Cookie', options.cookie);
+  return new Request(`${options.requestOrigin ?? ORIGIN}${path}`, {
+    method: options.method ?? 'GET',
+    headers,
+  });
+}
+
+function expectPrivateNoStore(response: Response | null): void {
+  expect(response?.headers.get('Cache-Control')).toBe('private, no-store');
+  expect(response?.headers.get('Pragma')).toBe('no-cache');
+  expect(response?.headers.get('X-Content-Type-Options')).toBe('nosniff');
 }
 
 describe('OLG-113/121 match access controller', () => {
@@ -506,6 +567,322 @@ describe('OLG-113/121 match access controller', () => {
     expect(malformedResponse?.status).toBe(503);
     expect(await malformedResponse?.json()).toEqual({ error: 'MATCH_ACCESS_UNAVAILABLE' });
     expect(malformed.matchStub).not.toHaveBeenCalled();
+  });
+
+  it('recovery GETはquery/Fetch Metadata/固定header/sessionをDOより先に検査する', async () => {
+    const flow = testFlow();
+    const paths = [
+      '/me/active-match',
+      `/matches/${NPC_MATCH_ID}/commands/${COMMAND_ID}/receipt`,
+      `/matches/${NPC_MATCH_ID}/result`,
+    ];
+    for (const path of paths) {
+      const query = await flow.handle(readRequest(`${path}?debug=1`), localBindings());
+      expect(query?.status, `${path} query`).toBe(403);
+      expectPrivateNoStore(query);
+
+      const crossSite = await flow.handle(
+        readRequest(path, { fetchSite: 'cross-site' }),
+        localBindings(),
+      );
+      expect(crossSite?.status, `${path} cross-site`).toBe(403);
+
+      const missingHeader = await flow.handle(
+        readRequest(path, { clientHeader: null }),
+        localBindings(),
+      );
+      expect(missingHeader?.status, `${path} missing header`).toBe(403);
+
+      const wrongMethod = await flow.handle(
+        readRequest(path, { method: 'POST' }),
+        localBindings(),
+      );
+      expect(wrongMethod?.status, `${path} method`).toBe(405);
+      expect(wrongMethod?.headers.get('Allow')).toBe('GET');
+
+      const missingSession = await flow.handle(readRequest(path), localBindings());
+      expect(missingSession?.status, `${path} session`).toBe(401);
+      expectPrivateNoStore(missingSession);
+    }
+    expect(flow.createStore).not.toHaveBeenCalled();
+    expect(flow.coordinatorStub).not.toHaveBeenCalled();
+    expect(flow.matchStub).not.toHaveBeenCalled();
+  });
+
+  it('GET /me/active-matchはCoordinator由来IDのみを解決しcurrent stateをno-storeで返す', async () => {
+    const store = fakeStore({ resolveSessionCandidates: vi.fn(async () => principal) });
+    const flow = testFlow(store);
+    flow.readNpcMatch.mockResolvedValue({ state: 'located', matchId: NPC_MATCH_ID });
+    flow.getNpcBattleRecoveryStatus.mockResolvedValue({
+      state: 'active',
+      matchId: NPC_MATCH_ID,
+    });
+
+    const response = await flow.handle(
+      readRequest('/me/active-match', { cookie: `bd_session_local=${SESSION_TOKEN}` }),
+      localBindings(),
+    );
+
+    expect(response?.status).toBe(200);
+    expectPrivateNoStore(response);
+    expect(await response?.json()).toEqual({
+      type: 'activeMatch',
+      match: {
+        kind: 'npc',
+        matchId: NPC_MATCH_ID,
+        seat: 'player-1',
+        state: 'active',
+      },
+    });
+    expect(flow.readNpcMatch).toHaveBeenCalledWith(matchPrincipal);
+    expect(flow.matchStub).toHaveBeenCalledWith(expect.anything(), NPC_MATCH_ID);
+    expect(flow.getNpcBattleRecoveryStatus).toHaveBeenCalledWith(matchPrincipal);
+    expect(flow.readNpcMatch.mock.invocationCallOrder[0]).toBeLessThan(
+      flow.matchStub.mock.invocationCallOrder[0]!,
+    );
+    expect(flow.matchStub.mock.invocationCallOrder[0]).toBeLessThan(
+      flow.getNpcBattleRecoveryStatus.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it('active-matchのnone/conflict/invalidatedはMatchDO stubを解決しない', async () => {
+    const store = fakeStore({ resolveSessionCandidates: vi.fn(async () => principal) });
+
+    const none = testFlow(store);
+    none.readNpcMatch.mockResolvedValue({ state: 'none' });
+    const noneResponse = await none.handle(
+      readRequest('/me/active-match', { cookie: `bd_session_local=${SESSION_TOKEN}` }),
+      localBindings(),
+    );
+    expect(noneResponse?.status).toBe(200);
+    expect(await noneResponse?.json()).toEqual({ type: 'activeMatch', match: null });
+    expectPrivateNoStore(noneResponse);
+    expect(none.matchStub).not.toHaveBeenCalled();
+
+    const conflict = testFlow(store);
+    conflict.readNpcMatch.mockResolvedValue({ state: 'conflict' });
+    const conflictResponse = await conflict.handle(
+      readRequest('/me/active-match', { cookie: `bd_session_local=${SESSION_TOKEN}` }),
+      localBindings(),
+    );
+    expect(conflictResponse?.status).toBe(404);
+    expect(await conflictResponse?.json()).toEqual({ error: 'MATCH_NOT_AVAILABLE' });
+    expectPrivateNoStore(conflictResponse);
+    expect(conflict.matchStub).not.toHaveBeenCalled();
+
+    const invalidated = testFlow(store);
+    invalidated.readNpcMatch.mockResolvedValue({ state: 'invalidated', invalidatedVersion: 4 });
+    const invalidatedResponse = await invalidated.handle(
+      readRequest('/me/active-match', { cookie: `bd_session_local=${SESSION_TOKEN}` }),
+      localBindings(),
+    );
+    expect(invalidatedResponse?.status).toBe(401);
+    expect(invalidatedResponse?.headers.get('Set-Cookie')).toContain('bd_session_local=;');
+    expectPrivateNoStore(invalidatedResponse);
+    expect(invalidated.matchStub).not.toHaveBeenCalled();
+  });
+
+  it('receipt/result GETはpositive recovery ownership後だけMatchDO readを呼ぶ', async () => {
+    const store = fakeStore({ resolveSessionCandidates: vi.fn(async () => principal) });
+    const receiptFlow = testFlow(store);
+    const receipt = {
+      type: 'matchCommandResult',
+      state: 'accepted',
+      matchId: NPC_MATCH_ID,
+      commandId: COMMAND_ID,
+      baseRevision: 0,
+      revision: 1,
+    } as unknown as MatchCommandResult;
+    receiptFlow.getNpcBattleReceipt.mockResolvedValue(receipt);
+    const receiptResponse = await receiptFlow.handle(
+      readRequest(`/matches/${NPC_MATCH_ID}/commands/${COMMAND_ID}/receipt`, {
+        cookie: `bd_session_local=${SESSION_TOKEN}`,
+      }),
+      localBindings(),
+    );
+    expect(receiptResponse?.status).toBe(200);
+    expectPrivateNoStore(receiptResponse);
+    expect(await receiptResponse?.json()).toEqual({
+      type: 'matchReceipt',
+      matchId: NPC_MATCH_ID,
+      receipt,
+    });
+    expect(receiptFlow.checkNpcMatchRecoveryOwnership).toHaveBeenCalledWith({
+      ...matchPrincipal,
+      matchId: NPC_MATCH_ID,
+    });
+    expect(receiptFlow.getNpcBattleReceipt).toHaveBeenCalledWith({
+      principal: matchPrincipal,
+      commandId: COMMAND_ID,
+    });
+    expect(receiptFlow.checkNpcMatchRecoveryOwnership.mock.invocationCallOrder[0]).toBeLessThan(
+      receiptFlow.matchStub.mock.invocationCallOrder[0]!,
+    );
+
+    const resultFlow = testFlow(store);
+    const result = {
+      state: 'finished',
+      winner: 0,
+      reason: 'wipeout',
+    } as const satisfies MatchTerminalProjection;
+    resultFlow.getNpcBattlePublicResult.mockResolvedValue(result);
+    const resultResponse = await resultFlow.handle(
+      readRequest(`/matches/${NPC_MATCH_ID}/result`, {
+        cookie: `bd_session_local=${SESSION_TOKEN}`,
+      }),
+      localBindings(),
+    );
+    expect(resultResponse?.status).toBe(200);
+    expectPrivateNoStore(resultResponse);
+    expect(await resultResponse?.json()).toEqual({
+      type: 'matchResult',
+      matchId: NPC_MATCH_ID,
+      result,
+    });
+    expect(resultFlow.checkNpcMatchRecoveryOwnership).toHaveBeenCalledWith({
+      ...matchPrincipal,
+      matchId: NPC_MATCH_ID,
+    });
+    expect(resultFlow.getNpcBattlePublicResult).toHaveBeenCalledWith(matchPrincipal);
+    expect(resultFlow.checkNpcMatchRecoveryOwnership.mock.invocationCallOrder[0]).toBeLessThan(
+      resultFlow.matchStub.mock.invocationCallOrder[0]!,
+    );
+
+    const emptyFlow = testFlow(store);
+    const emptyReceipt = await emptyFlow.handle(
+      readRequest(`/matches/${NPC_MATCH_ID}/commands/${COMMAND_ID}/receipt`, {
+        cookie: `bd_session_local=${SESSION_TOKEN}`,
+      }),
+      localBindings(),
+    );
+    const emptyResult = await emptyFlow.handle(
+      readRequest(`/matches/${NPC_MATCH_ID}/result`, {
+        cookie: `bd_session_local=${SESSION_TOKEN}`,
+      }),
+      localBindings(),
+    );
+    expect(await emptyReceipt?.json()).toEqual({
+      type: 'matchReceipt',
+      matchId: NPC_MATCH_ID,
+      receipt: null,
+    });
+    expect(await emptyResult?.json()).toEqual({
+      type: 'matchResult',
+      matchId: NPC_MATCH_ID,
+      result: null,
+    });
+  });
+
+  it.each([
+    ['receipt', `/matches/${NPC_MATCH_ID}/commands/${COMMAND_ID}/receipt`],
+    ['result', `/matches/${NPC_MATCH_ID}/result`],
+  ])('%sはmismatch/missing/invalidatedのpositive proof前にMatchDOを解決しない', async (_label, path) => {
+    const store = fakeStore({ resolveSessionCandidates: vi.fn(async () => principal) });
+    const states = [
+      { value: { state: 'conflict' as const }, status: 404 },
+      { value: { state: 'missing' as const }, status: 404 },
+      { value: { state: 'invalidated' as const, invalidatedVersion: 4 }, status: 401 },
+    ];
+    for (const { value, status } of states) {
+      const flow = testFlow(store);
+      flow.checkNpcMatchRecoveryOwnership.mockResolvedValue(value);
+      const response = await flow.handle(
+        readRequest(path, { cookie: `bd_session_local=${SESSION_TOKEN}` }),
+        localBindings(),
+      );
+      expect(response?.status).toBe(status);
+      expectPrivateNoStore(response);
+      if (status === 401) {
+        expect(response?.headers.get('Set-Cookie')).toContain('bd_session_local=;');
+      } else {
+        expect(await response?.json()).toEqual({ error: 'MATCH_NOT_AVAILABLE' });
+      }
+      expect(flow.matchStub).not.toHaveBeenCalled();
+      expect(flow.getNpcBattleReceipt).not.toHaveBeenCalled();
+      expect(flow.getNpcBattlePublicResult).not.toHaveBeenCalled();
+    }
+  });
+
+  it('recovery RPCの余分field・match不一致・browser DTO不成立を503へ閉じる', async () => {
+    const store = fakeStore({ resolveSessionCandidates: vi.fn(async () => principal) });
+
+    const malformedLocator = testFlow(store);
+    malformedLocator.readNpcMatch.mockResolvedValue({
+      state: 'located',
+      matchId: NPC_MATCH_ID,
+      extra: true,
+    } as never);
+    const locatorResponse = await malformedLocator.handle(
+      readRequest('/me/active-match', { cookie: `bd_session_local=${SESSION_TOKEN}` }),
+      localBindings(),
+    );
+    expect(locatorResponse?.status).toBe(503);
+    expectPrivateNoStore(locatorResponse);
+    expect(malformedLocator.matchStub).not.toHaveBeenCalled();
+
+    const mismatchedStatus = testFlow(store);
+    mismatchedStatus.readNpcMatch.mockResolvedValue({ state: 'located', matchId: NPC_MATCH_ID });
+    mismatchedStatus.getNpcBattleRecoveryStatus.mockResolvedValue({
+      state: 'active',
+      matchId: 'npc-aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+    });
+    const statusResponse = await mismatchedStatus.handle(
+      readRequest('/me/active-match', { cookie: `bd_session_local=${SESSION_TOKEN}` }),
+      localBindings(),
+    );
+    expect(statusResponse?.status).toBe(503);
+    expectPrivateNoStore(statusResponse);
+
+    const malformedOwnership = testFlow(store);
+    malformedOwnership.checkNpcMatchRecoveryOwnership.mockResolvedValue({
+      state: 'authorized',
+      extra: true,
+    } as never);
+    const ownershipResponse = await malformedOwnership.handle(
+      readRequest(`/matches/${NPC_MATCH_ID}/result`, {
+        cookie: `bd_session_local=${SESSION_TOKEN}`,
+      }),
+      localBindings(),
+    );
+    expect(ownershipResponse?.status).toBe(503);
+    expectPrivateNoStore(ownershipResponse);
+    expect(malformedOwnership.matchStub).not.toHaveBeenCalled();
+
+    const malformedResult = testFlow(store);
+    malformedResult.getNpcBattlePublicResult.mockResolvedValue({
+      state: 'finished',
+      winner: 0,
+      reason: 'wipeout',
+      finalStateHash: 'must-not-leak',
+    } as never);
+    const resultResponse = await malformedResult.handle(
+      readRequest(`/matches/${NPC_MATCH_ID}/result`, {
+        cookie: `bd_session_local=${SESSION_TOKEN}`,
+      }),
+      localBindings(),
+    );
+    expect(resultResponse?.status).toBe(503);
+    expectPrivateNoStore(resultResponse);
+    expect(await resultResponse?.json()).toEqual({ error: 'MATCH_ACCESS_UNAVAILABLE' });
+
+    const mismatchedReceipt = testFlow(store);
+    mismatchedReceipt.getNpcBattleReceipt.mockResolvedValue({
+      type: 'matchCommandResult',
+      state: 'accepted',
+      matchId: NPC_MATCH_ID,
+      commandId: DIFFERENT_COMMAND_ID,
+      baseRevision: 0,
+      revision: 1,
+    } as unknown as MatchCommandResult);
+    const receiptResponse = await mismatchedReceipt.handle(
+      readRequest(`/matches/${NPC_MATCH_ID}/commands/${COMMAND_ID}/receipt`, {
+        cookie: `bd_session_local=${SESSION_TOKEN}`,
+      }),
+      localBindings(),
+    );
+    expect(receiptResponse?.status).toBe(503);
+    expectPrivateNoStore(receiptResponse);
+    expect(await receiptResponse?.json()).toEqual({ error: 'MATCH_ACCESS_UNAVAILABLE' });
   });
 
   it('assignment成功時だけraw seat tokenを201/no-storeで返し他credentialを露出しない', async () => {

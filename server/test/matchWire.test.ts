@@ -1,5 +1,6 @@
 import {
   MATCH_PLAYER_PROJECTION_VERSION,
+  MATCH_VIEWER_EVENT_VERSION,
   parseBattleCardId,
   parseMatchCommandId,
   parseMatchId,
@@ -56,6 +57,7 @@ function projection(): MatchPlayerProjection {
     viewerSeat: 'player-1',
     viewerPlayer: 0,
     revision,
+    viewerEventVersion: MATCH_VIEWER_EVENT_VERSION,
     eventSequence: 0,
     contentVersion: 'content-test',
     formatVersionId: 'standard@1',
@@ -70,6 +72,15 @@ function projection(): MatchPlayerProjection {
     endReason: null,
     terminal: null,
     legalActions: [],
+  };
+}
+
+function syncFor(value: MatchPlayerProjection) {
+  return {
+    type: 'matchViewerSync' as const,
+    mode: 'snapshot' as const,
+    reason: 'initial' as const,
+    eventSequence: value.eventSequence,
   };
 }
 
@@ -121,7 +132,11 @@ function serverFrameAtEncodedBytes(targetBytes: number): MatchServerFrame {
   value.players[0].characters = Array.from({ length: 4 }, character);
   value.players[1].characters = Array.from({ length: 4 }, character);
   value.field = Object.assign(card(), { owner: 0 as const });
-  const frame = { type: 'matchProjection', projection: value } satisfies MatchServerFrame;
+  const frame = {
+    type: 'matchProjection',
+    projection: value,
+    sync: syncFor(value),
+  } satisfies MatchServerFrame;
   const encoder = new TextEncoder();
   let encodedBytes = encoder.encode(JSON.stringify(frame)).byteLength;
   let remaining = targetBytes - encodedBytes;
@@ -189,7 +204,12 @@ describe('OLG-124 match WebSocket wire', () => {
   });
 
   it('server frameもexact検証してからserializeする', () => {
-    const frame = { type: 'matchProjection', projection: projection() } satisfies MatchServerFrame;
+    const value = projection();
+    const frame = {
+      type: 'matchProjection',
+      projection: value,
+      sync: syncFor(value),
+    } satisfies MatchServerFrame;
     expect(JSON.parse(serializeMatchServerFrame(frame))).toEqual(frame);
     expectWireError(
       () => serializeMatchServerFrame({ ...frame, projection: { ...frame.projection, seed: 1 } } as never),

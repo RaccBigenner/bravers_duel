@@ -25,6 +25,7 @@ import {
 } from '@bravers/engine';
 import {
   MATCH_PLAYER_PROJECTION_VERSION,
+  MATCH_VIEWER_EVENT_VERSION,
   parseBattleCardId,
   parseMatchAction,
   parseMatchPlayerProjection,
@@ -156,6 +157,8 @@ export interface PlayerBattleProjectionInput {
   matchId: MatchId;
   viewerSeat: MatchViewerSeat;
   revision: MatchRevision;
+  /** OLG-126のviewer-visible batch cursor。raw BattleState.eventSeqをwireへ出さない。 */
+  eventSequence: number;
   contentVersion: string;
   formatVersionId: string;
   terminal: MatchTerminalProjection | null;
@@ -335,7 +338,8 @@ export function createPlayerBattleProjection(
     viewerSeat: input.viewerSeat,
     viewerPlayer: viewer,
     revision: input.revision,
-    eventSequence: state.eventSeq,
+    viewerEventVersion: MATCH_VIEWER_EVENT_VERSION,
+    eventSequence: input.eventSequence,
     contentVersion: input.contentVersion,
     formatVersionId: input.formatVersionId,
     turn: state.turn,

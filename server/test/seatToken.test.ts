@@ -132,10 +132,49 @@ describe('OLG-113 seat token', () => {
     const canonical = JSON.stringify({ type: 'auth', seatToken: token });
     const alternateJsonFormatting = ` { "seatToken": "${token}", "type": "auth" } `;
 
-    expect(parseSeatAuthFrame(canonical)).toEqual({ type: 'auth', seatToken: token });
+    expect(parseSeatAuthFrame(canonical)).toEqual({
+      type: 'auth',
+      seatToken: token,
+      resume: null,
+    });
     expect(
       parseSeatAuthFrame(new TextEncoder().encode(alternateJsonFormatting).buffer),
-    ).toEqual({ type: 'auth', seatToken: token });
+    ).toEqual({ type: 'auth', seatToken: token, resume: null });
+  });
+
+  it('resume付きauth frameと0以上のsafe integer境界を読む', () => {
+    const token = deterministicToken();
+    const first = parseSeatAuthFrame(
+      JSON.stringify({
+        type: 'auth',
+        seatToken: token,
+        resume: {
+          projectionVersion: 2,
+          viewerEventVersion: 1,
+          lastEventSequence: 0,
+        },
+      }),
+    );
+    const farAhead = parseSeatAuthFrame(
+      JSON.stringify({
+        resume: {
+          lastEventSequence: Number.MAX_SAFE_INTEGER,
+          viewerEventVersion: 1,
+          projectionVersion: 2,
+        },
+        seatToken: token,
+        type: 'auth',
+      }),
+    );
+
+    expect(first.resume).toEqual({
+      projectionVersion: 2,
+      viewerEventVersion: 1,
+      lastEventSequence: 0,
+    });
+    expect(farAhead.resume?.lastEventSequence).toBe(Number.MAX_SAFE_INTEGER);
+    expect(Object.isFrozen(first)).toBe(true);
+    expect(Object.isFrozen(first.resume)).toBe(true);
   });
 
   it('欠損・余分key・型違い・不正JSON・不正tokenを同じstable errorで拒否する', () => {
@@ -149,6 +188,7 @@ describe('OLG-113 seat token', () => {
       JSON.stringify({ seatToken: token }),
       JSON.stringify({ type: 'command', seatToken: token }),
       JSON.stringify({ type: 'auth', seatToken: token, extra: true }),
+      JSON.stringify({ type: 'auth', seatToken: token, resume: null }),
       JSON.stringify({ type: 'auth', seatToken: 123 }),
       JSON.stringify({ type: 'auth', seatToken: token.slice(1) }),
     ];
@@ -160,6 +200,62 @@ describe('OLG-113 seat token', () => {
         token,
       );
     }
+  });
+
+  it('resumeのversion・exact key・sequence形式違反を拒否する', () => {
+    const token = deterministicToken();
+    const resume = {
+      projectionVersion: 2,
+      viewerEventVersion: 1,
+      lastEventSequence: 1,
+    };
+    const rejectedResumes = [
+      {},
+      [],
+      null,
+      { ...resume, projectionVersion: 1 },
+      { ...resume, viewerEventVersion: 2 },
+      { projectionVersion: 2, viewerEventVersion: 1 },
+      { ...resume, extra: true },
+      { ...resume, lastEventSequence: -1 },
+      { ...resume, lastEventSequence: 0.5 },
+      { ...resume, lastEventSequence: Number.MAX_SAFE_INTEGER + 1 },
+      { ...resume, lastEventSequence: '1' },
+    ];
+
+    for (const invalidResume of rejectedResumes) {
+      expectFrameError(
+        () =>
+          parseSeatAuthFrame(
+            JSON.stringify({
+              type: 'auth',
+              seatToken: token,
+              resume: invalidResume,
+            }),
+          ),
+        'SEAT_AUTH_FRAME_INVALID',
+        token,
+      );
+    }
+  });
+
+  it('resume付きauth frameを256 bytesちょうどまで受理する', () => {
+    const token = deterministicToken();
+    const frame = JSON.stringify({
+      type: 'auth',
+      seatToken: token,
+      resume: {
+        projectionVersion: 2,
+        viewerEventVersion: 1,
+        lastEventSequence: 0,
+      },
+    });
+    const byteLength = new TextEncoder().encode(frame).byteLength;
+    const atLimit = frame + ' '.repeat(SEAT_AUTH_FRAME_MAX_BYTES - byteLength);
+
+    expect(new TextEncoder().encode(atLimit)).toHaveLength(SEAT_AUTH_FRAME_MAX_BYTES);
+    expect(parseSeatAuthFrame(atLimit).resume?.lastEventSequence).toBe(0);
+    expectFrameError(() => parseSeatAuthFrame(`${atLimit} `), 'SEAT_AUTH_FRAME_TOO_LARGE');
   });
 
   it('不正UTF-8とbyte上限超過をJSON parse前に拒否する', () => {

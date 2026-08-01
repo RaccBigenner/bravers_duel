@@ -724,7 +724,7 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
 - OLG-123 stable `battleCardId` — **コード実装済み（2026-08-01）**
 - OLG-124 player projection — **コード実装済み（2026-08-02）**
 - OLG-125 snapshot/event persistence — **コード実装済み（2026-08-02）**
-- OLG-126 reconnect/resume
+- OLG-126 reconnect/resume — **コード実装済み（2026-08-02）**
 - OLG-127 timeout/disconnect（PvP標準クロック・切断との関係・レート反映の設計: 11.5）
 - OLG-128 authoritative NPC tutorial E2E（NPC戦は無制限＋idle suspendの設計: 4.1）
 - OLG-129 battle start idempotency tombstone（終端後まで極端に遅延した旧開始要求と新規開始を区別。
@@ -877,12 +877,14 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
 - auth直後、accepted / rejected / duplicate / conflict、terminal ACK喪失相当、複数tab、cancel/abandon、
   terminal send/close後のDO再生成を実WebSocket＋SQLite件数で検査する
 
-残余:
+完了した後続:
 
 - OLG-126で`GET /me/active-match`、認証session所有権によるreceipt/result read、viewer-visible event delta、
-  `last_event_sequence` / snapshot fallbackを実装する。v1の`eventSequence`はG1 NPC-only wireのraw current cursor
-  なので、PvP前にviewer別の単調cursorへ置換し、hidden event数がgapから分からないようversion upする。
-  リロード後の新規socket復帰はまだできない
+  `lastEventSequence` / snapshot fallbackを実装した。projection v2の`eventSequence`はraw event数でなく
+  stable step単位のviewer batch cursorになり、hidden eventの増減からgapを推測できない
+
+残余:
+
 - G3のOLG-301/302は2 seatそれぞれでprojectionを再生成し、同一viewer用frameを相手へ流さないことを実機検査する。
   NPC専用の`abandoned { winner: 1 }`も、離脱seatと勝者を両向きに表せるterminal unionへversion upする
 - 自分deckの順不同multiset / AP内容はv1では非対応（両者countのみ）。必要なUIと秘匿条件を決めて版付き追加する
@@ -909,10 +911,47 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
 - command digest、step gap、revision、current hash、receipt schema、cleanup outbox/deadlineの改変は実constructorで
   繰り返しfail closedとし、seedから新しいIDを再生成しない
 
+完了した後続:
+
+- OLG-126で認証session所有権を照合するactive-match / receipt / result readとevent差分resumeを公開した
+
 残余:
 
-- OLG-126で認証session所有権を照合するactive-match / receipt / result readとevent差分resumeを公開する
 - 周期checkpoint + tail再演は、版付きrestore APIと全再演監査を保つ将来の性能最適化
+
+#### OLG-126 reconnect/resume
+
+状態: **コード実装済み**（2026-08-02）
+
+- protocolをplayer projection v2 / viewer event v1へ上げた。`eventSequence`はraw engine event件数ではなく、
+  永続化済みstable step 1件につき1増えるviewer batch cursorとする。相手のhidden eventしかないstepも
+  `events: []`のbatchを残すため、秘匿eventの有無・件数はcursor gapへ現れない
+- raw `BattleEvent`はwireへ出さない。公開eventは型で閉じたallowlistへ変換し、相手のhand charge/search、
+  `info.text`、ability label、未公開card IDをdropする。projectionとdeltaは同じviewer向けに毎回再生成する
+- 最初のWebSocket authは旧`{ type, seatToken }`と、version付き
+  `{ type, seatToken, resume: { projectionVersion: 2, viewerEventVersion: 1, lastEventSequence } }`だけを受理する。
+  旧authはcurrent snapshot、resumeは最大128 batchの連続deltaを返す。current cursorは空delta、ahead / 128超の
+  gapはsnapshotへ収束し、deltaが128 KiB frameを超える場合も`delta_too_large` snapshotへ切り替える
+- `GET /me/active-match`、`GET /matches/:matchId/commands/:commandId/receipt`、
+  `GET /matches/:matchId/result`を追加した。opaque session、same-origin Fetch Metadata、固定client headerを検査し、
+  全応答を`private, no-store`にする。client指定match IDからMatchDOを先に作らず、SessionCoordinatorの
+  active / recent ownershipがpositiveになった後だけstubを解決する
+- terminal cleanup後はSessionCoordinatorへsessionごと最大1件のrecent ownershipを90日保持する。
+  releaseの応答喪失は同じ`released`へ収束し、新しいNPC戦の予約、logout、session invalidationで古いrecordを消す。
+  terminalではseat token / socketを再発行せず、保存済みACK-only receiptと公開resultだけをHTTPで読ませる
+
+受入:
+
+- legacy初期接続、current / 1 batch前 / ahead / gap cursor、DO eviction後の新seat token再接続と次commandを検査する
+- raw event数がstable step cursorへ影響しないこと、両viewerのhidden canary差分がbyte単位で同一になること、
+  hidden-only空batchがexact decoderを通ることを検査する
+- ACK喪失後のreceipt、terminal cleanup・DO eviction後のresult、期限切れ・失効・別account / match拒否を検査する
+
+残余:
+
+- 「試合に戻る」表示と自動接続はOLG-133、未送信commandの端末outboxはOLG-132が担う
+- 匿名accountを外部IDへlinkした後も同じmatch ownershipを保つrebindはOLG-112で、G3の両seat / spectator cursorは
+  OLG-301/302でversion付きに拡張する
 
 ### Epic OLG-130 PWA shell
 
