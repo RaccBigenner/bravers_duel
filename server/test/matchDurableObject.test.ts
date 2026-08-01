@@ -5,11 +5,13 @@ import {
   runInDurableObject,
 } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
+import { createSessionCryptoKeys } from '../src/auth/sessionCrypto';
 import {
   INTERNAL_ACCOUNT_ID_HEADER,
   INTERNAL_SESSION_ID_HEADER,
   INTERNAL_SESSION_VERSION_HEADER,
   MatchDO,
+  MAX_OUTSTANDING_SEAT_TOKENS,
   SEAT_AUTH_FRAME_TIMEOUT_MS,
   SEAT_TOKEN_TTL_MS,
   type MatchSessionPrincipal,
@@ -19,8 +21,14 @@ import {
   createMatchAccessRequestHandler,
   type MatchAccessBindings,
 } from '../src/http/matchAccessController';
+import type { SessionCoordinatorDO } from '../src/session/sessionCoordinatorDurableObject';
+import {
+  generateSeatToken,
+  seatTokenDigestCandidates,
+} from '../src/match/seatToken';
 
 type MatchStub = DurableObjectStub<MatchDO>;
+type SessionCoordinatorStub = DurableObjectStub<SessionCoordinatorDO>;
 type SqlRow = Record<string, string | number | null>;
 
 type SocketOutcome =
@@ -45,6 +53,52 @@ function principal(overrides: Partial<MatchSessionPrincipal> = {}): MatchSession
 
 function stubFor(id: string): MatchStub {
   return env.MATCH_DO.get(env.MATCH_DO.idFromName(id));
+}
+
+function coordinatorFor(sessionId: string): SessionCoordinatorStub {
+  return env.SESSION_COORDINATOR_DO.get(
+    env.SESSION_COORDINATOR_DO.idFromName(sessionId),
+  );
+}
+
+function deterministicKeyMaterial(byte: number): string {
+  return generateSeatToken((bytes) => {
+    bytes.fill(byte);
+    return bytes;
+  });
+}
+
+function rotatedSeatTokenKeys(): {
+  keys: ReturnType<typeof createSessionCryptoKeys>;
+  activeVersion: number;
+  retainedVersion: number;
+} {
+  const current = JSON.parse(env.SESSION_HMAC_KEYS) as {
+    activeVersion: number;
+    keys: Array<{ keyVersion: number; material: string }>;
+  };
+  const retained = current.keys.find(
+    (candidate) => candidate.keyVersion === current.activeVersion,
+  );
+  if (!retained) throw new Error('Expected current test HMAC key');
+  const activeVersion = retained.keyVersion + 1;
+  return {
+    keys: createSessionCryptoKeys({
+      hmac: {
+        activeVersion,
+        keys: [
+          retained,
+          { keyVersion: activeVersion, material: deterministicKeyMaterial(0xdd) },
+        ],
+      },
+      encryption: {
+        activeVersion: 30_000,
+        keys: [{ keyVersion: 30_000, material: deterministicKeyMaterial(0xee) }],
+      },
+    }),
+    activeVersion,
+    retainedVersion: retained.keyVersion,
+  };
 }
 
 function socketOutcome(socket: WebSocket, timeoutMs = 2_000): Promise<SocketOutcome> {
@@ -322,6 +376,34 @@ describe('OLG-113 MatchDO seat authentication', () => {
     second.close(1000, 'done');
   });
 
+  it('同一assignmentへの発行がMAX_OUTSTANDING_SEAT_TOKENSに達するとrate_limitedになり、消費後に再発行できる', async () => {
+    const id = matchId('rate-limited');
+    const stub = stubFor(id);
+    const session = principal();
+    const assignment = await stub.assignSeat({ ...session, seatId: 'player-1' });
+    expect(assignment.state).toBe('assigned');
+
+    const issuedTokens: string[] = [];
+    for (let i = 0; i < MAX_OUTSTANDING_SEAT_TOKENS; i += 1) {
+      const issued = await stub.issueSeatToken(session);
+      expect(issued.state).toBe('issued');
+      if (issued.state !== 'issued') throw new Error('Expected issued seat token');
+      issuedTokens.push(issued.seatToken);
+    }
+    expect(issuedTokens).toHaveLength(MAX_OUTSTANDING_SEAT_TOKENS);
+
+    await expect(stub.issueSeatToken(session)).resolves.toEqual({ state: 'rate_limited' });
+
+    const socket = await openPlayerSocket(stub, id, session);
+    await expect(authenticate(socket, issuedTokens[0]!)).resolves.toEqual({
+      kind: 'message',
+      data: 'auth_ok',
+    });
+    socket.close(1000, 'done');
+
+    await expect(stub.issueSeatToken(session)).resolves.toMatchObject({ state: 'issued' });
+  });
+
   it('invalidate前のpendingと認証後socketを閉じ、旧versionの再発行を拒否する', async () => {
     const beforeId = matchId('invalidate-before');
     const beforeStub = stubFor(beforeId);
@@ -366,6 +448,65 @@ describe('OLG-113 MatchDO seat authentication', () => {
       kind: 'close',
       code: 1008,
       reason: 'SESSION_ENDED',
+    });
+  });
+
+  it('session coordinatorが関連する全MatchDOのACKを待ち、socketを閉じる', async () => {
+    const session = principal();
+    const firstId = matchId('fanout-first');
+    const secondId = matchId('fanout-second');
+    const firstStub = stubFor(firstId);
+    const secondStub = stubFor(secondId);
+    const firstIssued = await assignAndIssue(firstStub, session, 'player-1');
+    const secondIssued = await assignAndIssue(secondStub, session, 'player-2');
+    const firstSocket = await openPlayerSocket(firstStub, firstId, session);
+    const secondSocket = await openPlayerSocket(secondStub, secondId, session);
+    await expect(authenticate(firstSocket, firstIssued.seatToken)).resolves.toEqual({
+      kind: 'message',
+      data: 'auth_ok',
+    });
+    await expect(authenticate(secondSocket, secondIssued.seatToken)).resolves.toEqual({
+      kind: 'message',
+      data: 'auth_ok',
+    });
+    const firstClose = socketOutcome(firstSocket);
+    const secondClose = socketOutcome(secondSocket);
+
+    await expect(
+      coordinatorFor(session.sessionId).invalidateSession({
+        sessionId: session.sessionId,
+        invalidatedVersion: session.sessionVersion + 1,
+      }),
+    ).resolves.toEqual({
+      state: 'acknowledged',
+      invalidatedVersion: session.sessionVersion + 1,
+      matchedObjects: 2,
+    });
+    await expect(Promise.all([firstClose, secondClose])).resolves.toEqual([
+      { kind: 'close', code: 1008, reason: 'SESSION_ENDED' },
+      { kind: 'close', code: 1008, reason: 'SESSION_ENDED' },
+    ]);
+    await expect(firstStub.issueSeatToken(session)).resolves.toEqual({
+      state: 'not_assigned',
+    });
+    await expect(secondStub.issueSeatToken(session)).resolves.toEqual({
+      state: 'not_assigned',
+    });
+  });
+
+  it('logout失効がassignment登録より先でも旧sessionをMatchDOへ入れない', async () => {
+    const session = principal();
+    await coordinatorFor(session.sessionId).invalidateSession({
+      sessionId: session.sessionId,
+      invalidatedVersion: session.sessionVersion + 1,
+    });
+    const stub = stubFor(matchId('invalidation-race'));
+
+    await expect(
+      stub.assignSeat({ ...session, seatId: 'player-1' }),
+    ).resolves.toEqual({ state: 'conflict' });
+    await expect(stub.issueSeatToken(session)).resolves.toEqual({
+      state: 'not_assigned',
     });
   });
 
@@ -471,5 +612,32 @@ describe('OLG-113 MatchDO seat authentication', () => {
     expect(nonLocal?.status).toBe(404);
     await expect(nonLocal?.json()).resolves.toEqual({ error: 'MATCH_NOT_AVAILABLE' });
     expect(nonLocalStubCalls).toBe(0);
+  });
+
+  it('DO identityと異なるmatch URLを同じstubへ転送しても拒否する', async () => {
+    const boundId = matchId('identity-bound');
+    const differentId = matchId('identity-different');
+    const response = await stubFor(boundId).fetch(
+      new Request(`http://local.test/matches/${differentId}/ws`, {
+        headers: { Upgrade: 'websocket' },
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: 'INVALID_MATCH_PATH' });
+    expect(response.webSocket).toBeNull();
+  });
+
+  it('任意のDO stubへlocal-smoke URLを送ってもdiagnosticへ昇格しない', async () => {
+    const arbitraryId = matchId('diagnostic-spoof');
+    const response = await stubFor(arbitraryId).fetch(
+      new Request('http://local.test/matches/local-smoke/ws', {
+        headers: { Upgrade: 'websocket' },
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: 'INVALID_MATCH_PATH' });
+    expect(response.webSocket).toBeNull();
   });
 });
