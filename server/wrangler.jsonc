@@ -3,8 +3,19 @@
   "name": "bravers-duel-server",
   "main": "src/index.ts",
   "compatibility_date": "2026-08-01",
+  "compatibility_flags": ["enable_request_signal"],
   "vars": {
-    "APP_ENV": "local"
+    "APP_ENV": "local",
+    "APP_ORIGIN": "http://127.0.0.1:8787",
+    "SUPABASE_URL": "http://127.0.0.1:54321"
+  },
+  "secrets": {
+    "required": [
+      "SUPABASE_AUTH_KEY",
+      "SUPABASE_SECRET_KEY",
+      "SESSION_HMAC_KEYS",
+      "SESSION_ENCRYPTION_KEYS"
+    ]
   },
   "durable_objects": {
     "bindings": [

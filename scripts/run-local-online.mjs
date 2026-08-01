@@ -1,11 +1,15 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdir, open, readFile, unlink } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, readFile, rm, unlink } from 'node:fs/promises';
 import { createServer } from 'node:net';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { verifyLocalGuestAccount } from './verify-local-guest-account.mjs';
+import {
+  localAuthConfigFromStatus,
+  verifyLocalGuestAccount,
+} from './verify-local-guest-account.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_PORT = 8787;
@@ -425,6 +429,7 @@ export async function prepareSupabase(
       const verification = Promise.resolve().then(() => verifyGuestAccount(readyStatus));
       await waitForCriticalCleanup(verification, wait);
     }
+    return readyStatus;
   } catch (error) {
     if (error instanceof InterruptedError) throw error;
     const message =
@@ -442,23 +447,95 @@ export async function prepareSupabase(
   }
 }
 
-function startWorker(port, runId, registry, { detached }) {
+function randomKeyMaterial() {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Buffer.from(bytes).toString('base64url');
+}
+
+function quotedEnvValue(value) {
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    /[\0\r\n'$]/u.test(value)
+  ) {
+    throw new Error('Worker秘密設定の形式が不正です');
+  }
+  return `'${value}'`;
+}
+
+export async function createLocalWorkerEnvFile(statusResult) {
+  const { publishableKey, secretKey } = localAuthConfigFromStatus(statusResult);
+  const hmacKeyring = JSON.stringify({
+    activeVersion: 1,
+    keys: [{ keyVersion: 1, material: randomKeyMaterial() }],
+  });
+  const encryptionKeyring = JSON.stringify({
+    activeVersion: 1,
+    keys: [{ keyVersion: 1, material: randomKeyMaterial() }],
+  });
+  const directory = await mkdtemp(join(tmpdir(), 'bravers-worker-env-'));
+  const path = join(directory, '.dev.vars');
+  let handle = null;
+  try {
+    handle = await open(path, 'wx', 0o600);
+    await handle.writeFile(
+      [
+        `SUPABASE_AUTH_KEY=${quotedEnvValue(publishableKey)}`,
+        `SUPABASE_SECRET_KEY=${quotedEnvValue(secretKey)}`,
+        `SESSION_HMAC_KEYS=${quotedEnvValue(hmacKeyring)}`,
+        `SESSION_ENCRYPTION_KEYS=${quotedEnvValue(encryptionKeyring)}`,
+        '',
+      ].join('\n'),
+      { encoding: 'utf8' },
+    );
+    await handle.close();
+    handle = null;
+    let disposed = false;
+    return {
+      path,
+      async dispose() {
+        if (disposed) return;
+        await rm(directory, { recursive: true, force: true });
+        disposed = true;
+      },
+    };
+  } catch (error) {
+    try {
+      await handle?.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+    throw new Error('Worker用の一時秘密設定を作成できません', { cause: error });
+  }
+}
+
+export function workerCliArgs(port, runId, { envFilePath, supabaseUrl } = {}) {
+  const args = [
+    wranglerScript,
+    'dev',
+    '--local',
+    '--ip',
+    '127.0.0.1',
+    '--port',
+    String(port),
+    '--var',
+    'APP_ENV:local',
+    '--var',
+    `APP_ORIGIN:http://127.0.0.1:${port}`,
+    '--var',
+    `OLG102_RUN_ID:${runId}`,
+  ];
+  if (supabaseUrl) args.push('--var', `SUPABASE_URL:${supabaseUrl}`);
+  if (envFilePath) args.push('--env-file', envFilePath);
+  return args;
+}
+
+function startWorker(port, runId, registry, { detached, envFilePath, supabaseUrl }) {
   console.log(`▶ Worker/MatchDOを127.0.0.1:${port}で起動します`);
   return registry.spawn(
     process.execPath,
-    [
-      wranglerScript,
-      'dev',
-      '--local',
-      '--ip',
-      '127.0.0.1',
-      '--port',
-      String(port),
-      '--var',
-      'APP_ENV:local',
-      '--var',
-      `OLG102_RUN_ID:${runId}`,
-    ],
+    workerCliArgs(port, runId, { envFilePath, supabaseUrl }),
     {
       cwd: join(ROOT, 'server'),
       env: process.env,
@@ -721,6 +798,8 @@ async function main() {
   let lockPromise = null;
   let releaseLock = null;
   let workerMonitor = null;
+  let workerEnvFile = null;
+  let readyStatus = null;
   let primaryError = null;
   const cleanupErrors = [];
 
@@ -730,7 +809,7 @@ async function main() {
     } else {
       lockPromise = acquireProcessLock();
       releaseLock = await interrupt.wait(lockPromise);
-      await prepareSupabase(supabase, {
+      readyStatus = await prepareSupabase(supabase, {
         run: (args, runOptions) => runSupabase(registry, args, runOptions),
         wait: (operation) => interrupt.wait(operation),
         ...(options.smoke ? { verifyGuestAccount: verifyLocalGuestAccount } : {}),
@@ -739,9 +818,22 @@ async function main() {
 
     await interrupt.wait(assertPortAvailable(options.port));
     const runId = crypto.randomUUID();
+    let supabaseUrl;
+    if (readyStatus) {
+      const localAuth = localAuthConfigFromStatus(readyStatus);
+      supabaseUrl = localAuth.apiUrl;
+      // 作成promiseをsignalとのraceで置き去りにすると秘密fileをfinallyで消せない。
+      // 数msの作成完了を待ってhandleを保持し、その直後に中断状態を反映する。
+      workerEnvFile = await createLocalWorkerEnvFile(readyStatus);
+      if (interrupt.signal.aborted) throw interrupt.signal.reason;
+    }
     // 常駐devはnpm/TTYと同じprocess groupに置き、親が強制終了してもCtrl+Cで孤児化させない。
     // 自動smokeは独立groupに置き、正常終了時に子孫をまとめて停止する。
-    const worker = startWorker(options.port, runId, registry, { detached: options.smoke });
+    const worker = startWorker(options.port, runId, registry, {
+      detached: options.smoke,
+      envFilePath: workerEnvFile?.path,
+      supabaseUrl,
+    });
     workerMonitor = monitorChild(worker, 'Worker', { signal: interrupt.signal });
     const endpoints = localEndpoints(options.port);
 
@@ -766,6 +858,13 @@ async function main() {
       await registry.stopAll();
     } catch (error) {
       cleanupErrors.push(error);
+    }
+    if (workerEnvFile) {
+      try {
+        await workerEnvFile.dispose();
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
     }
     if (supabase.owned) {
       console.log('▶ このコマンドが起動を試みたSupabase local stackを停止します');

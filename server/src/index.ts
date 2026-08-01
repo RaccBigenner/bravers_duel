@@ -1,5 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { PROTOCOL_SCAFFOLD } from '@bravers/protocol';
+import { handleAuthRequest } from './http/authController';
+import type { SessionRuntimeBindings } from './auth/sessionRuntimeConfig';
 
 const HEALTH_MATCH_ID = 'olg-102-health';
 const MATCH_PATH = /^\/matches\/([A-Za-z0-9_-]{1,64})\/ws$/;
@@ -110,6 +112,12 @@ export default {
       const id = env.MATCH_DO.idFromName(matchId);
       return env.MATCH_DO.get(id).fetch(request);
     }
+
+    const authResponse = await handleAuthRequest(
+      request,
+      env as unknown as SessionRuntimeBindings,
+    );
+    if (authResponse) return authResponse;
 
     return json({ error: 'NOT_FOUND' }, { status: 404 });
   },

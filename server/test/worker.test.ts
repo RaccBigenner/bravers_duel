@@ -59,20 +59,32 @@ describe('@bravers/server OLG-102 foundation', () => {
 
   it('未知routeとUpgradeなしを明示的に拒否する', async () => {
     const missing = await workerExports.default.fetch('http://local.test/no-such-route');
-    const guestBeforeSecureSession = await workerExports.default.fetch(
+    const rejectedGuest = await workerExports.default.fetch(
       'http://local.test/auth/guest',
-      { method: 'POST' },
+      { method: 'POST', body: '{}' },
     );
     const noUpgrade = await workerExports.default.fetch(
       'http://local.test/matches/local-smoke/ws',
     );
+    const noSession = await workerExports.default.fetch(
+      'http://127.0.0.1:8787/auth/session',
+      {
+        headers: {
+          'Sec-Fetch-Site': 'same-origin',
+          'X-Bravers-Duel-Client': 'web-v1',
+        },
+      },
+    );
 
     expect(missing.status).toBe(404);
     expect(await missing.json()).toEqual({ error: 'NOT_FOUND' });
-    expect(guestBeforeSecureSession.status).toBe(404);
-    expect(await guestBeforeSecureSession.json()).toEqual({ error: 'NOT_FOUND' });
+    expect(rejectedGuest.status).toBe(403);
+    expect(await rejectedGuest.json()).toEqual({ error: 'AUTH_REQUEST_REJECTED' });
     expect(noUpgrade.status).toBe(426);
     expect(await noUpgrade.json()).toEqual({ error: 'WEBSOCKET_UPGRADE_REQUIRED' });
+    expect(noSession.status).toBe(401);
+    expect(noSession.headers.get('Cache-Control')).toBe('private, no-store');
+    expect(await noSession.json()).toEqual({ error: 'SESSION_REQUIRED' });
   });
 
   it('MatchDOの最小WebSocket probeが休止復帰後も往復する', async () => {

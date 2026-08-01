@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,6 +9,7 @@ import {
   acquireProcessLock,
   assertPortAvailable,
   combineFailures,
+  createLocalWorkerEnvFile,
   createSignalGuard,
   localEndpoints,
   monitorChild,
@@ -21,6 +22,7 @@ import {
   verifyWorkerReadiness,
   waitForCriticalCleanup,
   waitForHealth,
+  workerCliArgs,
 } from './run-local-online.mjs';
 
 describe('run-local-online', () => {
@@ -64,6 +66,41 @@ describe('run-local-online', () => {
       'json',
     ]);
     assert.ok(args[0].endsWith('/node_modules/supabase/dist/supabase.js'));
+  });
+
+  it('Worker secretはmode 0600の一時env fileだけへ置き、argvへ出さず削除する', async () => {
+    const publishableKey = 'sb_publishable_local-sentinel';
+    const secretKey = 'sb_secret_local-sentinel';
+    const envFile = await createLocalWorkerEnvFile({
+      code: 0,
+      stdout: JSON.stringify({
+        API_URL: 'http://127.0.0.1:54321',
+        PUBLISHABLE_KEY: publishableKey,
+        SECRET_KEY: secretKey,
+      }),
+      stderr: '',
+    });
+    try {
+      const metadata = await stat(envFile.path);
+      assert.equal(metadata.mode & 0o777, 0o600);
+      const contents = await readFile(envFile.path, 'utf8');
+      assert.match(contents, /SESSION_HMAC_KEYS=/);
+      assert.match(contents, /SESSION_ENCRYPTION_KEYS=/);
+      assert.match(contents, new RegExp(publishableKey));
+      assert.match(contents, new RegExp(secretKey));
+
+      const args = workerCliArgs(9001, 'run-1', {
+        envFilePath: envFile.path,
+        supabaseUrl: 'http://127.0.0.1:54321',
+      });
+      assert.ok(args.includes(envFile.path));
+      assert.doesNotMatch(args.join(' '), new RegExp(publishableKey));
+      assert.doesNotMatch(args.join(' '), new RegExp(secretKey));
+      assert.ok(args.includes('APP_ORIGIN:http://127.0.0.1:9001'));
+    } finally {
+      await envFile.dispose();
+    }
+    await assert.rejects(stat(envFile.path), (error) => error?.code === 'ENOENT');
   });
 
   it('全checkと起動run IDが揃うまでhealthを再試行する', async () => {

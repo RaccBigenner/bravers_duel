@@ -128,7 +128,7 @@ export function assertAuthServerCredential(credential: AuthServerCredential): vo
   validateCredential(credential);
 }
 
-function trustedIpHeader(value: string | undefined): string | null {
+export function normalizedTrustedClientIp(value: string | undefined): string | null {
   if (!value || value !== value.trim() || value.length > 45 || value.includes(',')) return null;
   const ipv4 = value.split('.');
   if (
@@ -186,7 +186,7 @@ export async function createAnonymousPrincipal(
   }
 
   if (credential.forwardClientIp) {
-    const ip = trustedIpHeader(input.trustedClientIp);
+    const ip = normalizedTrustedClientIp(input.trustedClientIp);
     if (!ip) throw new GuestAuthError('AUTH_CONFIG_INVALID', false);
     headers['Sb-Forwarded-For'] = ip;
   }
