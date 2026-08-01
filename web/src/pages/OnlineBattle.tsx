@@ -184,17 +184,18 @@ function visibleCardNames(projection: MatchPlayerProjection, locale: OnlineLocal
   const add = (card: MatchPublicCardProjection | null | undefined) => {
     if (card) names.set(card.battleCardId, cardName(card.printingId, locale));
   };
-  for (const board of projection.players) {
+  const viewer = projection.viewerPlayer;
+  projection.players.forEach((board, index) => {
     board.characters.forEach((character) => {
       add(character.card);
       add(character.equipment);
     });
     board.trash.forEach(add);
-    // 防御的に、自分の手札以外はprivate配列が来ても参照しない。
-    if (board.player === projection.viewerPlayer && board.hand.visibility === 'private') {
+    // PlayerLaneのisViewerと同じ位置的フラグでガードし、自分の手札以外はprivate配列が来ても参照しない。
+    if (index === viewer && board.hand.visibility === 'private') {
       board.hand.cards.forEach(add);
     }
-  }
+  });
   add(projection.field);
   return names;
 }

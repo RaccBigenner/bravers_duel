@@ -52,9 +52,16 @@ const messages = {
 } as const;
 
 export type RecoveryMessageKey = keyof (typeof messages)['ja-JP'];
+export const RECOVERY_MESSAGE_KEYS = Object.freeze(
+  Object.keys(messages['ja-JP']) as RecoveryMessageKey[],
+);
 
 export function resolveOnlineLocale(language?: string): OnlineLocale {
   return language?.toLowerCase().startsWith('ja') === false ? 'en' : 'ja-JP';
+}
+
+export function recoveryMessages(locale: OnlineLocale): (typeof messages)['ja-JP'] | (typeof messages)['en'] {
+  return messages[locale];
 }
 
 export function recoveryMessage(locale: OnlineLocale, key: RecoveryMessageKey): string {
