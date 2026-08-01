@@ -62,9 +62,11 @@ P1 exit の一言まとめ:
   - Auth userと同一UUIDの`public.account`を同一transactionのtriggerで作り、clientのData APIから隠す
   - tokenを外へ返さないrequest-scoped Worker内部providerまでを担当する。曖昧な失敗は再試行しない
   - browser向け`POST /auth/guest`は、OLG-113がopaque sessionへ収容できる段階で同時に開く
-- **OLG-113** secure session / seat token（設計 §8.4）
-  - HttpOnly / Secure / SameSite=Lax の opaque session cookie
-  - WebSocket 接続前に短命の match seat token を発行
+- **OLG-113（境界設計完了・実装中）** secure session / seat token（設計 §8.4）
+  - 10分TTLのHttpOnly bootstrap cookieとDB claimで、並行guest作成と応答喪失を同じaccountへ収束
+  - Auth grantをserver-sideで暗号化し、HttpOnly / Secure / SameSite=Lax のopaque sessionへ収容
+  - MatchDOのserver-owned assignmentからだけ30秒・一回限りのseat tokenを発行し、最初のauth frameで消費
+  - unsafe HTTP/WebSocketはOriginを認証・DB照会より先に検査。logout後commandはsession versionで拒否
 
 ### Step C: MatchDO の中核（OLG-121 → OLG-123 → OLG-122 → OLG-125 → OLG-124）
 
@@ -77,7 +79,7 @@ P1 exit の一言まとめ:
   保存。クラッシュしても試合が消えない
 - **OLG-124** player projection: 相手手札・山札・seed を送らない
   プレイヤー別ビュー（設計 §11.3）。**command 処理パイプライン（設計 §11.2）の
-  順序をここまでで固定**: セッション確認 → seat 確認 → Origin 確認 →
+  順序をここまでで固定**: Origin / Fetch Metadata確認 → セッション確認 → seat 確認 →
   commandId 重複確認 → expectedRevision 確認 → schema 検証 → ルール検証 →
   clone 適用 → 成功時のみ commit → 永続化 → projection 配信
 
@@ -119,7 +121,7 @@ P1 exit の一言まとめ:
 | 101（完了） | `npm install`後にserver/protocolのtest・typecheckとルート`npm test`が通る。Supabase CLIが設定と`server/migrations/`へのsymlinkを認識し、外部resource/secretを作っていない |
 | 102（受入待ち） | 1コマンド、MatchDO WebSocket、DO SQLiteを含むhealthは実装・検証済み。Docker互換ランタイム上でSupabase migrationが通ればdone |
 | 111（受入待ち） | Auth anonymous userと同じUUIDのaccount行が原子的に作られ、clientから直接read/write不能。内部grantのtokenはHTTP/logへ出さず、曖昧失敗を自動再試行しない。Docker上のpgTAP＋GoTrue live smokeが通ればdone（browser route/cookieは113） |
-| 113 | session cookie が HttpOnly/Secure/SameSite=Lax。期限切れ session の API は 401。seat token なしの WebSocket は拒否 |
+| 113 | 同一bootstrapの並行/応答喪失が別accountを作らず、session cookieが本番で`__Host-`/HttpOnly/Secure/SameSite=Lax。期限切れ/失効APIは401。通常WebSocketはserver-owned assignment由来の一回限りseat tokenなしでは認証されず、logout後commandも拒否 |
 | 121 | MatchDO 内で NPC 戦が開始→終了まで進み、結果が engine 単体実行と一致する（同 seed 同結果） |
 | 123 | 手札の並びが変わっても battleCardId 指定の action が正しいカードに当たる |
 | 122 | 同じ commandId の再送は 2 回目が no-op（同じ応答を返す）。古い expectedRevision は拒否され盤面が変わらない |

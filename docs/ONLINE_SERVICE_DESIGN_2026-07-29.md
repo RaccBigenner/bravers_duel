@@ -1431,12 +1431,52 @@ LINE/Googleのメールが同じでも、自動でアカウント統合しない
 - OAuth/OIDCはAuthorization Code + PKCE
 - `state`、`nonce`、issuer、audience、署名、期限を検証
 - ブラウザには長期トークンをJavaScriptから読める形で置かない
-- `HttpOnly; Secure; SameSite=Lax`の不透明セッションcookieを使う
-- WebSocket接続前に短期のmatch seat tokenを発行
+- 本番のゲームsessionは`__Host-bd_session`、guest作成前のbootstrapは
+  `__Host-bd_bootstrap`という256 bitの不透明cookieにする。どちらも
+  `Path=/; HttpOnly; Secure; SameSite=Lax`、`Domain`なしとし、Auth応答は
+  `Cache-Control: private, no-store`にする。HTTPのlocal開発だけは`Secure`を外した
+  `bd_session_local`/`bd_bootstrap_local`へ名前ごと分離し、本番名を弱い属性で発行しない
+- session正本はPostgreSQLの`app_session`とする。cookieのraw値は保存せず、version付き
+  HMAC-SHA-256 digestだけをlookupへ使う。Supabaseのaccess/refresh tokenはOLG-112の
+  明示的identity linkingに備えてAES-GCMで暗号化し、nonce、暗号鍵version、AADとともに
+  server-only列へ置く。HMAC鍵と暗号鍵は別のWorkers Secretとし、browser、URL、logへ出さない
+- sessionは最終活動から90日、絶対365日を初期上限とし、DB時刻で判定する。cookieの
+  `Max-Age`は90日で活動中に更新する。失効、期限切れ、重複cookieは同じ401へ潰し、
+  高価値操作、鍵更新、絶対期限の前にはcredentialを回転または再認証する
+- `POST /auth/bootstrap`はaccountを作らず、10分だけ有効なbootstrap attemptを先に作る。
+  `POST /auth/guest`はそのHttpOnly cookieのHMAC digestで行をlockし、30秒leaseを取ってから
+  anonymous signupする。同じbootstrapの並行/再送は1件へ直列化し、処理中は`202`と
+  `Retry-After`を返す。JavaScriptから読める`Idempotency-Key`をsession回収用bearerにはしない
+- Auth signup metadataへserverだけが知る`attempt_id`を付け、`auth.users` triggerでattemptと
+  `account_id`をsignupと同じtransaction内に結ぶ。signupとapp session作成はHTTPを跨ぐため
+  完全な単一transactionにはできない。signup応答喪失やsession保存の曖昧失敗では別guestを
+  自動作成せず、attemptからAuth userを特定し、削除cascadeを確認できた場合だけclaimを戻す。
+  成功済みsessionは同じbootstrapから同じcredentialを再送できるようにして応答喪失を回収する
+- unsafe APIはexact `Origin`、`Sec-Fetch-Site: same-origin`、JSON content type、固定custom headerを
+  session/DB照会より先に検査する。`SameSite=Lax`は補助であり、兄弟subdomainからのCSRF対策に
+  単独では使わない。本番へ直接到達したWorkerではCloudflareの`CF-Connecting-IP`だけを正規化し、
+  browser指定の`X-Forwarded-For`へfallbackしない
+- Turnstile tokenはSupabase Authの`captchaToken`へ一度だけ渡し、Worker側Siteverifyとの
+  二重検証をしない。remoteのIP転送はSupabase側で有効化し、server-onlyの`sb_secret`と
+  `Sb-Forwarded-For`を組にする
+- WebSocket接続前に、そのMatchDOがserver-sideで保持するseat assignmentとsession/accountが
+  一致した場合だけ、30秒・単一match/seat・一回限りの256 bit seat tokenを発行する。
+  client指定のseatやmatch参加資格を権威情報にしない。OLG-121がassignmentを作るまでは
+  発行APIの正方向は成立せず、未参加として拒否する
+- seat tokenはURL/query/cookieへ置かない。exact Originとsessionを検証してupgradeした後、
+  clientは5秒以内の最初の小さなauth frameでtokenを送り、MatchDO SQLiteのdigestを条件付き
+  `UPDATE`して一回だけ消費する。認証完了前はsnapshot/eventを一切送らず、不正時は詳細を
+  close reasonへ含めない。WebSocket attachmentには非秘密のsession/account/seat/versionだけを置く
 - 交換、認証手段の追加/削除、アカウント削除には直近再認証
 - 最後の回復可能な認証手段は削除不可
 - 新規認証リンク直後の高価値交換にクールダウン
-- ログアウト時に全WebSocketを無効化
+- ログアウトはsession versionを上げて失効し、関連MatchDOへcloseを通知する。通知との競合や
+  Worker中断があっても、各command直前にDBのsession/versionを再確認して盤面変更を拒否する
+
+`guest_bootstrap_attempt`、`app_session`、session credentialはRLSを有効化するだけでなく、
+`anon`/`authenticated`/`service_role`の直接table権限を外す。空`search_path`の限定
+`SECURITY DEFINER` RPCだけを`service_role`へ許可する。refresh tokenの回転はsession行をlockして
+直列化し、Supabaseの短いreuse猶予を排他制御の代わりにしない。
 
 ### 8.5 推奨認証基盤
 
@@ -1867,11 +1907,18 @@ OLG-102は10.7の雛形をローカルだけで起動し、後続のサーバー
 1. 既存local Supabaseの状態を確認する。CLIが明示的にnot-runningと返した場合だけ手順2へ進み、
    unhealthy、Docker inspect失敗など他の非0は既存stackへ触れずfail closedする
 2. 停止中なら`supabase start`で起動し、このプロセスが所有したことを記録する
-3. `supabase migration up --local`を実行し、statusとmigration listを確認する
-4. 空きportへWrangler localをloopbackで起動し、`GET /health`がDO SQLiteと今回のrun IDまで
+3. `supabase migration up --local`を実行し、statusとmigration listを確認する。続けて
+   `server/test/db/`のpgTAPを期限付きで実行し、GoTrue anonymous signup、同一UUIDのaccount、
+   client直接read拒否、Auth user削除cascadeをlive smokeする。中断時もID取得済みtest userの
+   後始末が終わるまではSupabaseを止めない
+4. statusから得たloopback用credentialと、その実行だけのsession暗号鍵をmode 0600の一時
+   Wrangler env fileへ書く。secretを`--var`やprocess引数、consoleへ出さず、成功、失敗、signalの
+   全経路でenv fileを削除する
+5. 空きportへWrangler localをloopbackで起動し、`GET /health`がDO SQLiteと今回のrun IDまで
    greenになるのを待つ。子processが先に終了した場合は直ちに失敗する
-5. WebSocketをupgradeし、`probe`応答を検証する
-6. 起動、migration、疎通、常駐のどの段階でもSIGINT/SIGTERMを捕捉する。smoke終了、失敗、signalの
+6. `APP_ENV=local`かつ`local-smoke`に限定した診断用WebSocketをupgradeし、`probe`応答を検証する。
+   通常matchのWebSocketはOLG-113以降、sessionとseat tokenなしでは認証しない
+7. 起動、migration、疎通、常駐のどの段階でもSIGINT/SIGTERMを捕捉する。smoke終了、失敗、signalの
    いずれでもWorker process treeを止める。Supabaseは手順2で自分が起動を試みた場合だけ止め、
    start途中で失敗したcontainerも残さない。先に動いていたstackは残す。停止の非0/timeoutは
    元の失敗と併記し、後始末成功と表示しない
@@ -1903,9 +1950,9 @@ interface CommandEnvelope {
 ### 11.2 サーバー処理
 
 ```text
-セッション確認
+Origin / Fetch Metadata確認
+→ セッション確認
 → match seat確認
-→ Origin確認
 → commandId重複確認
 → expectedRevision確認
 → schema検証
@@ -2234,15 +2281,16 @@ battle.event.damage
 
 ### 15.1 API/WebSocket
 
-- 明示的なOrigin allowlist
-- handshakeとメッセージごとの認証/認可
+- exact Origin allowlistをsession/DB照会より先に検査。unsafe HTTPはsame-origin JSONと固定headerも必須
+- handshakeではsession、最初のauth frameでは一回限りseat token、各commandではsession versionと
+  seatを再検証する。認証完了前はゲーム情報を送らない
 - payload schema検証
 - 64KB以下を目安にメッセージサイズ制限
 - ユーザー/IP別rate limit
 - 1ユーザーの接続数制限
 - heartbeatとidle timeout
-- セッション失効時に切断
-- token/session IDをログへ出さない
+- セッション失効時にMatchDOへclose通知し、通知競合中のcommandもDB再検証で拒否
+- bootstrap/session/seat token、cookie、Supabase access/refresh tokenをURL、log、trace、close reasonへ出さない
 - 接続、拒否、異常切断、rate limitを監査
 
 ### 15.2 BOT/複数アカウント

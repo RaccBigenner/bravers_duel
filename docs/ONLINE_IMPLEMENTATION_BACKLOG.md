@@ -620,7 +620,36 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
   ここを通すまでOLG-111をdoneにしない
 
 - OLG-112 LINE/Google linking
-- OLG-113 secure session/seat token
+
+#### OLG-113 secure session/seat token
+
+状態: **境界設計完了・実装中**（2026-08-01）
+
+- 10分TTLのHttpOnly bootstrap cookieとDB上のclaim/leaseを先に作り、同一guest作成の並行実行、
+  signup応答喪失、Set-Cookie応答喪失から別accountを自動作成しない
+- Auth user metadataの内部`attempt_id`をtriggerでclaim台帳へ結び、signup成功grantはAES-GCMで
+  app sessionへ暗号化保存する。DBにはsession/bootstrap raw値でなくversion付きHMAC digestだけを置く
+- 本番session cookieは`__Host-bd_session; Path=/; HttpOnly; Secure; SameSite=Lax`、Domainなし。
+  local HTTPは弱い属性の本番名を使わず別名にし、Auth応答は`private, no-store`とする
+- unsafe APIはexact Origin、same-origin Fetch Metadata、JSON、固定headerをDB/Authより先に検査。
+  TurnstileはSupabase Authへ一度だけ渡し、remote client IPはCloudflare由来だけを転送する
+- MatchDOにserver-owned seat assignmentと30秒・一回限りのseat token portを置く。
+  OLG-121がassignmentを作るまではclient指定のmatch/seatで発行せず未参加として拒否する
+- WebSocketはOrigin/sessionを検証後にupgradeし、最初の5秒以内のauth frameでtokenを原子的に消費。
+  認証完了前はgame payloadを送らず、attachmentへraw tokenを残さない
+- logoutはsession versionを上げ、関連MatchDOをcloseする。各command前にもDBでversionを再確認し、
+  通知との競合で失効後commandが通らないようにする
+
+受入:
+
+- Cookie属性、期限/失効401、重複cookie、CSRF先行拒否、秘密非露出が自動テストで固定される
+- 同一bootstrapの並行guest作成でsignupは1回。曖昧結果から別accountを自動作成せず、
+  補償削除とcascadeを確認できた時だけ再試行可能になる
+- 非参加、別match/seat、期限切れ、改変、再利用tokenを拒否し、同一tokenの並行consumeは1件だけ成功する
+- seat tokenなしの通常WebSocketは拒否する。`APP_ENV=local`の`local-smoke`だけは
+  SupabaseなしのOLG-102診断用例外として残す
+- Docker互換ランタイム上でGoTrue→Worker cookie→session復元→logout→401とDB pgTAPを完走する
+
 - OLG-114 active session/複数タブ制御
 
 ### OLG-115 招待コードの発行と受け口
