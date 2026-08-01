@@ -106,6 +106,8 @@
 .online-battle {
   --ob-gold: #f5d878;
   --ob-blue: #82d9ff;
+  /* 44px control + 7px bottom + notch-safe top padding. */
+  --ob-topbar-h: calc(51px + max(7px, env(safe-area-inset-top)));
   min-height: 100dvh;
   height: 100dvh;
   overflow: auto;
@@ -119,7 +121,7 @@
   position: sticky;
   top: 0;
   z-index: 20;
-  min-height: 58px;
+  min-height: var(--ob-topbar-h);
   box-sizing: border-box;
   display: grid;
   grid-template-columns: minmax(72px, 1fr) auto minmax(72px, 1fr);
@@ -193,7 +195,7 @@
 
 .ob-layout {
   width: min(1440px, 100%);
-  min-height: calc(100dvh - 58px);
+  min-height: calc(100dvh - var(--ob-topbar-h));
   box-sizing: border-box;
   margin: 0 auto;
   padding: 10px 10px max(10px, env(safe-area-inset-bottom));
@@ -638,7 +640,7 @@
   .ob-rail { display: contents; }
   .ob-action-panel {
     position: sticky;
-    top: 58px;
+    top: var(--ob-topbar-h);
     z-index: 16;
     order: -1;
     padding: 8px;

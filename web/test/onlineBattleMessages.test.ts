@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest';
 import {
   ONLINE_BATTLE_MESSAGE_KEYS,
   actionLabel,
+  attributeLabel,
   eventLabel,
+  joinAttributeLabels,
   onlineBattleMessages,
   phaseLabel,
   terminalMessage,
@@ -48,5 +50,13 @@ describe('online battle message catalog', () => {
     expect(phaseLabel('en', 'guard')).toBe('Guard');
     expect(terminalMessage('en', { state: 'finished', winner: 1, reason: 'deckout' }, 0))
       .toEqual({ title: 'Defeat', detail: 'Deck out' });
+  });
+
+  it('canonical属性をlocale別に結合し、未知値はraw値を表示しない', () => {
+    expect(joinAttributeLabels('ja-JP', ['斬', '風', '守'])).toBe('斬・風・守');
+    expect(joinAttributeLabels('en', ['斬', '風', '守'])).toBe('Slash, Wind, Guard');
+    expect(attributeLabel('ja-JP', 'wind')).toBe('不明な属性');
+    expect(attributeLabel('en', 'internal-secret')).toBe('Unknown attribute');
+    expect(joinAttributeLabels('en', ['internal-secret'])).not.toContain('internal-secret');
   });
 });

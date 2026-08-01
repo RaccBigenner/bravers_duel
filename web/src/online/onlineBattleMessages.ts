@@ -4,6 +4,7 @@ import type {
   MatchTerminalProjection,
   MatchViewerEvent,
 } from '@bravers/protocol';
+import type { Attribute } from '@bravers/engine';
 import type { OnlineLocale } from './recoveryMessages';
 
 const jaJP = {
@@ -23,6 +24,7 @@ const jaJP = {
     characters: 'キャラクター',
     damage: 'ダメージ',
     addedAttributes: '追加属性',
+    unknownAttribute: '不明な属性',
     equipment: '装備',
     yourHand: 'あなたの手札',
     opponentHand: '相手の手札',
@@ -98,6 +100,7 @@ const en = {
     characters: 'Characters',
     damage: 'Damage',
     addedAttributes: 'Added attributes',
+    unknownAttribute: 'Unknown attribute',
     equipment: 'Equipment',
     yourHand: 'Your hand',
     opponentHand: "Opponent's hand",
@@ -176,6 +179,28 @@ export function phaseLabel(locale: OnlineLocale, phase: MatchPlayerProjection['p
     en: { choice: 'First/second choice', play: 'Play', guard: 'Guard', charge: 'Charge', finished: 'Finished' },
   };
   return labels[locale][phase];
+}
+
+const attributeLabels = {
+  'ja-JP': {
+    斬: '斬', 突: '突', 打: '打', 射: '射', 飛: '飛',
+    炎: '炎', 氷: '氷', 雷: '雷', 風: '風', 土: '土', 木: '木', 聖: '聖', 闇: '闇',
+    竜: '竜', 獣: '獣', 補: '補', 守: '守',
+  },
+  en: {
+    斬: 'Slash', 突: 'Pierce', 打: 'Strike', 射: 'Shot', 飛: 'Flight',
+    炎: 'Fire', 氷: 'Ice', 雷: 'Lightning', 風: 'Wind', 土: 'Earth', 木: 'Wood', 聖: 'Holy', 闇: 'Dark',
+    竜: 'Dragon', 獣: 'Beast', 補: 'Support', 守: 'Guard',
+  },
+} as const satisfies Record<OnlineLocale, Record<Attribute, string>>;
+
+export function attributeLabel(locale: OnlineLocale, value: string): string {
+  const labels = attributeLabels[locale] as Readonly<Record<string, string>>;
+  return Object.hasOwn(labels, value) ? labels[value]! : onlineBattleMessages(locale).unknownAttribute;
+}
+
+export function joinAttributeLabels(locale: OnlineLocale, values: readonly string[]): string {
+  return values.map((value) => attributeLabel(locale, value)).join(locale === 'ja-JP' ? '・' : ', ');
 }
 
 export function playerLabel(locale: OnlineLocale, player: 0 | 1, viewer: 0 | 1): string {

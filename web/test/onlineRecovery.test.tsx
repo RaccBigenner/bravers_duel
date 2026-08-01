@@ -15,8 +15,10 @@ import {
   type MatchServerFrame,
   type MatchTerminalProjection,
 } from '@bravers/protocol';
+import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { describe, expect, it, vi } from 'vitest';
 import {
   BrowserMatchTransport,
   MatchTransportError,
@@ -32,6 +34,8 @@ import {
 import { RecoveryBanner } from '../src/online/RecoveryBanner';
 import { MatchRecoveryStorage, type RecoveryStorageLike } from '../src/online/recoveryStorage';
 import { OnlineBattle, actionNeedsConfirmation } from '../src/pages/OnlineBattle';
+
+const onlineCss = readFileSync(new URL('../src/online.css', import.meta.url), 'utf8');
 
 function fixtureMatch(state: ActiveMatchDescriptor['state'] = 'active'): ActiveMatchDescriptor {
   const matchId = parseMatchId('npc_recovery_fixture');
@@ -620,6 +624,46 @@ describe('OLG-133 recovery machine', () => {
     );
 
     expect(markup).not.toContain('HIDDEN_CANARY');
+  });
+
+  it('不可逆操作は1回目に送らず、revision更新で解除し、2回目だけ送る', () => {
+    const onAction = vi.fn();
+    let renderer!: ReactTestRenderer;
+    const battle = (projection: MatchPlayerProjection) => (
+      <OnlineBattle
+        projection={projection}
+        commandPending={false}
+        onAction={onAction}
+        onExit={() => undefined}
+      />
+    );
+    const phaseButton = () => {
+      const button = renderer.root.findAllByType('button').find((node) =>
+        typeof node.props.className === 'string' && node.props.className.includes('ob-action'));
+      if (!button) throw new Error('phase action button not found');
+      return button;
+    };
+
+    act(() => { renderer = create(battle(fixtureProjection({ revision: 1 }))); });
+    act(() => { phaseButton().props.onClick(); });
+    expect(onAction).not.toHaveBeenCalled();
+    expect(JSON.stringify(renderer.toJSON())).toContain('もう一度押して確定');
+
+    act(() => { renderer.update(battle(fixtureProjection({ revision: 2 }))); });
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('もう一度押して確定');
+    act(() => { phaseButton().props.onClick(); });
+    expect(onAction).not.toHaveBeenCalled();
+    act(() => { phaseButton().props.onClick(); });
+    expect(onAction).toHaveBeenCalledOnce();
+    expect(onAction).toHaveBeenCalledWith({ type: 'endPlay' });
+    act(() => { renderer.unmount(); });
+  });
+
+  it('ノッチ分を含むtopbar高を盤面とsticky操作で共有する', () => {
+    expect(onlineCss).toContain('--ob-topbar-h: calc(51px + max(7px, env(safe-area-inset-top)))');
+    expect(onlineCss).toContain('min-height: calc(100dvh - var(--ob-topbar-h))');
+    expect(onlineCss).toContain('top: var(--ob-topbar-h)');
+    expect(onlineCss).not.toMatch(/\.ob-action-panel\s*\{[^}]*top:\s*58px/s);
   });
 
   it('フェーズを確定する操作だけを誤タップ防止の2段階対象にする', () => {

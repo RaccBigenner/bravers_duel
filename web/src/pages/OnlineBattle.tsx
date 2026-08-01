@@ -15,6 +15,7 @@ import {
   eventLabel,
   fieldOwnerLabel,
   hiddenHandLabel,
+  joinAttributeLabels,
   onlineBattleMessages,
   otherCardsLabel,
   phaseLabel,
@@ -131,8 +132,8 @@ function PlayerLane({
             <div className="ob-character-stats">
               <span>{m.damage} {character.damage}</span>
               {character.addedAttributes.length > 0 && (
-                <span title={character.addedAttributes.join('・')}>
-                  {m.addedAttributes} {character.addedAttributes.join('・')}
+                <span title={joinAttributeLabels(locale, character.addedAttributes)}>
+                  {m.addedAttributes} {joinAttributeLabels(locale, character.addedAttributes)}
                 </span>
               )}
             </div>

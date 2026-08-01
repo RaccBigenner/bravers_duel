@@ -54,7 +54,7 @@ function previewProjection(): MatchPlayerProjection {
         apCount: 3,
         characters: [
           { card: publicCard(1, '1-A003-USR'), damage: 2, addedAttributes: [], equipment: publicCard(11, '1-A026-SR') },
-          { card: publicCard(2, '1-A010-SR'), damage: 0, addedAttributes: ['wind'], equipment: null },
+          { card: publicCard(2, '1-A010-SR'), damage: 0, addedAttributes: ['風'], equipment: null },
           { card: publicCard(3, '1-A019-R'), damage: 1, addedAttributes: [], equipment: null },
         ],
         actorSlot: 0,
