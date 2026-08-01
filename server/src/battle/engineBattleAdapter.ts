@@ -25,9 +25,12 @@ import {
 } from '@bravers/engine';
 import {
   parseBattleCardId,
+  parseMatchAction,
   type BattleCardId,
   type MatchAction,
 } from '@bravers/protocol';
+
+export { parseMatchAction } from '@bravers/protocol';
 
 export const ENGINE_BATTLE_ADAPTER_VERSION = 2 as const;
 export const G1_NPC_POLICY_ID = 'search-v1-keep2' as const;
@@ -176,26 +179,6 @@ const ENGINE_ACTION_KEYS: Record<BattleAction['type'], readonly string[]> = {
   endTurn: ['type'],
 };
 
-const MATCH_ACTION_KEYS: Record<MatchAction['type'], readonly string[]> = {
-  playSkill: [
-    'type',
-    'battleCardId',
-    'healTargetSlot',
-    'targetSlot',
-    'usingCharacterSlot',
-  ],
-  playCharacter: ['type', 'battleCardId'],
-  playEquipment: ['type', 'battleCardId', 'targetCharacterSlot'],
-  playField: ['type', 'battleCardId'],
-  turnStartAbility: ['type', 'characterSlot'],
-  skipTurnStart: ['type'],
-  endPlay: ['type'],
-  playGuard: ['type', 'battleCardId'],
-  pass: ['type'],
-  charge: ['type', 'battleCardId'],
-  endTurn: ['type'],
-};
-
 const VERSION_KEYS = [
   'adapterVersion',
   'engineVersion',
@@ -298,65 +281,6 @@ function parseInternalBattleAction(value: unknown): BattleAction | null {
     case 'turnStartAbility':
       return exactKeys(value, allowed, ['type', 'charIndex']) && indexValue(value.charIndex)
         ? { type, charIndex: value.charIndex }
-        : null;
-    case 'skipTurnStart':
-    case 'endPlay':
-    case 'pass':
-    case 'endTurn':
-      return exactKeys(value, allowed, ['type']) ? { type } : null;
-  }
-}
-
-/** OLG-123 MatchActionの枝ごとのexact decoder。 */
-export function parseMatchAction(value: unknown): MatchAction | null {
-  if (!plainObject(value) || typeof value.type !== 'string') return null;
-  const type = value.type as MatchAction['type'];
-  if (!Object.hasOwn(MATCH_ACTION_KEYS, type)) return null;
-  const allowed = MATCH_ACTION_KEYS[type];
-
-  switch (type) {
-    case 'playSkill': {
-      if (!exactKeys(value, allowed, ['type', 'battleCardId'])) return null;
-      const battleCardId = parseBattleCardId(value.battleCardId);
-      if (!battleCardId) return null;
-      for (const key of ['healTargetSlot', 'targetSlot', 'usingCharacterSlot'] as const) {
-        if (Object.hasOwn(value, key) && !indexValue(value[key])) return null;
-      }
-      return {
-        type,
-        battleCardId,
-        ...(Object.hasOwn(value, 'healTargetSlot')
-          ? { healTargetSlot: value.healTargetSlot as number }
-          : {}),
-        ...(Object.hasOwn(value, 'targetSlot')
-          ? { targetSlot: value.targetSlot as number }
-          : {}),
-        ...(Object.hasOwn(value, 'usingCharacterSlot')
-          ? { usingCharacterSlot: value.usingCharacterSlot as number }
-          : {}),
-      };
-    }
-    case 'playCharacter':
-    case 'playField':
-    case 'playGuard':
-    case 'charge': {
-      if (!exactKeys(value, allowed, ['type', 'battleCardId'])) return null;
-      const battleCardId = parseBattleCardId(value.battleCardId);
-      return battleCardId ? { type, battleCardId } : null;
-    }
-    case 'playEquipment': {
-      if (!exactKeys(value, allowed, ['type', 'battleCardId', 'targetCharacterSlot'])) {
-        return null;
-      }
-      const battleCardId = parseBattleCardId(value.battleCardId);
-      return battleCardId && indexValue(value.targetCharacterSlot)
-        ? { type, battleCardId, targetCharacterSlot: value.targetCharacterSlot }
-        : null;
-    }
-    case 'turnStartAbility':
-      return exactKeys(value, allowed, ['type', 'characterSlot']) &&
-        indexValue(value.characterSlot)
-        ? { type, characterSlot: value.characterSlot }
         : null;
     case 'skipTurnStart':
     case 'endPlay':
