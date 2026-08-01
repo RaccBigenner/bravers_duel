@@ -72,6 +72,11 @@ export type SessionMatchReferenceStatus =
   | { state: 'invalidated'; invalidatedVersion: number }
   | { state: 'missing' };
 
+export type SessionMatchMembershipStatus =
+  | { state: 'registered' }
+  | { state: 'invalidated'; invalidatedVersion: number }
+  | { state: 'missing' };
+
 export type SessionLogoutPreparationResult =
   | { state: 'prepared' }
   | { state: 'fanout_pending'; invalidatedVersion: number }
@@ -102,11 +107,20 @@ export interface SessionMatchReferenceInput {
   registrationEpochMs: number;
 }
 
+export interface SessionMatchMembershipInput {
+  sessionId: string;
+  sessionVersion: number;
+  matchId: string;
+}
+
 export interface SessionCoordinatorPort {
   registerMatch(
     input: SessionMatchReferenceInput,
   ): Promise<SessionMatchRegistrationResult>;
   checkMatch(input: SessionMatchReferenceInput): Promise<SessionMatchReferenceStatus>;
+  checkMatchMembership(
+    input: SessionMatchMembershipInput,
+  ): Promise<SessionMatchMembershipStatus>;
   unregisterMatch(
     input: SessionMatchReferenceInput,
   ): Promise<{ state: 'acknowledged' }>;
@@ -159,6 +173,20 @@ function validateReferenceInput(input: SessionMatchReferenceInput): void {
     input.registrationEpochMs > Date.now() + 60_000
   ) {
     throw new TypeError('SESSION_MATCH_REFERENCE_INVALID');
+  }
+}
+
+function validateMembershipInput(input: SessionMatchMembershipInput): void {
+  if (
+    typeof input !== 'object' ||
+    input === null ||
+    typeof input.sessionId !== 'string' ||
+    !UUID_PATTERN.test(input.sessionId) ||
+    !positiveInteger(input.sessionVersion) ||
+    typeof input.matchId !== 'string' ||
+    !MATCH_ID_PATTERN.test(input.matchId)
+  ) {
+    throw new TypeError('SESSION_MATCH_MEMBERSHIP_INVALID');
   }
 }
 
@@ -314,6 +342,32 @@ export class SessionCoordinatorDO extends DurableObject<Env> {
           reference.sessionVersion === input.sessionVersion &&
           reference.registrationId === input.registrationId &&
           reference.registrationEpochMs === input.registrationEpochMs,
+      );
+      return registered ? { state: 'registered' } as const : { state: 'missing' } as const;
+    });
+  }
+
+  /** match接続前のread-only membership barrier。参照の生成・復活は行わない。 */
+  async checkMatchMembership(
+    input: SessionMatchMembershipInput,
+  ): Promise<SessionMatchMembershipStatus> {
+    validateMembershipInput(input);
+    validateIdentity(this.ctx.id.name, input.sessionId);
+    return this.ctx.storage.transaction(async (transaction) => {
+      const [floor, work] = await Promise.all([
+        transaction.get<InvalidationFloor>(INVALIDATION_FLOOR_KEY),
+        transaction.get<LogoutWork>(LOGOUT_WORK_KEY),
+      ]);
+      const invalidatedVersion = blockedVersion(floor, work);
+      if (invalidatedVersion !== null && invalidatedVersion > input.sessionVersion) {
+        return { state: 'invalidated', invalidatedVersion } as const;
+      }
+
+      const references = await transaction.get<MatchReference[]>(MATCH_REFERENCES_KEY);
+      const registered = (references ?? []).some(
+        (reference) =>
+          reference.matchId === input.matchId &&
+          reference.sessionVersion === input.sessionVersion,
       );
       return registered ? { state: 'registered' } as const : { state: 'missing' } as const;
     });

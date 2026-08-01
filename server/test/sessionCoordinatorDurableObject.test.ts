@@ -366,3 +366,145 @@ describe('OLG-113 SessionCoordinatorDO', () => {
     }
   });
 });
+
+describe('OLG-121 SessionCoordinatorDO membership preflight', () => {
+  it('同じsession versionとmatchに実参照があればregistered、別versionまたは別matchはmissing', async () => {
+    const sessionId = crypto.randomUUID();
+    const stub = coordinator(sessionId);
+    await stub.registerMatch(reference(sessionId, 'membership-active', 3));
+
+    await expect(
+      stub.checkMatchMembership({
+        sessionId,
+        sessionVersion: 3,
+        matchId: 'membership-active',
+      }),
+    ).resolves.toEqual({ state: 'registered' });
+    await expect(
+      stub.checkMatchMembership({
+        sessionId,
+        sessionVersion: 2,
+        matchId: 'membership-active',
+      }),
+    ).resolves.toEqual({ state: 'missing' });
+    await expect(
+      stub.checkMatchMembership({
+        sessionId,
+        sessionVersion: 3,
+        matchId: 'membership-missing',
+      }),
+    ).resolves.toEqual({ state: 'missing' });
+  });
+
+  it('invalidation floorとlogout workを参照より先に評価し、該当versionをinvalidatedとして返す', async () => {
+    const sessionId = crypto.randomUUID();
+    const accountId = crypto.randomUUID();
+    const stub = coordinator(sessionId);
+    await stub.registerMatch(reference(sessionId, 'membership-blocked'));
+    await stub.prepareLogout({
+      sessionId,
+      accountId,
+      sessionVersion: 1,
+      sessionDigestHex: 'bb'.repeat(32),
+      sessionDigestKeyVersion: 1,
+    });
+    const before = await runInDurableObject(stub, async (_instance, state) => ({
+      entries: [...(await state.storage.list()).entries()],
+      alarm: await state.storage.getAlarm(),
+    }));
+
+    await expect(
+      stub.checkMatchMembership({
+        sessionId,
+        sessionVersion: 1,
+        matchId: 'membership-blocked',
+      }),
+    ).resolves.toEqual({ state: 'invalidated', invalidatedVersion: 2 });
+    await expect(
+      runInDurableObject(stub, async (_instance, state) => ({
+        entries: [...(await state.storage.list()).entries()],
+        alarm: await state.storage.getAlarm(),
+      })),
+    ).resolves.toEqual(before);
+
+    const floorSessionId = crypto.randomUUID();
+    const floorStub = coordinator(floorSessionId);
+    await floorStub.invalidateSession({
+      sessionId: floorSessionId,
+      invalidatedVersion: 5,
+    });
+    await expect(
+      floorStub.checkMatchMembership({
+        sessionId: floorSessionId,
+        sessionVersion: 4,
+        matchId: 'membership-floor-blocked',
+      }),
+    ).resolves.toEqual({ state: 'invalidated', invalidatedVersion: 5 });
+  });
+
+  it('named identityとsession version・safe match IDを検証する', async () => {
+    const boundSessionId = crypto.randomUUID();
+    const differentSessionId = crypto.randomUUID();
+    const result = await runInDurableObject(
+      coordinator(boundSessionId),
+      async (instance) => {
+        const messages: string[] = [];
+        for (const input of [
+          {
+            sessionId: differentSessionId,
+            sessionVersion: 1,
+            matchId: 'identity-mismatch',
+          },
+          {
+            sessionId: boundSessionId,
+            sessionVersion: 0,
+            matchId: 'invalid-version',
+          },
+          {
+            sessionId: boundSessionId,
+            sessionVersion: 1,
+            matchId: '../unsafe',
+          },
+        ]) {
+          try {
+            await (instance as SessionCoordinatorDO).checkMatchMembership(input);
+            messages.push('accepted');
+          } catch (error) {
+            messages.push(error instanceof Error ? error.message : 'unknown');
+          }
+        }
+        return messages;
+      },
+    );
+
+    expect(result).toEqual([
+      'SESSION_COORDINATOR_IDENTITY_INVALID',
+      'SESSION_MATCH_MEMBERSHIP_INVALID',
+      'SESSION_MATCH_MEMBERSHIP_INVALID',
+    ]);
+  });
+
+  it('registered・missing照合の前後でstorageとalarmを一切変更しない', async () => {
+    const sessionId = crypto.randomUUID();
+    const stub = coordinator(sessionId);
+    await stub.registerMatch(reference(sessionId, 'membership-read-only', 4));
+    const snapshot = async () => runInDurableObject(stub, async (_instance, state) => ({
+      entries: [...(await state.storage.list()).entries()],
+      alarm: await state.storage.getAlarm(),
+    }));
+    const before = await snapshot();
+
+    await stub.checkMatchMembership({
+      sessionId,
+      sessionVersion: 4,
+      matchId: 'membership-read-only',
+    });
+    await stub.checkMatchMembership({
+      sessionId,
+      sessionVersion: 4,
+      matchId: 'membership-absent',
+    });
+
+    await expect(snapshot()).resolves.toEqual(before);
+  });
+});
