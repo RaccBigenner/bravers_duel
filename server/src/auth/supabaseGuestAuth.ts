@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { createDeadlineFetch } from '../http/deadlineFetch';
+import { isExactLocalHostname, isLoopbackHostname } from '../http/urlHostPolicy';
 
 export type AuthKeyMode = 'publishable' | 'secret';
 
@@ -76,6 +77,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3
 const SAFE_ERROR_CODE = /^[a-z0-9_]{1,64}$/;
 
 function normalizedSupabaseUrl(raw: string, environment: 'local' | 'remote'): string {
+  if (typeof raw !== 'string') throw new GuestAuthError('AUTH_CONFIG_INVALID', false);
   let url: URL;
   try {
     url = new URL(raw);
@@ -83,11 +85,11 @@ function normalizedSupabaseUrl(raw: string, environment: 'local' | 'remote'): st
     throw new GuestAuthError('AUTH_CONFIG_INVALID', false);
   }
 
-  const loopback =
-    url.hostname === '127.0.0.1' || url.hostname === 'localhost' || url.hostname === '[::1]';
   if (
-    (environment === 'local' && (url.protocol !== 'http:' || !loopback)) ||
-    (environment === 'remote' && (url.protocol !== 'https:' || loopback)) ||
+    (environment === 'local' &&
+      (url.protocol !== 'http:' || !isExactLocalHostname(url.hostname))) ||
+    (environment === 'remote' &&
+      (url.protocol !== 'https:' || isLoopbackHostname(url.hostname))) ||
     url.username ||
     url.password ||
     (url.pathname !== '' && url.pathname !== '/')
@@ -101,6 +103,9 @@ function normalizedSupabaseUrl(raw: string, environment: 'local' | 'remote'): st
 }
 
 function validateCredential(credential: AuthServerCredential): string {
+  if (typeof credential?.apiKey !== 'string') {
+    throw new GuestAuthError('AUTH_CONFIG_INVALID', false);
+  }
   const apiKey = credential.apiKey.trim();
   if (!apiKey) throw new GuestAuthError('AUTH_CONFIG_INVALID', false);
   if (
@@ -117,6 +122,10 @@ function validateCredential(credential: AuthServerCredential): string {
     throw new GuestAuthError('AUTH_CONFIG_INVALID', false);
   }
   return normalizedSupabaseUrl(credential.supabaseUrl, credential.environment);
+}
+
+export function assertAuthServerCredential(credential: AuthServerCredential): void {
+  validateCredential(credential);
 }
 
 function trustedIpHeader(value: string | undefined): string | null {

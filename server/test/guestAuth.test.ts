@@ -184,6 +184,23 @@ describe('OLG-111 Supabase anonymous principal provider', () => {
         { fetch: fetchMock },
       ),
     ).rejects.toMatchObject({ code: 'AUTH_CONFIG_INVALID' });
+    await expect(
+      createAnonymousPrincipal(
+        {
+          ...credential,
+          supabaseUrl: 'https://127.0.0.2',
+        },
+        guestInput({ trustedClientIp: '203.0.113.8' }),
+        { fetch: fetchMock },
+      ),
+    ).rejects.toMatchObject({ code: 'AUTH_CONFIG_INVALID' });
+    await expect(
+      createAnonymousPrincipal(
+        { ...localCredential, apiKey: 42 as unknown as string },
+        guestInput(),
+        { fetch: fetchMock },
+      ),
+    ).rejects.toMatchObject({ code: 'AUTH_CONFIG_INVALID' });
   });
 
   it('Auth拒否を安定codeへ写し、raw messageやtokenを例外へ含めない', async () => {

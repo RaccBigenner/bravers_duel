@@ -1,7 +1,7 @@
 begin;
 
 set local search_path = extensions, public;
-select plan(66);
+select plan(82);
 
 -- schema / FK / RLS / ACL (1-27)
 select has_table('public', 'guest_bootstrap_attempt', 'bootstrap attempt table exists');
@@ -32,7 +32,7 @@ select table_privs_are('public', 'app_session_credential', 'anon', array[]::name
 select table_privs_are('public', 'app_session_credential', 'authenticated', array[]::name[], 'authenticated cannot access credential');
 select table_privs_are('public', 'app_session_credential', 'service_role', array[]::name[], 'service role cannot access credential directly');
 
--- trigger / function boundary (28-38)
+-- trigger / function boundary (28-42)
 select has_trigger('auth', 'users', 'on_auth_user_created_link_guest_bootstrap', 'bootstrap Auth trigger exists');
 select trigger_is('auth', 'users', 'on_auth_user_created_link_guest_bootstrap', 'public', 'link_guest_bootstrap_from_auth_user', 'bootstrap trigger calls handler');
 select function_returns('public', 'link_guest_bootstrap_from_auth_user', array[]::name[], 'trigger', 'bootstrap handler returns trigger');
@@ -62,6 +62,10 @@ select function_privs_are('public', 'create_guest_bootstrap_attempt', array['tex
 select function_privs_are('public', 'create_guest_bootstrap_attempt', array['text', 'smallint', 'smallint']::name[], 'anon', array[]::name[], 'anon cannot create bootstrap through Data API');
 select function_privs_are('public', 'resolve_app_session', array['text', 'smallint']::name[], 'service_role', array['EXECUTE']::name[], 'service role can resolve session through RPC');
 select function_privs_are('public', 'resolve_app_session', array['text', 'smallint']::name[], 'authenticated', array[]::name[], 'authenticated cannot resolve session through Data API');
+select function_privs_are('public', 'claim_guest_bootstrap_attempt_candidates', array['jsonb']::name[], 'service_role', array['EXECUTE']::name[], 'service role can atomically claim bootstrap candidates');
+select function_privs_are('public', 'claim_guest_bootstrap_attempt_candidates', array['jsonb']::name[], 'anon', array[]::name[], 'anon cannot claim bootstrap candidates');
+select function_privs_are('public', 'resolve_app_session_candidates', array['jsonb']::name[], 'service_role', array['EXECUTE']::name[], 'service role can atomically resolve session candidates');
+select function_privs_are('public', 'resolve_app_session_candidates', array['jsonb']::name[], 'authenticated', array[]::name[], 'authenticated cannot resolve session candidates');
 
 create temporary table olg113_session_case (
   case_name text primary key,
@@ -93,7 +97,7 @@ update olg113_session_case
 set attempt_id = (create_result ->> 'attempt_id')::uuid
 where case_name = 'complete';
 
--- happy path / input boundary / idempotency / expiry / revoke / cleanup (39-60)
+-- happy path / input boundary / idempotency / expiry / revoke / cleanup (43-65)
 select is((select create_result ->> 'state' from olg113_session_case where case_name = 'complete'), 'created', 'bootstrap creation succeeds');
 
 update olg113_session_case
@@ -175,6 +179,23 @@ select throws_ok(
   '22023',
   'INVALID_SESSION_INPUT',
   'Auth grant beyond the storage horizon cannot create an app session'
+);
+
+select is(
+  public.complete_guest_app_session(
+    (select attempt_id from olg113_session_case where case_name = 'complete'),
+    (select first_claim_id from olg113_session_case where case_name = 'complete'),
+    (select account_id from olg113_session_case where case_name = 'complete'),
+    (select session_id from olg113_session_case where case_name = 'complete'),
+    repeat('56', 32),
+    2::smallint,
+    repeat('ac', 17),
+    repeat('bd', 12),
+    7::smallint,
+    extract(epoch from clock_timestamp() + interval '1 hour')::bigint
+  ) ->> 'state',
+  'invalid',
+  'session digest key version must match the bootstrap derivation key version'
 );
 
 update olg113_session_case
@@ -331,7 +352,7 @@ select is_empty(
   'expired unlinked CLAIMED attempt is reclaimed by bounded cleanup'
 );
 
--- lease generation fence / mandatory binding (61-66)
+-- lease generation fence / mandatory binding (66-71)
 update olg113_session_case
 set create_result = public.create_guest_bootstrap_attempt(
       bootstrap_digest_hex,
@@ -418,6 +439,198 @@ select is_empty(
     where fixture.case_name = 'missing-metadata'
   $$,
   'metadata bypass rollback leaves neither Auth user nor account'
+);
+
+-- batch candidate input / ambiguity / near-expiry ordering (72-79)
+select throws_ok(
+  $$
+    select public.claim_guest_bootstrap_attempt_candidates(
+      jsonb_build_array(
+        jsonb_build_object(
+          'digest_hex', repeat('80', 32),
+          'digest_key_version', 1000000000000000000000000000000000000000::numeric
+        )
+      )
+    )
+  $$,
+  '22023',
+  'INVALID_BOOTSTRAP_INPUT',
+  'bootstrap candidate validates numeric shape before bounded cast'
+);
+select throws_ok(
+  $$ select public.resolve_app_session_candidates('{"digest_hex":"not-an-array"}'::jsonb) $$,
+  '22023',
+  'INVALID_SESSION_INPUT',
+  'session candidate rejects a non-array before expansion'
+);
+
+do $batch_bootstrap_setup$
+begin
+  perform public.create_guest_bootstrap_attempt(repeat('81', 32), 1::smallint, 1::smallint);
+  perform public.create_guest_bootstrap_attempt(repeat('82', 32), 2::smallint, 2::smallint);
+end;
+$batch_bootstrap_setup$;
+select is(
+  public.claim_guest_bootstrap_attempt_candidates(
+    jsonb_build_array(
+      jsonb_build_object('digest_hex', repeat('81', 32), 'digest_key_version', 1),
+      jsonb_build_object('digest_hex', repeat('82', 32), 'digest_key_version', 2)
+    )
+  ) ->> 'state',
+  'ambiguous',
+  'bootstrap multi-hit fails closed'
+);
+select is(
+  (
+    select count(*)::integer
+    from public.guest_bootstrap_attempt
+    where bootstrap_digest in (decode(repeat('81', 32), 'hex'), decode(repeat('82', 32), 'hex'))
+      and attempt_state = 'READY'
+      and claim_id is null
+      and claim_generation = 0
+  ),
+  2,
+  'bootstrap multi-hit mutates neither matching attempt'
+);
+select is(
+  public.claim_guest_bootstrap_attempt_candidates(
+    jsonb_build_array(
+      jsonb_build_object('digest_hex', repeat('81', 32), 'digest_key_version', 1)
+    )
+  ) ->> 'state',
+  'create_auth',
+  'one bootstrap candidate claims exactly one attempt'
+);
+
+do $near_expiry_setup$
+begin
+  perform public.create_guest_bootstrap_attempt(repeat('83', 32), 1::smallint, 1::smallint);
+  perform public.create_guest_bootstrap_attempt(repeat('84', 32), 1::smallint, 1::smallint);
+  perform public.claim_guest_bootstrap_attempt(repeat('84', 32), 1::smallint);
+end;
+$near_expiry_setup$;
+update public.guest_bootstrap_attempt
+set expires_at = clock_timestamp() + interval '44 seconds'
+where bootstrap_digest in (decode(repeat('83', 32), 'hex'), decode(repeat('84', 32), 'hex'));
+select is(
+  public.claim_guest_bootstrap_attempt(repeat('83', 32), 1::smallint) ->> 'state',
+  'invalid',
+  'READY attempt inside the completion margin does not start Auth'
+);
+select is(
+  public.claim_guest_bootstrap_attempt(repeat('84', 32), 1::smallint) ->> 'state',
+  'pending',
+  'active lease stays pending inside the completion margin'
+);
+
+insert into olg113_session_case (case_name, bootstrap_digest_hex, account_id, session_id)
+values ('near-linked', repeat('85', 32), gen_random_uuid(), gen_random_uuid());
+update olg113_session_case
+set create_result = public.create_guest_bootstrap_attempt(
+      bootstrap_digest_hex,
+      1::smallint,
+      1::smallint
+    )
+where case_name = 'near-linked';
+update olg113_session_case
+set attempt_id = (create_result ->> 'attempt_id')::uuid,
+    first_claim_result = public.claim_guest_bootstrap_attempt(bootstrap_digest_hex, 1::smallint)
+where case_name = 'near-linked';
+update olg113_session_case
+set first_claim_id = (first_claim_result ->> 'claim_id')::uuid
+where case_name = 'near-linked';
+insert into auth.users (id, is_anonymous, raw_user_meta_data)
+select account_id, true, jsonb_build_object(
+  'guest_bootstrap_attempt_id', attempt_id,
+  'guest_bootstrap_claim_id', first_claim_id
+)
+from olg113_session_case
+where case_name = 'near-linked';
+update public.guest_bootstrap_attempt as attempt
+set expires_at = clock_timestamp() + interval '44 seconds',
+    claim_lease_until = clock_timestamp() - interval '1 second'
+from olg113_session_case as fixture
+where fixture.case_name = 'near-linked' and fixture.attempt_id = attempt.attempt_id;
+select is(
+  public.claim_guest_bootstrap_attempt(repeat('85', 32), 1::smallint) ->> 'state',
+  'recover_auth',
+  'AUTH_LINKED attempt enters compensation even inside the completion margin'
+);
+
+-- session candidate ambiguity must not touch activity timestamps (80-82)
+create temporary table olg113_batch_session_fixture (
+  account_id uuid primary key,
+  session_id uuid not null unique,
+  digest_hex text not null unique,
+  key_version smallint not null
+) on commit drop;
+insert into olg113_batch_session_fixture (account_id, session_id, digest_hex, key_version)
+values
+  (gen_random_uuid(), gen_random_uuid(), repeat('91', 32), 1::smallint),
+  (gen_random_uuid(), gen_random_uuid(), repeat('92', 32), 2::smallint);
+insert into auth.users (id, is_anonymous)
+select account_id, false from olg113_batch_session_fixture;
+insert into public.app_session (
+  session_id,
+  account_id,
+  auth_grant_ciphertext,
+  auth_grant_nonce,
+  auth_grant_key_version,
+  auth_grant_expires_at,
+  created_at,
+  last_seen_at,
+  idle_expires_at,
+  absolute_expires_at
+)
+select
+  session_id,
+  account_id,
+  decode(repeat(case when key_version = 1 then 'c1' else 'c2' end, 17), 'hex'),
+  decode(repeat(case when key_version = 1 then 'd1' else 'd2' end, 12), 'hex'),
+  key_version,
+  statement_timestamp() + interval '1 hour',
+  statement_timestamp() - interval '10 minutes',
+  statement_timestamp() - interval '10 minutes',
+  statement_timestamp() + interval '90 days',
+  statement_timestamp() + interval '365 days'
+from olg113_batch_session_fixture;
+insert into public.app_session_credential (
+  session_id,
+  token_digest,
+  token_digest_key_version
+)
+select session_id, decode(digest_hex, 'hex'), key_version
+from olg113_batch_session_fixture;
+select is(
+  public.resolve_app_session_candidates(
+    jsonb_build_array(
+      jsonb_build_object('digest_hex', repeat('91', 32), 'digest_key_version', 1),
+      jsonb_build_object('digest_hex', repeat('92', 32), 'digest_key_version', 2)
+    )
+  ) ->> 'state',
+  'ambiguous',
+  'session multi-hit fails closed instead of choosing the first key'
+);
+select is(
+  (
+    select count(*)::integer
+    from public.app_session as session
+    join olg113_batch_session_fixture as fixture on fixture.session_id = session.session_id
+    where session.last_seen_at < clock_timestamp() - interval '9 minutes'
+  ),
+  2,
+  'session multi-hit does not refresh either activity timestamp'
+);
+select is(
+  (
+    public.resolve_app_session_candidates(
+      jsonb_build_array(
+        jsonb_build_object('digest_hex', repeat('91', 32), 'digest_key_version', 1)
+      )
+    ) ->> 'credential_key_version'
+  )::integer,
+  1,
+  'one session candidate resolves with the matched credential key version'
 );
 
 select * from finish();

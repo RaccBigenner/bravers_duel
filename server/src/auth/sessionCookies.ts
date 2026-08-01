@@ -1,4 +1,5 @@
 import { isOpaqueToken } from './sessionCrypto';
+import { isExactLocalHostname, isLoopbackHostname } from '../http/urlHostPolicy';
 
 export const BOOTSTRAP_MAX_AGE_SECONDS = 10 * 60;
 export const SESSION_MAX_AGE_SECONDS = 90 * 24 * 60 * 60;
@@ -26,16 +27,18 @@ export function resolveCookieProfile(appEnv: string, requestUrl: string | URL): 
     throw new CookieProfileError();
   }
   if (url.username || url.password) throw new CookieProfileError();
-  const loopback =
-    url.hostname === '127.0.0.1' || url.hostname === 'localhost' || url.hostname === '[::1]';
   if (appEnv === 'local') {
-    if (url.protocol !== 'http:' || !loopback) throw new CookieProfileError();
+    if (url.protocol !== 'http:' || !isExactLocalHostname(url.hostname)) {
+      throw new CookieProfileError();
+    }
     return 'local-http';
   }
   if (!['development', 'staging', 'production'].includes(appEnv)) {
     throw new CookieProfileError();
   }
-  if (url.protocol !== 'https:' || loopback) throw new CookieProfileError();
+  if (url.protocol !== 'https:' || isLoopbackHostname(url.hostname)) {
+    throw new CookieProfileError();
+  }
   return 'secure';
 }
 

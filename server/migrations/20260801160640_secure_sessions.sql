@@ -234,9 +234,8 @@ begin
 end;
 $$;
 
-create or replace function public.claim_guest_bootstrap_attempt(
-  p_bootstrap_digest_hex text,
-  p_digest_key_version smallint
+create or replace function public.claim_guest_bootstrap_attempt_candidates(
+  p_candidates jsonb
 )
 returns jsonb
 language plpgsql
@@ -245,26 +244,80 @@ set search_path = ''
 as $$
 declare
   v_attempt public.guest_bootstrap_attempt%rowtype;
+  v_candidate_attempt public.guest_bootstrap_attempt%rowtype;
+  v_candidate_item jsonb;
+  v_candidate_version_text text;
+  v_match_count integer := 0;
   v_claim_id uuid;
   v_session public.app_session%rowtype;
   v_now timestamptz;
 begin
-  if p_bootstrap_digest_hex is null
-    or p_bootstrap_digest_hex !~ '^[0-9a-f]{64}$'
-    or p_digest_key_version is null
-    or p_digest_key_version not between 1 and 32767
-  then
+  -- PostgreSQLはboolean項の評価順を保証しない。型確認→shape→castを段階化し、
+  -- security-definer入口で不正JSONがraw SQL errorへ化けないようにする。
+  if p_candidates is null or jsonb_typeof(p_candidates) <> 'array' then
+    raise exception using errcode = '22023', message = 'INVALID_BOOTSTRAP_INPUT';
+  end if;
+  if jsonb_array_length(p_candidates) not between 1 and 8 then
+    raise exception using errcode = '22023', message = 'INVALID_BOOTSTRAP_INPUT';
+  end if;
+  for v_candidate_item in select value from jsonb_array_elements(p_candidates)
+  loop
+    if jsonb_typeof(v_candidate_item) <> 'object'
+      or not (v_candidate_item ?& array['digest_hex', 'digest_key_version'])
+      or v_candidate_item - 'digest_hex' - 'digest_key_version' <> '{}'::jsonb
+    then
+      raise exception using errcode = '22023', message = 'INVALID_BOOTSTRAP_INPUT';
+    end if;
+    if jsonb_typeof(v_candidate_item -> 'digest_hex') <> 'string'
+      or jsonb_typeof(v_candidate_item -> 'digest_key_version') <> 'number'
+    then
+      raise exception using errcode = '22023', message = 'INVALID_BOOTSTRAP_INPUT';
+    end if;
+    v_candidate_version_text := v_candidate_item ->> 'digest_key_version';
+    if v_candidate_item ->> 'digest_hex' !~ '^[0-9a-f]{64}$'
+      or v_candidate_version_text !~ '^[0-9]{1,5}$'
+    then
+      raise exception using errcode = '22023', message = 'INVALID_BOOTSTRAP_INPUT';
+    end if;
+    if v_candidate_version_text::integer not between 1 and 32767 then
+      raise exception using errcode = '22023', message = 'INVALID_BOOTSTRAP_INPUT';
+    end if;
+  end loop;
+  if (
+    select count(*) <> count(distinct (
+      candidate.item ->> 'digest_hex',
+      candidate.item ->> 'digest_key_version'
+    ))
+    from jsonb_array_elements(p_candidates) as candidate(item)
+  ) then
     raise exception using errcode = '22023', message = 'INVALID_BOOTSTRAP_INPUT';
   end if;
 
-  select * into v_attempt
-  from public.guest_bootstrap_attempt
-  where bootstrap_digest = decode(p_bootstrap_digest_hex, 'hex')
-    and digest_key_version = p_digest_key_version
-  for update;
+  -- versionなしcookieのactive+retained候補を1 transactionで照合する。
+  -- 2行以上に当たった場合はどの行もclaimせず、credential ambiguityとしてfail closedする。
+  for v_candidate_attempt in
+    select attempt.*
+    from public.guest_bootstrap_attempt as attempt
+    join jsonb_array_elements(p_candidates) as candidate(item)
+      on attempt.bootstrap_digest = decode(candidate.item ->> 'digest_hex', 'hex')
+      and attempt.digest_key_version = (candidate.item ->> 'digest_key_version')::smallint
+    where attempt.expires_at > statement_timestamp()
+    order by attempt.attempt_id
+    for update of attempt
+  loop
+    v_match_count := v_match_count + 1;
+    v_attempt := v_candidate_attempt;
+  end loop;
+
+  if v_match_count = 0 then
+    return jsonb_build_object('state', 'invalid');
+  end if;
+  if v_match_count > 1 then
+    return jsonb_build_object('state', 'ambiguous');
+  end if;
 
   v_now := clock_timestamp();
-  if not found or v_attempt.expires_at <= v_now then
+  if v_attempt.expires_at <= v_now then
     return jsonb_build_object('state', 'invalid');
   end if;
 
@@ -288,10 +341,6 @@ begin
         'session_derivation_key_version', v_attempt.session_derivation_key_version
       );
     end if;
-    return jsonb_build_object('state', 'invalid');
-  end if;
-
-  if v_attempt.expires_at <= v_now + interval '45 seconds' then
     return jsonb_build_object('state', 'invalid');
   end if;
 
@@ -321,6 +370,11 @@ begin
     );
   end if;
 
+  -- 新しいAuth signupを完走する余裕がないattemptだけを拒否する。補償回収は上で許可済み。
+  if v_attempt.expires_at <= v_now + interval '45 seconds' then
+    return jsonb_build_object('state', 'invalid');
+  end if;
+
   if v_attempt.attempt_state not in ('READY', 'CLAIMED')
     or v_attempt.account_id is not null
     or v_attempt.session_id is not null
@@ -342,6 +396,34 @@ begin
     'attempt_id', v_attempt.attempt_id,
     'claim_id', v_claim_id,
     'session_derivation_key_version', v_attempt.session_derivation_key_version
+  );
+end;
+$$;
+
+create or replace function public.claim_guest_bootstrap_attempt(
+  p_bootstrap_digest_hex text,
+  p_digest_key_version smallint
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if p_bootstrap_digest_hex is null
+    or p_bootstrap_digest_hex !~ '^[0-9a-f]{64}$'
+    or p_digest_key_version is null
+    or p_digest_key_version not between 1 and 32767
+  then
+    raise exception using errcode = '22023', message = 'INVALID_BOOTSTRAP_INPUT';
+  end if;
+  return public.claim_guest_bootstrap_attempt_candidates(
+    jsonb_build_array(
+      jsonb_build_object(
+        'digest_hex', p_bootstrap_digest_hex,
+        'digest_key_version', p_digest_key_version
+      )
+    )
   );
 end;
 $$;
@@ -506,6 +588,7 @@ begin
     or v_attempt.claim_lease_until <= v_now
     or v_attempt.account_id is distinct from p_account_id
     or v_attempt.last_auth_account_id is distinct from p_account_id
+    or p_token_digest_key_version <> v_attempt.session_derivation_key_version
     or p_auth_grant_expires_at_epoch <= extract(epoch from v_now)::bigint
     or p_auth_grant_expires_at_epoch > extract(epoch from v_now + interval '7 days')::bigint
   then
@@ -571,9 +654,8 @@ begin
 end;
 $$;
 
-create or replace function public.resolve_app_session(
-  p_token_digest_hex text,
-  p_token_digest_key_version smallint
+create or replace function public.resolve_app_session_candidates(
+  p_candidates jsonb
 )
 returns jsonb
 language plpgsql
@@ -583,25 +665,71 @@ as $$
 declare
   v_session public.app_session%rowtype;
   v_credential public.app_session_credential%rowtype;
+  v_candidate_credential public.app_session_credential%rowtype;
+  v_candidate_item jsonb;
+  v_candidate_version_text text;
+  v_match_count integer := 0;
   v_now timestamptz;
 begin
-  if p_token_digest_hex is null
-    or p_token_digest_hex !~ '^[0-9a-f]{64}$'
-    or p_token_digest_key_version is null
-    or p_token_digest_key_version not between 1 and 32767
-  then
+  if p_candidates is null or jsonb_typeof(p_candidates) <> 'array' then
+    raise exception using errcode = '22023', message = 'INVALID_SESSION_INPUT';
+  end if;
+  if jsonb_array_length(p_candidates) not between 1 and 8 then
+    raise exception using errcode = '22023', message = 'INVALID_SESSION_INPUT';
+  end if;
+  for v_candidate_item in select value from jsonb_array_elements(p_candidates)
+  loop
+    if jsonb_typeof(v_candidate_item) <> 'object'
+      or not (v_candidate_item ?& array['digest_hex', 'digest_key_version'])
+      or v_candidate_item - 'digest_hex' - 'digest_key_version' <> '{}'::jsonb
+    then
+      raise exception using errcode = '22023', message = 'INVALID_SESSION_INPUT';
+    end if;
+    if jsonb_typeof(v_candidate_item -> 'digest_hex') <> 'string'
+      or jsonb_typeof(v_candidate_item -> 'digest_key_version') <> 'number'
+    then
+      raise exception using errcode = '22023', message = 'INVALID_SESSION_INPUT';
+    end if;
+    v_candidate_version_text := v_candidate_item ->> 'digest_key_version';
+    if v_candidate_item ->> 'digest_hex' !~ '^[0-9a-f]{64}$'
+      or v_candidate_version_text !~ '^[0-9]{1,5}$'
+    then
+      raise exception using errcode = '22023', message = 'INVALID_SESSION_INPUT';
+    end if;
+    if v_candidate_version_text::integer not between 1 and 32767 then
+      raise exception using errcode = '22023', message = 'INVALID_SESSION_INPUT';
+    end if;
+  end loop;
+  if (
+    select count(*) <> count(distinct (
+      candidate.item ->> 'digest_hex',
+      candidate.item ->> 'digest_key_version'
+    ))
+    from jsonb_array_elements(p_candidates) as candidate(item)
+  ) then
     raise exception using errcode = '22023', message = 'INVALID_SESSION_INPUT';
   end if;
 
-  select * into v_credential
-  from public.app_session_credential
-  where token_digest = decode(p_token_digest_hex, 'hex')
-    and token_digest_key_version = p_token_digest_key_version
-    and credential_state = 'CURRENT'
-  for update;
+  for v_candidate_credential in
+    select credential.*
+    from public.app_session_credential as credential
+    join jsonb_array_elements(p_candidates) as candidate(item)
+      on credential.token_digest = decode(candidate.item ->> 'digest_hex', 'hex')
+      and credential.token_digest_key_version =
+        (candidate.item ->> 'digest_key_version')::smallint
+    where credential.credential_state = 'CURRENT'
+    order by credential.credential_id
+    for update of credential
+  loop
+    v_match_count := v_match_count + 1;
+    v_credential := v_candidate_credential;
+  end loop;
 
-  if not found then
+  if v_match_count = 0 then
     return null;
+  end if;
+  if v_match_count > 1 then
+    return jsonb_build_object('state', 'ambiguous');
   end if;
 
   select * into v_session
@@ -631,8 +759,37 @@ begin
     'account_id', v_session.account_id,
     'session_version', v_session.session_version,
     'credential_state', v_credential.credential_state,
+    'credential_key_version', v_credential.token_digest_key_version,
     'idle_expires_at', v_session.idle_expires_at,
     'absolute_expires_at', v_session.absolute_expires_at
+  );
+end;
+$$;
+
+create or replace function public.resolve_app_session(
+  p_token_digest_hex text,
+  p_token_digest_key_version smallint
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if p_token_digest_hex is null
+    or p_token_digest_hex !~ '^[0-9a-f]{64}$'
+    or p_token_digest_key_version is null
+    or p_token_digest_key_version not between 1 and 32767
+  then
+    raise exception using errcode = '22023', message = 'INVALID_SESSION_INPUT';
+  end if;
+  return public.resolve_app_session_candidates(
+    jsonb_build_array(
+      jsonb_build_object(
+        'digest_hex', p_token_digest_hex,
+        'digest_key_version', p_token_digest_key_version
+      )
+    )
   );
 end;
 $$;
@@ -804,6 +961,8 @@ revoke all on function public.create_guest_bootstrap_attempt(text, smallint, sma
   from public, anon, authenticated, service_role;
 revoke all on function public.claim_guest_bootstrap_attempt(text, smallint)
   from public, anon, authenticated, service_role;
+revoke all on function public.claim_guest_bootstrap_attempt_candidates(jsonb)
+  from public, anon, authenticated, service_role;
 revoke all on function public.release_guest_bootstrap_claim(uuid, uuid, text)
   from public, anon, authenticated, service_role;
 revoke all on function public.reset_guest_bootstrap_after_auth_delete(uuid, uuid, uuid)
@@ -811,6 +970,8 @@ revoke all on function public.reset_guest_bootstrap_after_auth_delete(uuid, uuid
 revoke all on function public.complete_guest_app_session(uuid, uuid, uuid, uuid, text, smallint, text, text, smallint, bigint)
   from public, anon, authenticated, service_role;
 revoke all on function public.resolve_app_session(text, smallint)
+  from public, anon, authenticated, service_role;
+revoke all on function public.resolve_app_session_candidates(jsonb)
   from public, anon, authenticated, service_role;
 revoke all on function public.validate_app_session_version(uuid, bigint)
   from public, anon, authenticated, service_role;
@@ -823,6 +984,8 @@ grant execute on function public.create_guest_bootstrap_attempt(text, smallint, 
   to service_role;
 grant execute on function public.claim_guest_bootstrap_attempt(text, smallint)
   to service_role;
+grant execute on function public.claim_guest_bootstrap_attempt_candidates(jsonb)
+  to service_role;
 grant execute on function public.release_guest_bootstrap_claim(uuid, uuid, text)
   to service_role;
 grant execute on function public.reset_guest_bootstrap_after_auth_delete(uuid, uuid, uuid)
@@ -830,6 +993,8 @@ grant execute on function public.reset_guest_bootstrap_after_auth_delete(uuid, u
 grant execute on function public.complete_guest_app_session(uuid, uuid, uuid, uuid, text, smallint, text, text, smallint, bigint)
   to service_role;
 grant execute on function public.resolve_app_session(text, smallint)
+  to service_role;
+grant execute on function public.resolve_app_session_candidates(jsonb)
   to service_role;
 grant execute on function public.validate_app_session_version(uuid, bigint)
   to service_role;

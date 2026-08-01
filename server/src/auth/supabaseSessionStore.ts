@@ -1,5 +1,6 @@
 import type { EncryptedAuthGrant } from './sessionCrypto';
 import { createDeadlineFetch } from '../http/deadlineFetch';
+import { isExactLocalHostname, isLoopbackHostname } from '../http/urlHostPolicy';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
@@ -18,10 +19,19 @@ export interface SessionPrincipal {
   idleExpiresAt: string;
   absoluteExpiresAt: string;
   credentialState: 'CURRENT';
+  credentialKeyVersion: number;
 }
+
+export interface DigestCandidate {
+  digestHex: string;
+  keyVersion: number;
+}
+
+export type SessionResolution = SessionPrincipal | { state: 'ambiguous' } | null;
 
 export type BootstrapClaim =
   | { state: 'invalid' }
+  | { state: 'ambiguous' }
   | { state: 'pending'; retryAfterSeconds: number }
   | {
       state: 'create_auth';
@@ -66,6 +76,9 @@ export interface SessionStore {
     bootstrapDigestHex: string;
     digestKeyVersion: number;
   }): Promise<BootstrapClaim>;
+  claimBootstrapCandidates(
+    candidates: readonly DigestCandidate[],
+  ): Promise<BootstrapClaim>;
   releaseBootstrapClaim(input: {
     attemptId: string;
     claimId: string;
@@ -90,6 +103,7 @@ export interface SessionStore {
     sessionDigestHex: string;
     sessionDigestKeyVersion: number;
   }): Promise<SessionPrincipal | null>;
+  resolveSessionCandidates(candidates: readonly DigestCandidate[]): Promise<SessionResolution>;
   validateSessionVersion(input: { sessionId: string; sessionVersion: number }): Promise<boolean>;
   revokeSession(input: {
     sessionDigestHex: string;
@@ -117,17 +131,21 @@ interface SessionStoreDependencies {
 }
 
 function normalizedUrl(credential: SessionStoreCredential): string {
+  if (typeof credential?.supabaseUrl !== 'string') {
+    throw new SessionStoreError('SESSION_STORE_CONFIG_INVALID');
+  }
   let url: URL;
   try {
     url = new URL(credential.supabaseUrl);
   } catch {
     throw new SessionStoreError('SESSION_STORE_CONFIG_INVALID');
   }
-  const loopback =
-    url.hostname === '127.0.0.1' || url.hostname === 'localhost' || url.hostname === '[::1]';
   if (
-    (credential.environment === 'local' && (url.protocol !== 'http:' || !loopback)) ||
-    (credential.environment === 'remote' && (url.protocol !== 'https:' || loopback)) ||
+    (credential.environment !== 'local' && credential.environment !== 'remote') ||
+    (credential.environment === 'local' &&
+      (url.protocol !== 'http:' || !isExactLocalHostname(url.hostname))) ||
+    (credential.environment === 'remote' &&
+      (url.protocol !== 'https:' || isLoopbackHostname(url.hostname))) ||
     url.username ||
     url.password ||
     (url.pathname !== '' && url.pathname !== '/') ||
@@ -140,6 +158,10 @@ function normalizedUrl(credential: SessionStoreCredential): string {
     throw new SessionStoreError('SESSION_STORE_CONFIG_INVALID');
   }
   return url.toString().replace(/\/$/u, '');
+}
+
+export function assertSessionStoreCredential(credential: SessionStoreCredential): void {
+  normalizedUrl(credential);
 }
 
 function positiveSmallint(value: number): number {
@@ -199,6 +221,80 @@ function stableCode(value: string): string {
     throw new SessionStoreError('SESSION_STORE_CONFIG_INVALID');
   }
   return value;
+}
+
+function bootstrapClaim(value: Record<string, unknown>): BootstrapClaim {
+  if (value.state === 'invalid') return { state: 'invalid' };
+  if (value.state === 'ambiguous') return { state: 'ambiguous' };
+  if (value.state === 'pending') {
+    return { state: 'pending', retryAfterSeconds: safeInteger(value.retry_after_seconds) };
+  }
+  if (value.state === 'create_auth') {
+    return {
+      state: 'create_auth',
+      attemptId: responseUuid(value.attempt_id),
+      claimId: responseUuid(value.claim_id),
+      sessionDerivationKeyVersion: positiveSmallint(
+        safeInteger(value.session_derivation_key_version),
+      ),
+    };
+  }
+  if (value.state === 'recover_auth') {
+    return {
+      state: 'recover_auth',
+      attemptId: responseUuid(value.attempt_id),
+      claimId: responseUuid(value.claim_id),
+      accountId: responseUuid(value.account_id),
+    };
+  }
+  if (value.state === 'session_ready') {
+    return {
+      state: 'session_ready',
+      attemptId: responseUuid(value.attempt_id),
+      sessionId: responseUuid(value.session_id),
+      accountId: responseUuid(value.account_id),
+      sessionVersion: safeInteger(value.session_version),
+      sessionDerivationKeyVersion: positiveSmallint(
+        safeInteger(value.session_derivation_key_version),
+      ),
+    };
+  }
+  throw new SessionStoreError('SESSION_STORE_RESPONSE_INVALID');
+}
+
+function digestCandidateBody(
+  candidates: readonly DigestCandidate[],
+): readonly { digest_hex: string; digest_key_version: number }[] {
+  if (candidates.length < 1 || candidates.length > 8) {
+    throw new SessionStoreError('SESSION_STORE_CONFIG_INVALID');
+  }
+  const seen = new Set<string>();
+  return candidates.map((candidate) => {
+    const digestHex = digest(candidate.digestHex);
+    const keyVersion = positiveSmallint(candidate.keyVersion);
+    const identity = `${keyVersion}:${digestHex}`;
+    if (seen.has(identity)) throw new SessionStoreError('SESSION_STORE_CONFIG_INVALID');
+    seen.add(identity);
+    return { digest_hex: digestHex, digest_key_version: keyVersion };
+  });
+}
+
+function sessionResolution(raw: unknown): SessionResolution {
+  if (raw === null) return null;
+  const value = object(raw);
+  if (value.state === 'ambiguous') return { state: 'ambiguous' };
+  if (value.credential_state !== 'CURRENT') {
+    throw new SessionStoreError('SESSION_STORE_RESPONSE_INVALID');
+  }
+  return {
+    sessionId: responseUuid(value.session_id),
+    accountId: responseUuid(value.account_id),
+    sessionVersion: safeInteger(value.session_version),
+    idleExpiresAt: isoTimestamp(value.idle_expires_at),
+    absoluteExpiresAt: isoTimestamp(value.absolute_expires_at),
+    credentialState: 'CURRENT',
+    credentialKeyVersion: positiveSmallint(safeInteger(value.credential_key_version)),
+  };
 }
 
 export class SupabaseSessionStore implements SessionStore {
@@ -282,47 +378,25 @@ export class SupabaseSessionStore implements SessionStore {
     bootstrapDigestHex: string;
     digestKeyVersion: number;
   }): Promise<BootstrapClaim> {
-    const value = object(
+    return bootstrapClaim(object(
       await this.#rpc('claim_guest_bootstrap_attempt', {
         p_bootstrap_digest_hex: digest(input.bootstrapDigestHex),
         p_digest_key_version: positiveSmallint(input.digestKeyVersion),
       }),
+    ));
+  }
+
+  async claimBootstrapCandidates(
+    candidates: readonly DigestCandidate[],
+  ): Promise<BootstrapClaim> {
+    const body = digestCandidateBody(candidates);
+    return bootstrapClaim(
+      object(
+        await this.#rpc('claim_guest_bootstrap_attempt_candidates', {
+          p_candidates: body,
+        }),
+      ),
     );
-    if (value.state === 'invalid') return { state: 'invalid' };
-    if (value.state === 'pending') {
-      return { state: 'pending', retryAfterSeconds: safeInteger(value.retry_after_seconds) };
-    }
-    if (value.state === 'create_auth') {
-      return {
-        state: 'create_auth',
-        attemptId: responseUuid(value.attempt_id),
-        claimId: responseUuid(value.claim_id),
-        sessionDerivationKeyVersion: positiveSmallint(
-          safeInteger(value.session_derivation_key_version),
-        ),
-      };
-    }
-    if (value.state === 'recover_auth') {
-      return {
-        state: 'recover_auth',
-        attemptId: responseUuid(value.attempt_id),
-        claimId: responseUuid(value.claim_id),
-        accountId: responseUuid(value.account_id),
-      };
-    }
-    if (value.state === 'session_ready') {
-      return {
-        state: 'session_ready',
-        attemptId: responseUuid(value.attempt_id),
-        sessionId: responseUuid(value.session_id),
-        accountId: responseUuid(value.account_id),
-        sessionVersion: safeInteger(value.session_version),
-        sessionDerivationKeyVersion: positiveSmallint(
-          safeInteger(value.session_derivation_key_version),
-        ),
-      };
-    }
-    throw new SessionStoreError('SESSION_STORE_RESPONSE_INVALID');
   }
 
   async releaseBootstrapClaim(input: {
@@ -411,23 +485,24 @@ export class SupabaseSessionStore implements SessionStore {
     sessionDigestHex: string;
     sessionDigestKeyVersion: number;
   }): Promise<SessionPrincipal | null> {
-    const raw = await this.#rpc('resolve_app_session', {
+    const result = sessionResolution(await this.#rpc('resolve_app_session', {
       p_token_digest_hex: digest(input.sessionDigestHex),
       p_token_digest_key_version: positiveSmallint(input.sessionDigestKeyVersion),
-    });
-    if (raw === null) return null;
-    const value = object(raw);
-    if (value.credential_state !== 'CURRENT') {
+    }));
+    if (result && 'state' in result) {
       throw new SessionStoreError('SESSION_STORE_RESPONSE_INVALID');
     }
-    return {
-      sessionId: responseUuid(value.session_id),
-      accountId: responseUuid(value.account_id),
-      sessionVersion: safeInteger(value.session_version),
-      idleExpiresAt: isoTimestamp(value.idle_expires_at),
-      absoluteExpiresAt: isoTimestamp(value.absolute_expires_at),
-      credentialState: 'CURRENT',
-    };
+    return result;
+  }
+
+  async resolveSessionCandidates(
+    candidates: readonly DigestCandidate[],
+  ): Promise<SessionResolution> {
+    return sessionResolution(
+      await this.#rpc('resolve_app_session_candidates', {
+        p_candidates: digestCandidateBody(candidates),
+      }),
+    );
   }
 
   async validateSessionVersion(input: {

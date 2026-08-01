@@ -49,6 +49,7 @@ describe('OLG-113 Supabase session store', () => {
 
   it.each([
     [{ state: 'invalid' }, { state: 'invalid' }],
+    [{ state: 'ambiguous' }, { state: 'ambiguous' }],
     [{ state: 'pending', retry_after_seconds: 1 }, { state: 'pending', retryAfterSeconds: 1 }],
     [
       {
@@ -86,6 +87,43 @@ describe('OLG-113 Supabase session store', () => {
     await expect(
       store.claimBootstrap({ bootstrapDigestHex: '22'.repeat(32), digestKeyVersion: 1 }),
     ).resolves.toEqual(expected);
+  });
+
+  it('bootstrap候補を1 RPCへ渡し、重複や9鍵目をI/O前に拒否する', async () => {
+    const fetchMock = vi.fn(async () => json({ state: 'ambiguous' }));
+    const store = new SupabaseSessionStore(credential, { fetch: fetchMock });
+    const candidates = [
+      { digestHex: '21'.repeat(32), keyVersion: 2 },
+      { digestHex: '22'.repeat(32), keyVersion: 1 },
+    ];
+
+    await expect(store.claimBootstrapCandidates(candidates)).resolves.toEqual({
+      state: 'ambiguous',
+    });
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe(
+      'http://127.0.0.1:54321/rest/v1/rpc/claim_guest_bootstrap_attempt_candidates',
+    );
+    expect(JSON.parse(String(init.body))).toEqual({
+      p_candidates: [
+        { digest_hex: '21'.repeat(32), digest_key_version: 2 },
+        { digest_hex: '22'.repeat(32), digest_key_version: 1 },
+      ],
+    });
+
+    fetchMock.mockClear();
+    await expect(
+      store.claimBootstrapCandidates([candidates[0]!, candidates[0]!]),
+    ).rejects.toMatchObject({ code: 'SESSION_STORE_CONFIG_INVALID' });
+    await expect(
+      store.claimBootstrapCandidates(
+        Array.from({ length: 9 }, (_, index) => ({
+          digestHex: (index + 1).toString(16).padStart(2, '0').repeat(32),
+          keyVersion: index + 1,
+        })),
+      ),
+    ).rejects.toMatchObject({ code: 'SESSION_STORE_CONFIG_INVALID' });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('session完成RPCへ暗号文/digestだけを渡し成功応答を検証する', async () => {
@@ -143,6 +181,7 @@ describe('OLG-113 Supabase session store', () => {
         account_id: ACCOUNT_ID,
         session_version: 1,
         credential_state: 'CURRENT',
+        credential_key_version: 1,
         idle_expires_at: '2026-10-30T00:00:00Z',
         absolute_expires_at: '2027-08-01T00:00:00Z',
       }),
@@ -177,6 +216,45 @@ describe('OLG-113 Supabase session store', () => {
     ).resolves.toBeNull();
   });
 
+  it('session候補も1 RPCで解決し、multi-hitをprincipalとして採用しない', async () => {
+    const responses = [
+      json({ state: 'ambiguous' }),
+      json({
+        session_id: SESSION_ID,
+        account_id: ACCOUNT_ID,
+        session_version: 3,
+        credential_state: 'CURRENT',
+        credential_key_version: 2,
+        idle_expires_at: '2026-10-30T00:00:00Z',
+        absolute_expires_at: '2027-08-01T00:00:00Z',
+      }),
+    ];
+    const fetchMock = vi.fn(async () => responses.shift()!);
+    const store = new SupabaseSessionStore(credential, { fetch: fetchMock });
+    const candidates = [
+      { digestHex: '51'.repeat(32), keyVersion: 2 },
+      { digestHex: '52'.repeat(32), keyVersion: 1 },
+    ];
+
+    await expect(store.resolveSessionCandidates(candidates)).resolves.toEqual({
+      state: 'ambiguous',
+    });
+    await expect(store.resolveSessionCandidates(candidates)).resolves.toMatchObject({
+      sessionId: SESSION_ID,
+      credentialKeyVersion: 2,
+    });
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe(
+      'http://127.0.0.1:54321/rest/v1/rpc/resolve_app_session_candidates',
+    );
+    expect(JSON.parse(String(init.body))).toEqual({
+      p_candidates: [
+        { digest_hex: '51'.repeat(32), digest_key_version: 2 },
+        { digest_hex: '52'.repeat(32), digest_key_version: 1 },
+      ],
+    });
+  });
+
   it('remote/local URLとserver secretをfail closedで検証する', () => {
     expect(
       () =>
@@ -190,8 +268,24 @@ describe('OLG-113 Supabase session store', () => {
       () =>
         new SupabaseSessionStore({
           environment: 'remote',
+          supabaseUrl: 'https://127.0.0.2',
+          secretKey: SECRET,
+        }),
+    ).toThrowError(SessionStoreError);
+    expect(
+      () =>
+        new SupabaseSessionStore({
+          environment: 'remote',
           supabaseUrl: 'https://project.supabase.co',
           secretKey: 'sb_publishable_not-secret',
+        }),
+    ).toThrowError(SessionStoreError);
+    expect(
+      () =>
+        new SupabaseSessionStore({
+          environment: 'typo' as 'local',
+          supabaseUrl: 'http://evil.example',
+          secretKey: SECRET,
         }),
     ).toThrowError(SessionStoreError);
   });
