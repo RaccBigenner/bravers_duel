@@ -1,8 +1,8 @@
 # STATE — BRAVER'S DUEL
 
-- 最終更新: 2026-07-30
-- フェーズ: G0 Foundation / P0（OLG-001〜006完了、OLG-003Pはgit側完了・Cloudflare側は社長待ちで未完了、
-  P0 exit reviewを依頼済み）
+- 最終更新: 2026-08-01
+- フェーズ: G0 FoundationはCloudflare smoke待ち。P1 / G1 Internal Alphaへ着手し、OLG-101完了、
+  次はOLG-102
 
 
 ## この文書の読み方
@@ -21,6 +21,9 @@
 - 新プラットフォームは **TypeScript** に決定（理由: ブラウザβに必須＋同じエンジンで自動対戦テストができる）。
   - `engine/`: ルールエンジン + AI + シミュレーター（vitest でテスト）
   - `web/`: Vite + React のブラウザ画面
+  - `protocol/`: ブラウザ/サーバー共有型（OLG-101時点はworkspace境界だけ）
+  - `server/`: サーバー権威API/MatchDOのworkspaceとPostgreSQL migration正本
+  - `supabase/`: ローカルCLI設定。migrationはsymlinkで`server/migrations/`へ接続
   - npm workspaces 構成。`npm test`・`npm run sim`・`npm run dev`・`npm run build` が動くことを確認済み。
 
 ## オンライン版の最終ゴールと公開ロードマップ
@@ -37,7 +40,7 @@
 | Gate | 現在の状態 | プレイヤーから見た完了状態 |
 |---|---|---|
 | G0 Foundation | **進行中** | 既存ゲーム/デッキを壊さず、formatとversionが固定され、新弾が本番の安全な経路からカード一覧・デッキ・NPC戦へ届く |
-| G1 Internal Alpha | 未着手 | ゲスト開始→サーバー権威NPC戦→reload復帰→結果確定→アカウント保護を完走できる |
+| G1 Internal Alpha | **基盤実装中** | ゲスト開始→サーバー権威NPC戦→reload復帰→結果確定→アカウント保護を完走できる |
 | G2 Collection Closed Beta | 未着手 | 招待者が無償starter、BP、5枚pack、所持/デッキ、固定価格NPCシングルを完走できる |
 | G3 PvP Closed Beta | 未着手 | 招待ルーム戦、再接続、秘匿情報を守る招待観戦を2台の実機で完走できる |
 | G4 Public Online Beta | 未着手 | 無料公開でデュエルスペース、待機状況つきクイック、レート、問い合わせを安全に使える |
@@ -46,7 +49,7 @@
 | G7 Trade Release | 未着手 | NPC交換とescrow付きプレイヤー交換を、競合や取消でも個体を失わず完走できる |
 | G8 Live Operations | 未着手 | `LATEST_N`、新弾/翻訳、監視復旧を継続運用し、検証済みの場合だけ動的シングル価格を開放できる |
 
-## オンライン基盤の現在地（2026-07-29）
+## オンライン基盤の現在地（2026-08-01）
 
 - 作業ブランチは `feat/online-foundation`。OLG-001（現行ルール同期）とOLG-002（基準ブランチ統合）は完了。
 - **OLG-003でカードIDを二層化**:
@@ -96,12 +99,14 @@
   初回スターターの候補4種を`data/starters.json`へ置いた（採決前なので`candidate`）。
   古くなった記述を機械で落とす検査（`npm run check:stale`）を追加し、
   当時のまま残す履歴は見出しの`stale-ok`で現行の記述と区別する。
-- 次はP0 exit review（G0 Foundationの完了判断）。OLG-003Pはその前に必ず片付ける。
-  2026-07-30、Cloudflare側を除くP0の準備を完了しレビュー依頼を出した（reviews.json）:
+- P0 exit reviewのfixは2026-07-30に解消済み。Cloudflare側を除くP0の準備を完了した:
   `npm test`全件・型検査（engine/web/admin）・production build・`check:leak`が全部green
-  （直近の実行で確認）。OLG-003PはCloudflare側だけが残り、社長のトークン設定・再デプロイ待ち。
-  P0 exit reviewの対象は「OLG-003Pのgit側までの完了」で、Cloudflareの実Actions smoke testは
-  この審査の対象外（G0 gate自体はsmoke test完了まで閉じない）。
+  （直近の実行で確認）。G0 gateはOLG-003PのCloudflare設定・再デプロイ・実Actions smoke testが
+  完了するまで閉じない。
+- OLG-101（`server`/`protocol`/`supabase` scaffold）は2026-08-01に完了。新しい2 workspaceを
+  root testへ配線し、各placeholder test/typecheck、clean `npm ci`、全test/build、leak/stale検査を
+  greenにした。Supabase CLIは設定を読め、`supabase/migrations` symlinkから
+  `server/migrations/`の空migrationを参照する。Worker/MatchDO/local DBの起動はOLG-102で行う。
 - P2へNPCシングル市場を正式登録した。G2 Collection Closed Betaは固定買取/販売、有限な実在個体在庫、
   atomic quote/orderで開始する。固定価格のraw集計からpolicyを承認し、2〜4週間shadow計算する。
   日次±5%・基準80〜120%の動的価格を実注文へ使えるのはG8だけとし、G4以降の標本、
@@ -125,14 +130,15 @@
 
 ## 中断ポイント
 
-- 作業ブランチ `feat/online-foundation`。P0（ルールと版管理）を上から順に進めている。
+- 作業ブランチ `feat/online-foundation`。P0のコードを終え、P1（オンライン縦切り）を進めている。
 - 完了: OLG-001 / OLG-001A / OLG-002 / OLG-003（カードID二層化）/ OLG-004（版付きフォーマットと
   デッキ合法性）/ OLG-005（engine・content・format versionとreplay header）/ OLG-006（現行文書とgolden deck同期）。
 - 未完了: **OLG-003P（本番カード公開パイプラインの有効化）**。git側（workflow/trusted scripts同期・
   テストバッチ3枚のeffects/test）は2026-07-30に完了。残るのはCloudflare側（社長のトークン設定と
   再デプロイ）だけで、G0を終える前に必ず片付ける。
-- 次にやること: P0 exit review（依頼済み・reviews.json）の結果待ち。fix指摘が来たら文書修正で潰す。
-  通ったらCloudflare側の完了を待ってG0 Foundationを完了にする。
+- 完了: **OLG-101**（server/protocol npm workspace、Supabase CLI設定、migration正本の入口）。
+- 次にやること: **OLG-102**。Supabase/Worker/MatchDOをローカルで1コマンド起動し、最小WebSocketと
+  health checkを通す。OLG-003PのCloudflare作業はG0 blockerとして並行管理する。
 - ここまでの経緯は一番下の「開発の記録」を見る。
 
 ## オープンβ要件 決定（2026-07-23）

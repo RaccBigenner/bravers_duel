@@ -22,6 +22,9 @@
 | `engine/` | ルールエンジン（TypeScript）。AI・自動対戦シミュレーターもここ |
 | `web/` | ブラウザ用の画面（Vite + React） |
 | `admin/` | カード制作用の管理画面 |
+| `protocol/` | ブラウザとオンラインサーバーで共有する通信型のworkspace |
+| `server/` | サーバー権威バトル/APIのworkspaceとPostgreSQL migration正本 |
+| `supabase/` | Supabase CLIのローカル設定（migrationは`server/`へ接続） |
 | `scripts/` | 検査スクリプト（漏れ検査・古い記述の検査など） |
 | `ops/` | 非公開リポへ同期する公開パイプライン用ファイル |
 | `archive/` | 昔の Flutter プロトタイプ（さわらない） |
@@ -31,7 +34,7 @@
 
 ```bash
 npm install       # 最初に1回
-npm test          # 全部のテスト（engine / web / admin / スクリプト）
+npm test          # 全部のテスト（protocol / server / engine / web / admin / スクリプト）
 npm run sim       # 自動対戦シミュレーター
 npm run dev       # ブラウザで動作確認（開発サーバー）
 npm run build     # ブラウザ用のビルド

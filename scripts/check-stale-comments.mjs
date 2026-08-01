@@ -100,7 +100,7 @@ function isExempt(line, index, exempt) {
   return line.includes('stale-ok') || exempt.has(index);
 }
 
-const TOP_DIRS = 'admin|assets|data|docs|engine|ops|scripts|tools|web';
+const TOP_DIRS = 'admin|assets|data|docs|engine|ops|protocol|scripts|server|supabase|tools|web';
 const REF_RE = new RegExp(
   `(?<![\\w./@-])(?:${TOP_DIRS})/[\\w./-]*\\.(?:ts|tsx|mjs|mts|json|md|yml|yaml|png|webp)\\b`,
   'g',

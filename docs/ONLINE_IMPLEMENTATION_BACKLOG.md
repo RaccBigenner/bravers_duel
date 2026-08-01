@@ -509,7 +509,7 @@ engine/admin typecheck、Web/Admin production build、未公開データ漏洩�
 
 #### OLG-101 `server`, `protocol`, `supabase` workspace scaffold
 
-状態: 設計完了・実装未着手（2026-07-31）
+状態: **完了**（2026-08-01）
 
 G1 Internal Alphaの土台。設計: `docs/ONLINE_SERVICE_DESIGN_2026-07-29.md` 10.7
 
@@ -521,7 +521,7 @@ G1 Internal Alphaの土台。設計: `docs/ONLINE_SERVICE_DESIGN_2026-07-29.md` 
   解決できることをプレースホルダ型1つ・テスト1本で示すだけ
 - `supabase/`はnpm workspaceにしない。`supabase init`相当の`config.toml`だけを置き、
   マイグレーション（PostgreSQL正本）は`server/migrations/`に置く（10.4のリポジトリ構成案どおり。
-  ORMは使わず生SQL。理由は10.7）
+  `supabase/migrations` symlinkからCLIへ接続し、ORMは使わず生SQL。理由は10.7）
 - ルート`npm test`へ`server`/`protocol`のworkspace testを追加する
 
 受入:
@@ -529,8 +529,14 @@ G1 Internal Alphaの土台。設計: `docs/ONLINE_SERVICE_DESIGN_2026-07-29.md` 
 - `npm --workspace server run test` / `npm --workspace protocol run test`が通る
   （中身はプレースホルダでよい。ビルド設定・型検査が通ることが目的）
 - ルート`npm test`が`server`/`protocol`を含めて全部緑
-- `supabase/`の`config.toml`が`server/migrations/`を向いており、Supabase CLIがプロジェクトとして認識する
+- `supabase/`の`config.toml`と`supabase/migrations -> ../server/migrations`があり、
+  Supabase CLIがプロジェクトとして認識する
 - 実在のCloudflareリソース、実在のSupabase project、実在のsecretを一切作っていない
+
+検証: clean `npm ci`後にroot `npm test`、protocol/server各1 test＋typecheck、engine 225 tests、
+web 1 test、admin 47 tests、Web/Admin build、`check:leak`、`check:stale`がgreen。
+`supabase --workdir supabase services -o json`で設定読込に成功し、migration symlinkの実体一致を確認。
+Docker/local stack起動とmigration適用はOLG-102で行う。
 
 - OLG-102 local Supabase/Worker/DO（OLG-101の雛形を実際にローカルで起動する。Supabase CLI/
   Wranglerのローカル実行、`MatchDO`等の最小スタブ）

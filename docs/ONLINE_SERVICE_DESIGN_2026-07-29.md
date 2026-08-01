@@ -2,7 +2,7 @@
 
 - 版: v0.3
 - 作成日: 2026-07-29
-- 状態: P0完了（OLG-001〜006完了。OLG-003PはCloudflare側のみ残、G0 gateはsmoke test完了まで未クローズ）
+- 状態: P0コード完了、P1着手（OLG-101完了。OLG-003PはCloudflare側のみ残り、G0 gateはsmoke test完了まで未クローズ）
 - 対象: 無料のブラウザゲームとして常設公開する次フェーズ
 - ルールの正本: `docs/GAME_RULES.md`
 - この文書の役割: プロダクト、オンライン機能、永続化、運用の基本設計
@@ -1700,7 +1700,8 @@ protocol/
   command/event/snapshotの共有型
 
 supabase/
-  config.toml（Supabase CLIのローカル設定。マイグレーション本体はserver/migrations/を参照する）
+  config.toml（Supabase CLIのローカル設定）
+  migrations -> ../server/migrations（CLI既定入口からPostgreSQL正本へのsymlink）
 
 i18n/
   ja-JP/
@@ -1790,10 +1791,11 @@ secretを用意するのはOLG-103以降（社長の手番を含む）。OLG-101
   解決できることを1つのプレースホルダ型と1本のテストで示すだけでよい
 - `supabase/`はnpm workspaceにしない（JS/TSパッケージではないため）。`supabase init`が作る
   `config.toml`（Supabase CLIのローカル設定）だけを置く。PostgreSQLの正本になるマイグレーション
-  （生SQL）は10.4のリポジトリ構成案どおり`server/migrations/`に置く（`config.toml`の
-  migrationsパスを`../server/migrations`へ向ける）。理由: 実際のマイグレーションを書き・読むのは
-  サーバー側の実装者であり、`server/`から見て自分のテーブル定義が別workspace配下にあると探しにくい。
-  Supabase CLIの既定パスより「正本を1か所（`server/`）にまとめる」ことを優先する
+  （生SQL）は10.4のリポジトリ構成案どおり`server/migrations/`に置く。CLIが固定で参照する
+  `supabase/migrations`は`../server/migrations`へのsymlinkにし、物理的な正本を複製しない。
+  理由: 実際のマイグレーションを書き・読むのはサーバー側の実装者であり、`server/`から見て
+  自分のテーブル定義が別workspace配下にあると探しにくい。CLI既定入口を保ちながら
+  「正本を1か所（`server/`）」にする
 - マイグレーションツールはORMを使わず、Supabase CLIのネイティブなSQLマイグレーション
   （`supabase migration new` → 生SQLを`server/migrations/`へ書く → `supabase db push`）にする。
   理由: 10.3が要求する行ロック・制約・短いトランザクションは生SQLの方が確実に書け、ORMの抽象化が
@@ -1809,9 +1811,10 @@ secretを用意するのはOLG-103以降（社長の手番を含む）。OLG-101
 - `npm --workspace server run test`と`npm --workspace protocol run test`が通る
   （中身はプレースホルダでよい。ビルド設定・型検査が通ることが目的）
 - ルート`npm test`が`server`/`protocol`を含めて全部緑
-- `supabase/`に`config.toml`があり、`server/migrations/`を向いた状態で`supabase db push`相当の
-  コマンドがローカルのSupabase CLIで実行できる形になっている（実行そのものはOLG-102の範囲。
-  ディレクトリと設定ファイルが存在し、CLIがプロジェクトとして認識することまでがOLG-101）
+- `supabase/`に`config.toml`があり、`supabase/migrations` symlinkが`server/migrations/`を
+  向いた状態で`supabase db push`相当のコマンドがローカルのSupabase CLIで実行できる形になっている
+  （実行そのものはOLG-102の範囲。設定、symlink、空migrationが存在し、CLIがプロジェクトとして
+  認識することまでがOLG-101）
 - 実在のCloudflareリソース、実在のSupabase project、実在のsecretは一切作らない
   （それらはOLG-102〜105の範囲。OLG-101はローカルの雛形だけ）
 

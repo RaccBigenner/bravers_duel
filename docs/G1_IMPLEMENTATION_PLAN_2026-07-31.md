@@ -1,6 +1,6 @@
 # G1 Internal Alpha 実装計画（2026-07-31）
 
-目標日: **2026-08-12** に G1 完了。今日は 7/31 なので残り 13 日。
+目標日: **2026-08-12** に G1 完了。今日は8/1なので残り11日。
 
 正本: `docs/ONLINE_IMPLEMENTATION_BACKLOG.md`（G1 exit 条件と P1 の各 OLG）、
 `docs/ONLINE_SERVICE_DESIGN_2026-07-29.md`（設計の中身。§番号は本文で参照）。
@@ -44,12 +44,13 @@ P1 exit の一言まとめ:
 
 ### Step A: 土台（OLG-101 → OLG-102）
 
-- **OLG-101** `server` / `protocol` / `supabase` ワークスペースの scaffold（設計 §10.4）
-  - `server/src/api` `server/src/auth` `server/src/durable/MatchDO.ts` `server/migrations`
-  - `protocol/` に CommandEnvelope・イベント・snapshot の共有型（設計 §11.1）
-  - Wrangler 設定・TypeScript 設定・既存 npm workspace への組み込み
+- **OLG-101（2026-08-01完了）** `server` / `protocol` / `supabase` ワークスペースの scaffold（設計 §10.4）
+  - `server/`と`protocol/`のTypeScript設定、プレースホルダ各1つ、workspace解決テスト
+  - `server/migrations/`をPostgreSQL正本とし、`supabase/migrations` symlinkからCLIへ接続
+  - `supabase init`相当のローカル設定と既存npm workspaceへの組み込み
+  - Command/Event/Snapshot実型、Wrangler、MatchDO、WebSocket疎通はまだ作らない
 - **OLG-102** ローカル環境: Supabase CLI + Wrangler local（DO/SQLite）が
-  1 コマンドで立ち上がり、ヘルスチェック API が通る
+  1 コマンドで立ち上がり、MatchDOの最小WebSocket疎通とヘルスチェック API が通る
 
 ### Step B: アカウントの土台（OLG-111 → OLG-113）
 
@@ -110,8 +111,8 @@ P1 exit の一言まとめ:
 
 | OLG | 受け入れ条件（これができたら done） |
 |---|---|
-| 101 | `npm install` 後に server/protocol/supabase が typecheck を通り、MatchDO の骨組みに WebSocket で疎通できる |
-| 102 | 1 コマンドでローカル一式が起動し、ヘルスチェックと Supabase migration が通る |
+| 101（完了） | `npm install`後にserver/protocolのtest・typecheckとルート`npm test`が通る。Supabase CLIが設定と`server/migrations/`へのsymlinkを認識し、外部resource/secretを作っていない |
+| 102 | 1コマンドでローカル一式が起動し、MatchDOの最小WebSocket疎通、ヘルスチェック、Supabase migrationが通る |
 | 111 | ブラウザを初めて開いたゲストにサーバー側 account_id が発行され、DB に匿名アカウント行ができる |
 | 113 | session cookie が HttpOnly/Secure/SameSite=Lax。期限切れ session の API は 401。seat token なしの WebSocket は拒否 |
 | 121 | MatchDO 内で NPC 戦が開始→終了まで進み、結果が engine 単体実行と一致する（同 seed 同結果） |
