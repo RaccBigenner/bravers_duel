@@ -6,11 +6,15 @@ import {
   parseMatchCommandCandidate,
   parseMatchCommandId,
   parseMatchCommandResult,
+  parseMatchId,
   parseMatchRevision,
   type MatchCommandCandidate,
   type MatchCommandId,
   type MatchCommandResult,
+  type MatchPlayerProjection,
   type MatchRevision,
+  type MatchServerFrame,
+  type MatchTerminalProjection,
 } from '@bravers/protocol';
 import { createSessionRuntimeConfig } from '../auth/sessionRuntimeConfig';
 import type { TokenDigestCandidate } from '../auth/sessionCrypto';
@@ -22,6 +26,7 @@ import {
   HUMAN_PLAYER,
   NPC_PLAYER,
   canonicalBattlePersistenceJson,
+  createPlayerBattleProjection,
   g1NpcBattleInput,
   type AppliedBattleStep,
   type AuthoritativeBattleCheckpoint,
@@ -46,6 +51,11 @@ import {
   type MatchCommandPayloadIdentity,
 } from './matchCommandLedger';
 import {
+  MatchWireFrameError,
+  parseMatchCommandWebSocketFrame,
+  serializeMatchServerFrame,
+} from './matchWire';
+import {
   generateSeatToken,
   parseSeatAuthFrame,
   seatTokenDigestCandidates,
@@ -60,6 +70,13 @@ const AUTHENTICATION_CLOSE_CODE = 1008;
 const AUTHENTICATION_CLOSE_REASON = 'AUTH_FAILED';
 const SESSION_CLOSE_REASON = 'SESSION_ENDED';
 const SEAT_CLOSE_REASON = 'SEAT_REASSIGNED';
+const MATCH_FRAME_TOO_LARGE_CLOSE_CODE = 1009;
+const MATCH_FRAME_TOO_LARGE_CLOSE_REASON = 'MATCH_FRAME_TOO_LARGE';
+const MATCH_FRAME_INVALID_CLOSE_REASON = 'MATCH_FRAME_INVALID';
+const MATCH_UNAVAILABLE_CLOSE_CODE = 1011;
+const MATCH_UNAVAILABLE_CLOSE_REASON = 'MATCH_UNAVAILABLE';
+const MATCH_ENDED_CLOSE_CODE = 1000;
+const MATCH_ENDED_CLOSE_REASON = 'MATCH_ENDED';
 const REFERENCE_CLEANUP_DEADLINE_KIND = 'coordinator-cleanup';
 const REFERENCE_CLEANUP_RETRY_BASE_MS = 1_000;
 const REFERENCE_CLEANUP_RETRY_MAX_MS = 60_000;
@@ -67,7 +84,7 @@ const REFERENCE_CLEANUP_BATCH_SIZE = 1;
 const TERMINAL_RELEASE_DEADLINE_KIND = 'coordinator-terminal-release';
 const TERMINAL_RELEASE_PHASE_UNREGISTER = 'unregister_pending';
 const TERMINAL_RELEASE_PHASE_RESERVATION = 'reservation_release_pending';
-const NPC_MATCH_ID_PATTERN = /^npc-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+export const NPC_MATCH_ID_PATTERN = /^npc-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const BATTLE_PERSISTENCE_VERSION = 1;
 // v1 hydrateは改変検知のため全stable stepを再演する。周期checkpoint版までのDO CPU/RAM防御上限。
 const MAX_PERSISTED_BATTLE_STEPS = 4_096;
@@ -613,6 +630,41 @@ function isSeatId(value: unknown): value is MatchSeatId {
   return value === 'player-1' || value === 'player-2';
 }
 
+function isExactAuthenticatedAttachment(value: unknown): value is AuthenticatedAttachment {
+  return (
+    plainObject(value) &&
+    hasExactKeys(value, [
+      'mode',
+      'matchId',
+      'connectionId',
+      'accountId',
+      'sessionId',
+      'sessionVersion',
+      'seatId',
+      'assignmentVersion',
+    ]) &&
+    value.mode === 'authenticated' &&
+    typeof value.matchId === 'string' &&
+    MATCH_ID_PATTERN.test(value.matchId) &&
+    typeof value.connectionId === 'string' &&
+    UUID_PATTERN.test(value.connectionId) &&
+    typeof value.accountId === 'string' &&
+    typeof value.sessionId === 'string' &&
+    isPrincipal(value as unknown as MatchSessionPrincipal) &&
+    isSeatId(value.seatId) &&
+    positiveInteger(value.assignmentVersion)
+  );
+}
+
+function isDurableObjectResetError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'durableObjectReset' in error &&
+    (error as { durableObjectReset?: unknown }).durableObjectReset === true
+  );
+}
+
 function internalPrincipal(request: Request): MatchSessionPrincipal | null {
   const accountId = request.headers.get(INTERNAL_ACCOUNT_ID_HEADER);
   const sessionId = request.headers.get(INTERNAL_SESSION_ID_HEADER);
@@ -686,6 +738,7 @@ export function matchIdFromPath(pathname: string): string | null {
 export class MatchDO extends DurableObject<Env> {
   private operationTail: Promise<void> = Promise.resolve();
   private battleRuntime: EngineBattleAdapter | null = null;
+  private battleProjectionCheckpoint: AuthoritativeBattleCheckpoint | null = null;
   private battleRevision: MatchRevision | null = null;
   private readonly battleCommands = new MatchCommandLedger<StoredMatchCommandResult>();
 
@@ -961,140 +1014,152 @@ export class MatchDO extends DurableObject<Env> {
     return this.withOperationLock(() => this.startNpcBattleExclusive(input));
   }
 
-  /** OLG-122 commandを内部RPCで扱う。browser wireはOLG-125/124まで開かない。 */
+  /** OLG-122 commandを内部RPCで扱う。browser wireはOLG-124まで開かない。 */
   async applyNpcBattleCommand(
     input: ApplyNpcBattleCommandInput,
   ): Promise<ApplyNpcBattleCommandResult> {
     validateApplyNpcBattleCommandInput(input);
-    return this.withOperationLock(async () => {
-      let lifecycle = this.requireBattleLifecycle(input.principal, true);
-      const command = parseMatchCommandCandidate(input.command);
-      if (!command) throw new MatchBattleError('MATCH_BATTLE_INPUT_INVALID');
-      const matchId = this.ctx.id.name;
-      if (!matchId || command.matchId !== matchId) {
+    return this.withOperationLock(() => this.applyNpcBattleCommandExclusive(input));
+  }
+
+  /** callerがoperation lockを保持した状態でcommand commitとprojection生成を直列化する。 */
+  private async applyNpcBattleCommandExclusive(
+    input: ApplyNpcBattleCommandInput,
+  ): Promise<ApplyNpcBattleCommandResult> {
+    let lifecycle = this.requireBattleLifecycle(input.principal, true);
+    const command = parseMatchCommandCandidate(input.command);
+    if (!command) throw new MatchBattleError('MATCH_BATTLE_INPUT_INVALID');
+    const matchId = this.ctx.id.name;
+    if (!matchId || command.matchId !== matchId) {
+      throw new MatchBattleError('MATCH_BATTLE_INPUT_INVALID');
+    }
+    const revision = this.requireBattleRevision();
+    let identity: MatchCommandPayloadIdentity;
+    try {
+      identity = await identifyMatchCommandPayload(command, 'player-1');
+    } catch (error) {
+      if (error instanceof MatchCommandPayloadError) {
         throw new MatchBattleError('MATCH_BATTLE_INPUT_INVALID');
       }
-      const revision = this.requireBattleRevision();
-      let identity: MatchCommandPayloadIdentity;
-      try {
-        identity = await identifyMatchCommandPayload(command, 'player-1');
-      } catch (error) {
-        if (error instanceof MatchCommandPayloadError) {
-          throw new MatchBattleError('MATCH_BATTLE_INPUT_INVALID');
-        }
-        throw error;
-      }
+      throw error;
+    }
 
-      // active runtimeとcommand revisionのdriftをcached ACKでも隠さない。terminal lifecycleは
-      // OLG-125永続化前なので、同一DO内のledger replayだけruntime無しを許す。
-      let runtime: EngineBattleAdapter | null = null;
-      if (lifecycle.lifecycle_state === 'active') {
-        runtime = this.requireBattleRuntime();
-        if (runtime.commandRevision() !== revision) {
-          throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
-        }
-        const finished = runtime.result();
-        if (finished) {
-          lifecycle = await this.persistBattleTerminal(
-            lifecycle,
-            this.finishedTerminalResult(finished),
-          );
-          runtime = null;
-        }
-      }
-
-      const known = this.battleCommands.lookup(command.commandId, identity);
-      if (known.state === 'replay') {
-        return known.result;
-      }
-      if (known.state === 'conflict') {
-        return this.commandIdConflictResult(command, known.originalRevision);
-      }
-      if (!this.battleCommands.hasCapacity()) {
-        throw new MatchBattleError('MATCH_COMMAND_CAPACITY_EXCEEDED');
-      }
-
-      if (command.expectedRevision !== revision) {
-        return this.persistRejectedCommandResult(
-          command,
-          identity,
-          this.revisionMismatchCommandResult(
-            command,
-            revision,
-            command.expectedRevision < revision ? 'stale' : 'ahead',
-          ),
-        );
-      }
-      if (lifecycle.lifecycle_state === 'provisioning') {
-        throw new MatchBattleError('MATCH_STATE_UNAVAILABLE');
-      }
-      if (lifecycle.lifecycle_state !== 'active') {
-        return this.persistRejectedCommandResult(
-          command,
-          identity,
-          this.actionOrTerminalCommandResult(command, 'MATCH_ALREADY_TERMINAL', revision),
-        );
-      }
-      runtime ??= this.requireBattleRuntime();
+    // active runtimeとcommand revisionのdriftをcached ACKでも隠さない。terminal lifecycleは
+    // 保存済みledger replayだけruntime無しを許す。
+    let runtime: EngineBattleAdapter | null = null;
+    if (lifecycle.lifecycle_state === 'active') {
+      runtime = this.requireBattleRuntime();
       if (runtime.commandRevision() !== revision) {
         throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
       }
-      const alreadyFinished = runtime.result();
-      if (alreadyFinished) {
-        await this.persistBattleTerminal(
+      const finished = runtime.result();
+      if (finished) {
+        lifecycle = await this.persistBattleTerminal(
           lifecycle,
-          this.finishedTerminalResult(alreadyFinished),
+          this.finishedTerminalResult(finished),
         );
-        return this.persistRejectedCommandResult(
-          command,
-          identity,
-          this.actionOrTerminalCommandResult(command, 'MATCH_ALREADY_TERMINAL', revision),
-        );
+        runtime = null;
       }
+    }
 
-      if (revision >= MAX_MATCH_REVISION) {
-        throw new MatchBattleError('MATCH_COMMAND_CAPACITY_EXCEEDED');
-      }
-      const action = parseMatchAction(command.action);
-      if (!action) {
-        return this.persistRejectedCommandResult(
+    const known = this.battleCommands.lookup(command.commandId, identity);
+    if (known.state === 'replay') {
+      return known.result;
+    }
+    if (known.state === 'conflict') {
+      return this.commandIdConflictResult(command, known.originalRevision);
+    }
+    if (!this.battleCommands.hasCapacity()) {
+      throw new MatchBattleError('MATCH_COMMAND_CAPACITY_EXCEEDED');
+    }
+
+    if (command.expectedRevision !== revision) {
+      return this.persistRejectedCommandResult(
+        command,
+        identity,
+        this.revisionMismatchCommandResult(
           command,
-          identity,
-          this.actionOrTerminalCommandResult(command, 'MATCH_ACTION_INVALID', revision),
-        );
-      }
-      let prepared: ReturnType<EngineBattleAdapter['prepareHumanAction']>;
-      try {
-        prepared = runtime.prepareHumanAction(action);
-      } catch (error) {
-        if (error instanceof EngineBattleAdapterError && error.code === 'BATTLE_ACTION_INVALID') {
+          revision,
+          command.expectedRevision < revision ? 'stale' : 'ahead',
+        ),
+      );
+    }
+    if (lifecycle.lifecycle_state === 'provisioning') {
+      throw new MatchBattleError('MATCH_STATE_UNAVAILABLE');
+    }
+    if (lifecycle.lifecycle_state !== 'active') {
+      return this.persistRejectedCommandResult(
+        command,
+        identity,
+        this.actionOrTerminalCommandResult(command, 'MATCH_ALREADY_TERMINAL', revision),
+      );
+    }
+    runtime ??= this.requireBattleRuntime();
+    if (runtime.commandRevision() !== revision) {
+      throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+    }
+    const alreadyFinished = runtime.result();
+    if (alreadyFinished) {
+      await this.persistBattleTerminal(
+        lifecycle,
+        this.finishedTerminalResult(alreadyFinished),
+      );
+      return this.persistRejectedCommandResult(
+        command,
+        identity,
+        this.actionOrTerminalCommandResult(command, 'MATCH_ALREADY_TERMINAL', revision),
+      );
+    }
+
+    if (revision >= MAX_MATCH_REVISION) {
+      throw new MatchBattleError('MATCH_COMMAND_CAPACITY_EXCEEDED');
+    }
+    const action = parseMatchAction(command.action);
+    if (!action) {
+      return this.persistRejectedCommandResult(
+        command,
+        identity,
+        this.actionOrTerminalCommandResult(command, 'MATCH_ACTION_INVALID', revision),
+      );
+    }
+    let prepared: ReturnType<EngineBattleAdapter['prepareHumanAction']>;
+    try {
+      prepared = runtime.prepareHumanAction(action);
+    } catch (error) {
+      if (error instanceof EngineBattleAdapterError) {
+        if (error.code === 'BATTLE_ACTION_INVALID') {
           return this.persistRejectedCommandResult(
             command,
             identity,
             this.actionOrTerminalCommandResult(command, 'MATCH_ACTION_INVALID', revision),
           );
         }
-        throw error;
-      }
-      const nextRevision = parseMatchRevision(revision + 1);
-      if (
-        nextRevision === null ||
-        runtime.commandRevision() !== revision ||
-        prepared.nextRuntime.commandRevision() !== nextRevision
-      ) {
+        // BATTLE_ENGINE_FAILURE/BATTLE_RUNTIME_INVALID/BATTLE_NPC_WATCHDOG_EXCEEDED/
+        // BATTLE_NOT_HUMAN_TURN/BATTLE_ALREADY_FINISHEDはここまでの事前チェックが
+        // 保証しているはずの不変条件が崩れた場合のみ起こる。何も永続化する前なので
+        // MatchBattleErrorCodeの契約内へfail closedする。
         throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
       }
-      return this.persistAcceptedCommandResult(
-        lifecycle,
-        runtime,
-        prepared.nextRuntime,
-        prepared.transition.steps,
-        command,
-        identity,
-        revision,
-        nextRevision,
-      );
-    });
+      throw error;
+    }
+    const nextRevision = parseMatchRevision(revision + 1);
+    if (
+      nextRevision === null ||
+      runtime.commandRevision() !== revision ||
+      prepared.nextRuntime.commandRevision() !== nextRevision
+    ) {
+      throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+    }
+    return this.persistAcceptedCommandResult(
+      lifecycle,
+      runtime,
+      prepared.nextRuntime,
+      prepared.transition.steps,
+      command,
+      identity,
+      revision,
+      nextRevision,
+    );
   }
 
   /** 相手手札・山札・seedを含むため、OLG-124のprojection前はRPC内部専用。 */
@@ -1174,12 +1239,14 @@ export class MatchDO extends DurableObject<Env> {
       if (lifecycle.lifecycle_state === 'active' && this.battleRuntime === null) {
         throw new MatchBattleError('MATCH_STATE_UNAVAILABLE');
       }
+      const authenticatedSockets = this.captureLifecycleAuthenticatedSockets(lifecycle);
       const finished = this.battleRuntime?.result() ?? null;
       if (finished) {
-        await this.persistBattleTerminal(
+        lifecycle = await this.persistBattleTerminal(
           lifecycle,
           this.finishedTerminalResult(finished),
         );
+        await this.deliverLifecycleTerminalProjection(authenticatedSockets, lifecycle);
         throw new MatchBattleError('MATCH_BATTLE_ALREADY_TERMINAL');
       }
       const status = this.battleRuntime?.status() ?? null;
@@ -1191,6 +1258,7 @@ export class MatchDO extends DurableObject<Env> {
         finalStateHash: status?.stateHash ?? null,
         appliedActions: status?.appliedActions ?? null,
       });
+      await this.deliverLifecycleTerminalProjection(authenticatedSockets, lifecycle);
       return this.lifecycleFromRow(lifecycle);
     });
   }
@@ -1219,6 +1287,7 @@ export class MatchDO extends DurableObject<Env> {
       if (lifecycle.lifecycle_state !== 'active') {
         throw new MatchBattleError('MATCH_BATTLE_ALREADY_TERMINAL');
       }
+      const authenticatedSockets = this.captureLifecycleAuthenticatedSockets(lifecycle);
       const runtime = this.requireBattleRuntime();
       const finished = runtime.result();
       if (finished) {
@@ -1226,6 +1295,7 @@ export class MatchDO extends DurableObject<Env> {
           lifecycle,
           this.finishedTerminalResult(finished),
         );
+        await this.deliverLifecycleTerminalProjection(authenticatedSockets, lifecycle);
         throw new MatchBattleError('MATCH_BATTLE_ALREADY_TERMINAL');
       }
       const status = runtime.status();
@@ -1237,6 +1307,7 @@ export class MatchDO extends DurableObject<Env> {
         finalStateHash: status.stateHash,
         appliedActions: status.appliedActions,
       });
+      await this.deliverLifecycleTerminalProjection(authenticatedSockets, lifecycle);
       return this.lifecycleFromRow(lifecycle);
     });
   }
@@ -1800,19 +1871,17 @@ export class MatchDO extends DurableObject<Env> {
       return;
     }
     if (attachment.mode === 'authenticated') {
-      const invalidated = this.ctx.storage.sql.exec<{ invalidated_version: number }>(
-        `SELECT invalidated_version FROM match_session_invalidation WHERE session_id = ?`,
-        attachment.sessionId,
-      ).toArray()[0];
-      if (invalidated && invalidated.invalidated_version > attachment.sessionVersion) {
-        socket.close(AUTHENTICATION_CLOSE_CODE, SESSION_CLOSE_REASON);
-        return;
+      try {
+        await this.withOperationLock(() =>
+          this.handleAuthenticatedGameFrame(socket, attachment, message));
+      } catch (error) {
+        if (isDurableObjectResetError(error)) throw error;
+        this.closeMatchSocket(
+          socket,
+          MATCH_UNAVAILABLE_CLOSE_CODE,
+          MATCH_UNAVAILABLE_CLOSE_REASON,
+        );
       }
-      if (!this.isCurrentAssignment(attachment)) {
-        socket.close(AUTHENTICATION_CLOSE_CODE, SEAT_CLOSE_REASON);
-        return;
-      }
-      socket.send('error:game-not-ready');
       return;
     }
 
@@ -1835,34 +1904,57 @@ export class MatchDO extends DurableObject<Env> {
       const frame = parseSeatAuthFrame(message);
       const config = createSessionRuntimeConfig(this.env);
       const candidates = await seatTokenDigestCandidates(frame.seatToken, config.cryptoKeys);
-      const consumed = this.consumeSeatTokenCandidates(candidates, verifying, {
-        connectionId: verifying.connectionId,
-        authDeadlineEpochMs: verifying.authDeadlineEpochMs,
+      await this.withOperationLock(async () => {
+        const current = socket.deserializeAttachment() as ConnectionAttachment | null;
+        if (
+          current?.mode !== 'verifying' ||
+          current.connectionId !== verifying.connectionId ||
+          current.matchId !== verifying.matchId ||
+          current.accountId !== verifying.accountId ||
+          current.sessionId !== verifying.sessionId ||
+          current.sessionVersion !== verifying.sessionVersion ||
+          current.authDeadlineEpochMs !== verifying.authDeadlineEpochMs
+        ) {
+          this.closeMatchSocket(socket, AUTHENTICATION_CLOSE_CODE, AUTHENTICATION_CLOSE_REASON);
+          return;
+        }
+        const consumed = this.consumeSeatTokenCandidates(candidates, verifying, {
+          connectionId: verifying.connectionId,
+          authDeadlineEpochMs: verifying.authDeadlineEpochMs,
+        });
+        if (consumed.state !== 'consumed') {
+          await this.rejectPendingSocket(socket, verifying);
+          return;
+        }
+        const authenticated = {
+          mode: 'authenticated',
+          matchId: verifying.matchId,
+          connectionId: verifying.connectionId,
+          accountId: verifying.accountId,
+          sessionId: verifying.sessionId,
+          sessionVersion: verifying.sessionVersion,
+          seatId: consumed.seatId,
+          assignmentVersion: consumed.assignmentVersion,
+        } satisfies AuthenticatedAttachment;
+        socket.serializeAttachment(authenticated);
+        this.ctx.storage.sql.exec(
+          `DELETE FROM do_deadline WHERE deadline_key = ?`,
+          pendingDeadlineKey(verifying.connectionId),
+        );
+        await this.ensureNextAlarm();
+        await this.sendAuthenticatedReady(socket, authenticated);
       });
-      if (consumed.state !== 'consumed') {
-        await this.rejectPendingSocket(socket, verifying);
-        return;
-      }
-      socket.serializeAttachment({
-        mode: 'authenticated',
-        matchId: verifying.matchId,
-        connectionId: verifying.connectionId,
-        accountId: verifying.accountId,
-        sessionId: verifying.sessionId,
-        sessionVersion: verifying.sessionVersion,
-        seatId: consumed.seatId,
-        assignmentVersion: consumed.assignmentVersion,
-      } satisfies AuthenticatedAttachment);
-      this.ctx.storage.sql.exec(
-        `DELETE FROM do_deadline WHERE deadline_key = ?`,
-        pendingDeadlineKey(verifying.connectionId),
-      );
-      await this.ensureNextAlarm();
-      socket.send('auth_ok');
-    } catch {
+    } catch (error) {
+      if (isDurableObjectResetError(error)) throw error;
       const current = socket.deserializeAttachment() as ConnectionAttachment | null;
       if (current?.mode === 'pending' || current?.mode === 'verifying') {
         await this.rejectPendingSocket(socket, current);
+      } else if (current?.mode === 'authenticated') {
+        this.closeMatchSocket(
+          socket,
+          MATCH_UNAVAILABLE_CLOSE_CODE,
+          MATCH_UNAVAILABLE_CLOSE_REASON,
+        );
       } else {
         socket.close(AUTHENTICATION_CLOSE_CODE, AUTHENTICATION_CLOSE_REASON);
       }
@@ -1944,6 +2036,414 @@ export class MatchDO extends DurableObject<Env> {
       pendingDeadlineKey(attachment.connectionId),
     );
     await this.ensureNextAlarm();
+  }
+
+  private sameAuthenticatedAttachment(
+    left: AuthenticatedAttachment,
+    right: AuthenticatedAttachment,
+  ): boolean {
+    return (
+      left.mode === right.mode &&
+      left.matchId === right.matchId &&
+      left.connectionId === right.connectionId &&
+      left.accountId === right.accountId &&
+      left.sessionId === right.sessionId &&
+      left.sessionVersion === right.sessionVersion &&
+      left.seatId === right.seatId &&
+      left.assignmentVersion === right.assignmentVersion
+    );
+  }
+
+  private isSessionInvalidated(attachment: AuthenticatedAttachment): boolean {
+    const invalidation = this.ctx.storage.sql.exec<{ invalidated_version: number }>(
+      `SELECT invalidated_version FROM match_session_invalidation WHERE session_id = ?`,
+      attachment.sessionId,
+    ).toArray()[0];
+    return Boolean(
+      invalidation && invalidation.invalidated_version > attachment.sessionVersion,
+    );
+  }
+
+  /** terminal commitでassignmentが消えた後も、既存socketのexact receipt再送だけを認可する。 */
+  private isTerminalLifecycleOwner(
+    lifecycle: BattleLifecycleRow | null | undefined,
+    attachment: AuthenticatedAttachment,
+  ): lifecycle is BattleLifecycleRow {
+    if (!lifecycle) return false;
+    const stored = this.lifecycleFromRow(lifecycle);
+    return (
+      stored.state !== 'provisioning' &&
+      stored.state !== 'active' &&
+      stored.assignmentVersion !== null &&
+      stored.assignmentVersion === attachment.assignmentVersion &&
+      stored.seatId === attachment.seatId &&
+      samePrincipal(lifecycle, attachment)
+    );
+  }
+
+  /** 同じviewerの複数tabだけ。将来PvPで相手seatへこのprojectionを転送してはいけない。 */
+  private matchingSameViewerAuthenticatedSockets(
+    owner: AuthenticatedAttachment,
+  ): WebSocket[] {
+    return this.ctx.getWebSockets().filter((candidate) => {
+      const attachment = candidate.deserializeAttachment() as unknown;
+      return (
+        isExactAuthenticatedAttachment(attachment) &&
+        attachment.matchId === owner.matchId &&
+        attachment.accountId === owner.accountId &&
+        attachment.sessionId === owner.sessionId &&
+        attachment.sessionVersion === owner.sessionVersion &&
+        attachment.seatId === owner.seatId &&
+        attachment.assignmentVersion === owner.assignmentVersion
+      );
+    });
+  }
+
+  private captureLifecycleAuthenticatedSockets(
+    lifecycle: BattleLifecycleRow,
+  ): Array<{ socket: WebSocket; attachment: AuthenticatedAttachment }> {
+    const stored = this.lifecycleFromRow(lifecycle);
+    if (stored.assignmentVersion === null) return [];
+    const captured: Array<{ socket: WebSocket; attachment: AuthenticatedAttachment }> = [];
+    for (const socket of this.ctx.getWebSockets()) {
+      const attachment = socket.deserializeAttachment() as unknown;
+      if (
+        isExactAuthenticatedAttachment(attachment) &&
+        attachment.matchId === stored.matchId &&
+        attachment.accountId === stored.principal.accountId &&
+        attachment.sessionId === stored.principal.sessionId &&
+        attachment.sessionVersion === stored.principal.sessionVersion &&
+        attachment.seatId === stored.seatId &&
+        attachment.assignmentVersion === stored.assignmentVersion
+      ) {
+        captured.push({ socket, attachment });
+      }
+    }
+    return captured;
+  }
+
+  private terminalProjectionFor(
+    lifecycle: NpcBattleLifecycle,
+  ): MatchTerminalProjection | null {
+    const terminal = lifecycle.terminalResult;
+    if (!terminal) return null;
+    if (terminal.kind === 'finished') {
+      return {
+        state: 'finished',
+        winner: terminal.winner,
+        reason: terminal.endReason,
+      };
+    }
+    if (terminal.kind === 'cancelled') {
+      return {
+        state: 'cancelled',
+        winner: null,
+        reason: terminal.reason,
+      };
+    }
+    return {
+      state: 'abandoned',
+      winner: NPC_PLAYER,
+      reason: terminal.reason,
+    };
+  }
+
+  private playerProjectionFor(
+    attachment: AuthenticatedAttachment,
+    lifecycleRow: BattleLifecycleRow,
+  ): MatchPlayerProjection {
+    const lifecycle = this.lifecycleFromRow(lifecycleRow);
+    const matchId = parseMatchId(this.ctx.id.name);
+    if (
+      !matchId ||
+      lifecycle.matchId !== matchId ||
+      lifecycle.seatId !== attachment.seatId ||
+      lifecycle.assignmentVersion !== attachment.assignmentVersion ||
+      !samePrincipal(lifecycleRow, attachment) ||
+      !this.battleProjectionCheckpoint
+    ) {
+      throw new MatchBattleError('MATCH_BATTLE_ACCESS_DENIED');
+    }
+    return createPlayerBattleProjection(this.battleProjectionCheckpoint, {
+      matchId,
+      viewerSeat: attachment.seatId,
+      revision: this.requireBattleRevision(),
+      contentVersion: lifecycle.versions.contentVersion,
+      formatVersionId: lifecycle.versions.formatVersionId,
+      terminal: this.terminalProjectionFor(lifecycle),
+    });
+  }
+
+  private closeMatchSocket(socket: WebSocket, code: number, reason: string): void {
+    try {
+      socket.close(code, reason);
+    } catch {
+      // terminal commitや他socketへの配信を、個別socketのclose失敗で巻き戻さない。
+    }
+  }
+
+  private async sendAuthenticatedReady(
+    socket: WebSocket,
+    expected: AuthenticatedAttachment,
+  ): Promise<void> {
+    const current = socket.deserializeAttachment() as unknown;
+    if (
+      !isExactAuthenticatedAttachment(current) ||
+      !this.sameAuthenticatedAttachment(current, expected) ||
+      current.matchId !== this.ctx.id.name
+    ) {
+      this.closeMatchSocket(socket, AUTHENTICATION_CLOSE_CODE, AUTHENTICATION_CLOSE_REASON);
+      return;
+    }
+    if (this.isSessionInvalidated(current)) {
+      this.closeMatchSocket(socket, AUTHENTICATION_CLOSE_CODE, SESSION_CLOSE_REASON);
+      return;
+    }
+    if (!this.isCurrentAssignment(current)) {
+      this.closeMatchSocket(socket, AUTHENTICATION_CLOSE_CODE, SEAT_CLOSE_REASON);
+      return;
+    }
+
+    const lifecycle = this.battleLifecycleRow();
+    if (!lifecycle || lifecycle.lifecycle_state === 'provisioning') {
+      try {
+        socket.send('auth_ok');
+      } catch {
+        this.closeMatchSocket(socket, MATCH_UNAVAILABLE_CLOSE_CODE, MATCH_UNAVAILABLE_CLOSE_REASON);
+      }
+      return;
+    }
+
+    let encodedProjection: string;
+    try {
+      encodedProjection = serializeMatchServerFrame({
+        type: 'matchProjection',
+        projection: this.playerProjectionFor(current, lifecycle),
+      });
+    } catch (error) {
+      if (
+        error instanceof MatchBattleError ||
+        error instanceof EngineBattleAdapterError ||
+        error instanceof MatchWireFrameError
+      ) {
+        this.closeMatchSocket(socket, MATCH_UNAVAILABLE_CLOSE_CODE, MATCH_UNAVAILABLE_CLOSE_REASON);
+        return;
+      }
+      throw error;
+    }
+    try {
+      socket.send('auth_ok');
+      socket.send(encodedProjection);
+    } catch {
+      this.closeMatchSocket(socket, MATCH_UNAVAILABLE_CLOSE_CODE, MATCH_UNAVAILABLE_CLOSE_REASON);
+    }
+  }
+
+  private async deliverMatchProjection(
+    origin: WebSocket,
+    recipients: readonly WebSocket[],
+    projection: MatchPlayerProjection,
+    receipt: MatchCommandResult | null,
+  ): Promise<void> {
+    let originPayload: string;
+    let peerPayload: string;
+    try {
+      const originFrame: MatchServerFrame = receipt
+        ? { type: 'matchCommandUpdate', receipt, projection }
+        : { type: 'matchProjection', projection };
+      originPayload = serializeMatchServerFrame(originFrame);
+      peerPayload = serializeMatchServerFrame({ type: 'matchProjection', projection });
+    } catch (error) {
+      if (!(error instanceof MatchWireFrameError)) throw error;
+      const affected = recipients.includes(origin) ? recipients : [origin, ...recipients];
+      for (const socket of affected) {
+        this.closeMatchSocket(
+          socket,
+          MATCH_UNAVAILABLE_CLOSE_CODE,
+          MATCH_UNAVAILABLE_CLOSE_REASON,
+        );
+      }
+      return;
+    }
+
+    try {
+      origin.send(originPayload);
+    } catch {
+      this.closeMatchSocket(origin, MATCH_UNAVAILABLE_CLOSE_CODE, MATCH_UNAVAILABLE_CLOSE_REASON);
+    }
+    for (const socket of recipients) {
+      if (socket === origin) continue;
+      try {
+        socket.send(peerPayload);
+      } catch {
+        this.closeMatchSocket(
+          socket,
+          MATCH_UNAVAILABLE_CLOSE_CODE,
+          MATCH_UNAVAILABLE_CLOSE_REASON,
+        );
+      }
+    }
+
+    if (!projection.terminal) return;
+    await this.runBattleWireCutpoint(
+      () => this.afterTerminalFrameSend(),
+      'MATCH_TERMINAL_POST_SEND_FAILED',
+    );
+    const affected = recipients.includes(origin) ? recipients : [origin, ...recipients];
+    for (const socket of affected) {
+      this.closeMatchSocket(socket, MATCH_ENDED_CLOSE_CODE, MATCH_ENDED_CLOSE_REASON);
+    }
+    await this.runBattleWireCutpoint(
+      () => this.afterTerminalSocketsClose(),
+      'MATCH_TERMINAL_POST_CLOSE_FAILED',
+    );
+  }
+
+  private async deliverLifecycleTerminalProjection(
+    captured: readonly { socket: WebSocket; attachment: AuthenticatedAttachment }[],
+    lifecycle: BattleLifecycleRow,
+  ): Promise<void> {
+    const origin = captured[0];
+    if (!origin) return;
+    let projection: MatchPlayerProjection;
+    try {
+      projection = this.playerProjectionFor(origin.attachment, lifecycle);
+      if (!projection.terminal) throw new MatchBattleError('MATCH_BATTLE_STATE_INVALID');
+    } catch (error) {
+      if (error instanceof MatchBattleError || error instanceof EngineBattleAdapterError) {
+        for (const recipient of captured) {
+          this.closeMatchSocket(
+            recipient.socket,
+            MATCH_UNAVAILABLE_CLOSE_CODE,
+            MATCH_UNAVAILABLE_CLOSE_REASON,
+          );
+        }
+        return;
+      }
+      throw error;
+    }
+    await this.deliverMatchProjection(
+      origin.socket,
+      captured.map((recipient) => recipient.socket),
+      projection,
+      null,
+    );
+  }
+
+  private async handleAuthenticatedGameFrame(
+    socket: WebSocket,
+    expected: AuthenticatedAttachment,
+    message: string | ArrayBuffer,
+  ): Promise<void> {
+    const current = socket.deserializeAttachment() as unknown;
+    if (
+      !isExactAuthenticatedAttachment(current) ||
+      !this.sameAuthenticatedAttachment(current, expected) ||
+      current.matchId !== this.ctx.id.name
+    ) {
+      this.closeMatchSocket(socket, AUTHENTICATION_CLOSE_CODE, AUTHENTICATION_CLOSE_REASON);
+      return;
+    }
+    if (this.isSessionInvalidated(current)) {
+      this.closeMatchSocket(socket, AUTHENTICATION_CLOSE_CODE, SESSION_CLOSE_REASON);
+      return;
+    }
+
+    let lifecycleBefore = this.battleLifecycleRow();
+    try {
+      if (lifecycleBefore) this.lifecycleFromRow(lifecycleBefore);
+    } catch (error) {
+      if (error instanceof MatchBattleError) {
+        this.closeMatchSocket(socket, MATCH_UNAVAILABLE_CLOSE_CODE, MATCH_UNAVAILABLE_CLOSE_REASON);
+        return;
+      }
+      throw error;
+    }
+    const terminalOwner = this.isTerminalLifecycleOwner(lifecycleBefore, current);
+    if (!this.isCurrentAssignment(current) && !terminalOwner) {
+      this.closeMatchSocket(socket, AUTHENTICATION_CLOSE_CODE, SEAT_CLOSE_REASON);
+      return;
+    }
+
+    let frame: ReturnType<typeof parseMatchCommandWebSocketFrame>;
+    try {
+      frame = parseMatchCommandWebSocketFrame(message);
+    } catch (error) {
+      if (!(error instanceof MatchWireFrameError)) throw error;
+      this.closeMatchSocket(
+        socket,
+        error.code === 'MATCH_FRAME_TOO_LARGE'
+          ? MATCH_FRAME_TOO_LARGE_CLOSE_CODE
+          : AUTHENTICATION_CLOSE_CODE,
+        error.code === 'MATCH_FRAME_TOO_LARGE'
+          ? MATCH_FRAME_TOO_LARGE_CLOSE_REASON
+          : MATCH_FRAME_INVALID_CLOSE_REASON,
+      );
+      return;
+    }
+    if (frame.command.matchId !== current.matchId) {
+      this.closeMatchSocket(socket, AUTHENTICATION_CLOSE_CODE, MATCH_FRAME_INVALID_CLOSE_REASON);
+      return;
+    }
+
+    const recipients = this.matchingSameViewerAuthenticatedSockets(current);
+    let receipt: MatchCommandResult | null = null;
+    if (terminalOwner) {
+      let identity: MatchCommandPayloadIdentity;
+      try {
+        identity = await identifyMatchCommandPayload(frame.command, current.seatId);
+      } catch (error) {
+        if (error instanceof MatchCommandPayloadError) {
+          this.closeMatchSocket(socket, AUTHENTICATION_CLOSE_CODE, MATCH_FRAME_INVALID_CLOSE_REASON);
+          return;
+        }
+        throw error;
+      }
+      const known = this.battleCommands.lookup(frame.command.commandId, identity);
+      if (known.state === 'replay') receipt = known.result;
+      if (known.state === 'conflict') {
+        receipt = this.commandIdConflictResult(frame.command, known.originalRevision);
+      }
+      // terminal後の未知commandは台帳を増やさず、current terminal projectionだけ返す。
+    } else {
+      try {
+        receipt = await this.applyNpcBattleCommandExclusive({
+          principal: current,
+          command: frame.command,
+        });
+      } catch (error) {
+        if (error instanceof MatchBattleError) {
+          this.closeMatchSocket(
+            socket,
+            error.code === 'MATCH_BATTLE_INPUT_INVALID'
+              ? AUTHENTICATION_CLOSE_CODE
+              : MATCH_UNAVAILABLE_CLOSE_CODE,
+            error.code === 'MATCH_BATTLE_INPUT_INVALID'
+              ? MATCH_FRAME_INVALID_CLOSE_REASON
+              : MATCH_UNAVAILABLE_CLOSE_REASON,
+          );
+          return;
+        }
+        throw error;
+      }
+      lifecycleBefore = this.battleLifecycleRow();
+    }
+
+    if (!lifecycleBefore) {
+      this.closeMatchSocket(socket, MATCH_UNAVAILABLE_CLOSE_CODE, MATCH_UNAVAILABLE_CLOSE_REASON);
+      return;
+    }
+    let projection: MatchPlayerProjection;
+    try {
+      projection = this.playerProjectionFor(current, lifecycleBefore);
+    } catch (error) {
+      if (error instanceof MatchBattleError || error instanceof EngineBattleAdapterError) {
+        this.closeMatchSocket(socket, MATCH_UNAVAILABLE_CLOSE_CODE, MATCH_UNAVAILABLE_CLOSE_REASON);
+        return;
+      }
+      throw error;
+    }
+    await this.deliverMatchProjection(socket, recipients, projection, receipt);
   }
 
   /** 再割当後の旧socketを即時に落とし、休止復帰後もmessageごとに正本を照合する。 */
@@ -2084,7 +2584,11 @@ export class MatchDO extends DurableObject<Env> {
           }
           throw error;
         }
-        if (!this.battleRuntime || this.battleRevision === null) {
+        if (
+          !this.battleRuntime ||
+          !this.battleProjectionCheckpoint ||
+          this.battleRevision === null
+        ) {
           return { state: 'unavailable' };
         }
         if (this.battleRuntime.commandRevision() !== this.battleRevision) {
@@ -2261,6 +2765,7 @@ export class MatchDO extends DurableObject<Env> {
       'MATCH_BATTLE_POST_ACTIVATION_COMMIT_FAILED',
     );
     this.battleRuntime = terminal ? null : runtime;
+    this.battleProjectionCheckpoint = structuredClone(preparedRuntime.checkpoint);
     this.battleRevision = initialRevision;
     this.battleCommands.clear();
     return { state: 'ready', created };
@@ -2310,6 +2815,7 @@ export class MatchDO extends DurableObject<Env> {
 
   private async hydrateBattlePersistenceExact(): Promise<void> {
     this.battleRuntime = null;
+    this.battleProjectionCheckpoint = null;
     this.battleRevision = null;
     this.battleCommands.clear();
     const lifecycle = this.battleLifecycleRow();
@@ -2780,6 +3286,7 @@ export class MatchDO extends DurableObject<Env> {
       this.battleCommands.remember(command.commandId, command.identity, command.result);
     }
     this.battleRevision = revision;
+    this.battleProjectionCheckpoint = runtime.authoritativeCheckpoint();
     this.battleRuntime = lifecycle.lifecycle_state === 'active' ? runtime : null;
   }
 
@@ -3439,6 +3946,7 @@ export class MatchDO extends DurableObject<Env> {
     );
     const installed = this.installCommittedCommandResult(command, identity, result);
     this.battleRevision = nextRevision;
+    this.battleProjectionCheckpoint = structuredClone(preparedRuntime.checkpoint);
     this.battleRuntime = terminal ? null : nextRuntime;
     await this.runBattleCommandCutpoint(
       () => this.afterBattleCommandInstall(),
@@ -3454,7 +3962,23 @@ export class MatchDO extends DurableObject<Env> {
 
   private async afterBattleCommandInstall(): Promise<void> {}
 
+  private async afterTerminalFrameSend(): Promise<void> {}
+
+  private async afterTerminalSocketsClose(): Promise<void> {}
+
   private async runBattleCommandCutpoint(
+    cutpoint: () => Promise<void>,
+    abortReason: string,
+  ): Promise<void> {
+    try {
+      await cutpoint();
+    } catch (error) {
+      this.ctx.abort(abortReason);
+      throw error;
+    }
+  }
+
+  private async runBattleWireCutpoint(
     cutpoint: () => Promise<void>,
     abortReason: string,
   ): Promise<void> {
@@ -3482,9 +4006,14 @@ export class MatchDO extends DurableObject<Env> {
   ): Promise<BattleLifecycleRow> {
     if (lifecycle.lifecycle_state !== 'active' || !this.battleRuntime) return lifecycle;
     const result = this.battleRuntime.result();
-    return result
-      ? this.persistBattleTerminal(lifecycle, this.finishedTerminalResult(result))
-      : lifecycle;
+    if (!result) return lifecycle;
+    const authenticatedSockets = this.captureLifecycleAuthenticatedSockets(lifecycle);
+    const terminal = await this.persistBattleTerminal(
+      lifecycle,
+      this.finishedTerminalResult(result),
+    );
+    await this.deliverLifecycleTerminalProjection(authenticatedSockets, terminal);
+    return terminal;
   }
 
   /** 外部RPCやsocket操作をせず、同じSQLite transactionへ書ける終端planだけを作る。 */

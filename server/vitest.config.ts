@@ -27,8 +27,11 @@ const testSecretBindings = {
 const expectedDurableObjectResetReasons = new Set([
   'MATCH_BATTLE_PERSISTENCE_INVALID',
   'MATCH_BATTLE_POST_ACTIVATION_COMMIT_FAILED',
+  'MATCH_COMMAND_CACHE_INSTALL_FAILED',
   'MATCH_COMMAND_POST_COMMIT_FAILED',
   'MATCH_COMMAND_POST_INSTALL_FAILED',
+  'MATCH_TERMINAL_POST_CLOSE_FAILED',
+  'MATCH_TERMINAL_POST_SEND_FAILED',
 ]);
 
 function isExpectedDurableObjectReset(error: unknown): boolean {

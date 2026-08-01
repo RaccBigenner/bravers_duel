@@ -10,13 +10,21 @@ import {
   type BattleAction,
   type BattleState,
 } from '@bravers/engine';
-import { parseBattleCardId, type BattleCardId, type MatchAction } from '@bravers/protocol';
+import {
+  parseBattleCardId,
+  parseMatchId,
+  parseMatchPlayerProjection,
+  parseMatchRevision,
+  type BattleCardId,
+  type MatchAction,
+} from '@bravers/protocol';
 import { describe, expect, it, vi } from 'vitest';
 import {
   EngineBattleAdapter,
   EngineBattleAdapterError,
   HUMAN_PLAYER,
   NPC_PLAYER,
+  createPlayerBattleProjection,
   g1NpcBattleInput,
   matchActionFromEngineAction,
   parseMatchAction,
@@ -697,6 +705,193 @@ describe('OLG-121 engine battle adapter', () => {
       () => adapter.applyHumanAction({ type: 'endPlay' }),
       'BATTLE_ALREADY_FINISHED',
     );
+  });
+
+  it('viewer別projectionをallowlist生成しhidden zone・seed・hashを一切出さない', () => {
+    const adapter = EngineBattleAdapter.create(g1NpcBattleInput(17), sequentialBattleCardIds());
+    const authoritativeBefore = adapter.authoritativeSnapshot();
+    const checkpoint = adapter.authoritativeCheckpoint();
+    const matchId = parseMatchId('npc-projection-test');
+    const revision = parseMatchRevision(adapter.commandRevision());
+    if (!matchId || revision === null) throw new Error('Expected projection metadata');
+
+    const projection = createPlayerBattleProjection(checkpoint, {
+      matchId,
+      viewerSeat: 'player-1',
+      revision,
+      contentVersion: authoritativeBefore.header.contentVersion,
+      formatVersionId: authoritativeBefore.header.formatVersionId,
+      terminal: null,
+    });
+    expect(parseMatchPlayerProjection(projection)).toEqual(projection);
+    expect(projection.players[0].hand.visibility).toBe('private');
+    expect(projection.players[1].hand).toEqual({
+      visibility: 'hidden',
+      count: checkpoint.battleCards.players[1].hand.length,
+    });
+    const encoded = JSON.stringify(projection);
+    for (const card of [
+      ...checkpoint.battleCards.players[1].hand,
+      ...checkpoint.battleCards.players[1].deck,
+      ...checkpoint.battleCards.players[1].ap,
+    ]) {
+      expect(encoded).not.toContain(card.battleCardId);
+    }
+    const hiddenCanaryCheckpoint = structuredClone(checkpoint);
+    if (hiddenCanaryCheckpoint.battleCards.players[1].ap.length === 0) {
+      const stateCard = hiddenCanaryCheckpoint.state.players[1].deck.pop();
+      const identity = hiddenCanaryCheckpoint.battleCards.players[1].deck.pop();
+      if (!stateCard || !identity || stateCard !== identity.printingId) {
+        throw new Error('Expected movable hidden AP fixture');
+      }
+      hiddenCanaryCheckpoint.state.players[1].ap.push(stateCard);
+      hiddenCanaryCheckpoint.battleCards.players[1].ap.push(identity);
+    }
+    const hiddenZones = [
+      {
+        identities: hiddenCanaryCheckpoint.battleCards.players[1].hand,
+        printingIds: hiddenCanaryCheckpoint.state.players[1].hand,
+      },
+      {
+        identities: hiddenCanaryCheckpoint.battleCards.players[1].deck,
+        printingIds: hiddenCanaryCheckpoint.state.players[1].deck,
+      },
+      {
+        identities: hiddenCanaryCheckpoint.battleCards.players[1].ap,
+        printingIds: hiddenCanaryCheckpoint.state.players[1].ap,
+      },
+    ];
+    const hiddenCanaries = hiddenZones.map((zone, index) => {
+      const card = zone.identities[0];
+      if (!card) throw new Error('Expected hidden card fixture');
+      const battleCardId = parsedId(`bc_${(0xffff - index).toString(16).padStart(32, '0')}`);
+      const printingId = `SECRET-HIDDEN-${index}`;
+      card.battleCardId = battleCardId;
+      card.printingId = printingId;
+      zone.printingIds[0] = printingId;
+      return { battleCardId, printingId };
+    });
+    const hiddenCanaryProjection = createPlayerBattleProjection(hiddenCanaryCheckpoint, {
+      matchId,
+      viewerSeat: 'player-1',
+      revision,
+      contentVersion: authoritativeBefore.header.contentVersion,
+      formatVersionId: authoritativeBefore.header.formatVersionId,
+      terminal: { state: 'cancelled', winner: null, reason: 'server_cancelled' },
+    });
+    const hiddenCanaryEncoded = JSON.stringify(hiddenCanaryProjection);
+    for (const canary of hiddenCanaries) {
+      expect(hiddenCanaryEncoded).not.toContain(canary.battleCardId);
+      expect(hiddenCanaryEncoded).not.toContain(canary.printingId);
+    }
+    const driftedCheckpoint = structuredClone(checkpoint);
+    const driftedHiddenCard = driftedCheckpoint.battleCards.players[1].hand[0];
+    if (!driftedHiddenCard) throw new Error('Expected hidden drift fixture');
+    driftedHiddenCard.printingId = 'SECRET-LEDGER-DRIFT';
+    expectAdapterError(
+      () => createPlayerBattleProjection(driftedCheckpoint, {
+        matchId,
+        viewerSeat: 'player-1',
+        revision,
+        contentVersion: authoritativeBefore.header.contentVersion,
+        formatVersionId: authoritativeBefore.header.formatVersionId,
+        terminal: null,
+      }),
+      'BATTLE_IDENTITY_INVALID',
+    );
+    for (const forbiddenKey of [
+      'seed',
+      'rngState',
+      'header',
+      'stateHash',
+      'identityHash',
+      'steps',
+      'events',
+      'lifecycle',
+      'assignmentVersion',
+      'instanceId',
+      'battleCards',
+      'log',
+      'effectDepth',
+    ]) {
+      expect(encoded).not.toContain(`"${forbiddenKey}"`);
+    }
+    const ownHandIds = new Set(checkpoint.battleCards.players[0].hand.map((card) => card.battleCardId));
+    for (const action of projection.legalActions) {
+      if ('battleCardId' in action) expect(ownHandIds.has(action.battleCardId)).toBe(true);
+      expect(action).not.toHaveProperty('handIndex');
+    }
+
+    const npcProjection = createPlayerBattleProjection(checkpoint, {
+      matchId,
+      viewerSeat: 'player-2',
+      revision,
+      contentVersion: authoritativeBefore.header.contentVersion,
+      formatVersionId: authoritativeBefore.header.formatVersionId,
+      terminal: null,
+    });
+    expect(npcProjection.players[0].hand).toEqual({
+      visibility: 'hidden',
+      count: checkpoint.battleCards.players[0].hand.length,
+    });
+    expect(npcProjection.players[1].hand.visibility).toBe('private');
+    const reverseHiddenCanaryCheckpoint = structuredClone(checkpoint);
+    if (reverseHiddenCanaryCheckpoint.battleCards.players[0].ap.length === 0) {
+      const stateCard = reverseHiddenCanaryCheckpoint.state.players[0].deck.pop();
+      const identity = reverseHiddenCanaryCheckpoint.battleCards.players[0].deck.pop();
+      if (!stateCard || !identity || stateCard !== identity.printingId) {
+        throw new Error('Expected movable reverse hidden AP fixture');
+      }
+      reverseHiddenCanaryCheckpoint.state.players[0].ap.push(stateCard);
+      reverseHiddenCanaryCheckpoint.battleCards.players[0].ap.push(identity);
+    }
+    const reverseHiddenZones = [
+      {
+        identities: reverseHiddenCanaryCheckpoint.battleCards.players[0].hand,
+        printingIds: reverseHiddenCanaryCheckpoint.state.players[0].hand,
+      },
+      {
+        identities: reverseHiddenCanaryCheckpoint.battleCards.players[0].deck,
+        printingIds: reverseHiddenCanaryCheckpoint.state.players[0].deck,
+      },
+      {
+        identities: reverseHiddenCanaryCheckpoint.battleCards.players[0].ap,
+        printingIds: reverseHiddenCanaryCheckpoint.state.players[0].ap,
+      },
+    ];
+    const reverseHiddenCanaries = reverseHiddenZones.map((zone, index) => {
+      const card = zone.identities[0];
+      if (!card) throw new Error('Expected reverse hidden card fixture');
+      const battleCardId = parsedId(`bc_${(0xeeee - index).toString(16).padStart(32, '0')}`);
+      const printingId = `SECRET-REVERSE-HIDDEN-${index}`;
+      card.battleCardId = battleCardId;
+      card.printingId = printingId;
+      zone.printingIds[0] = printingId;
+      return { battleCardId, printingId };
+    });
+    const reverseHiddenProjection = createPlayerBattleProjection(reverseHiddenCanaryCheckpoint, {
+      matchId,
+      viewerSeat: 'player-2',
+      revision,
+      contentVersion: authoritativeBefore.header.contentVersion,
+      formatVersionId: authoritativeBefore.header.formatVersionId,
+      terminal: null,
+    });
+    const reverseHiddenEncoded = JSON.stringify(reverseHiddenProjection);
+    for (const canary of reverseHiddenCanaries) {
+      expect(reverseHiddenEncoded).not.toContain(canary.battleCardId);
+      expect(reverseHiddenEncoded).not.toContain(canary.printingId);
+    }
+    const cancelledProjection = createPlayerBattleProjection(checkpoint, {
+      matchId,
+      viewerSeat: 'player-1',
+      revision,
+      contentVersion: authoritativeBefore.header.contentVersion,
+      formatVersionId: authoritativeBefore.header.formatVersionId,
+      terminal: { state: 'cancelled', winner: null, reason: 'server_cancelled' },
+    });
+    expect(cancelledProjection.legalActions).toEqual([]);
+    expect(adapter.authoritativeSnapshot()).toEqual(authoritativeBefore);
   });
 
   it('既定formatは明示した版と一致し、client fallbackに依存しない', () => {

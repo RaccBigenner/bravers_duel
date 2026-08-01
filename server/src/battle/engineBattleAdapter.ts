@@ -24,10 +24,21 @@ import {
   type PlayerIndex,
 } from '@bravers/engine';
 import {
+  MATCH_PLAYER_PROJECTION_VERSION,
   parseBattleCardId,
   parseMatchAction,
+  parseMatchPlayerProjection,
   type BattleCardId,
   type MatchAction,
+  type MatchCharacterProjection,
+  type MatchId,
+  type MatchPlayerBoardProjection,
+  type MatchPlayerProjection,
+  type MatchProjectionPlayerIndex,
+  type MatchPublicCardProjection,
+  type MatchRevision,
+  type MatchTerminalProjection,
+  type MatchViewerSeat,
 } from '@bravers/protocol';
 
 export { parseMatchAction } from '@bravers/protocol';
@@ -141,6 +152,15 @@ export interface AuthoritativeBattleCheckpoint {
   currentIdentityHash: string;
 }
 
+export interface PlayerBattleProjectionInput {
+  matchId: MatchId;
+  viewerSeat: MatchViewerSeat;
+  revision: MatchRevision;
+  contentVersion: string;
+  formatVersionId: string;
+  terminal: MatchTerminalProjection | null;
+}
+
 /** OLG-125が永続化する再演可能な最小履歴。current snapshotは別途照合する。 */
 export interface RestoreNpcBattleHistoryInput {
   header: AuthoritativeBattleHeader;
@@ -183,6 +203,159 @@ export interface PreparedBattleTransition {
 /** MatchDO永続化境界で使う、engine版と同じ決定論的JSON。 */
 export function canonicalBattlePersistenceJson(value: unknown): string {
   return stableStringify(value);
+}
+
+function projectionPlayerForSeat(seat: MatchViewerSeat): MatchProjectionPlayerIndex {
+  return seat === 'player-1' ? 0 : 1;
+}
+
+function publicCardProjection(card: BattleCardIdentity): MatchPublicCardProjection {
+  return {
+    battleCardId: card.battleCardId,
+    printingId: card.printingId,
+  };
+}
+
+function playerBoardProjection(
+  checkpoint: AuthoritativeBattleCheckpoint,
+  player: PlayerIndex,
+  viewer: PlayerIndex,
+): MatchPlayerBoardProjection {
+  const state = checkpoint.state.players[player];
+  const cards = checkpoint.battleCards.players[player];
+  if (
+    !state ||
+    !cards ||
+    cards.hand.length !== state.hand.length ||
+    cards.deck.length !== state.deck.length ||
+    cards.trash.length !== state.trash.length ||
+    cards.ap.length !== state.ap.length ||
+    cards.characters.length !== state.characters.length ||
+    cards.equipment.length !== state.characters.length
+  ) {
+    throw new EngineBattleAdapterError('BATTLE_IDENTITY_INVALID');
+  }
+  const characters: MatchCharacterProjection[] = state.characters.map((character, slot) => {
+    const card = cards.characters[slot];
+    const equipment = cards.equipment[slot] ?? null;
+    if (
+      !card ||
+      card.printingId !== character.cardId ||
+      equipment?.printingId !== (character.equipmentCardId ?? undefined)
+    ) {
+      throw new EngineBattleAdapterError('BATTLE_IDENTITY_INVALID');
+    }
+    return {
+      card: publicCardProjection(card),
+      damage: character.damage,
+      addedAttributes: [...character.addedAttributes],
+      equipment: equipment ? publicCardProjection(equipment) : null,
+    };
+  });
+  return {
+    player,
+    deckCount: cards.deck.length,
+    hand: player === viewer
+      ? { visibility: 'private', cards: cards.hand.map(publicCardProjection) }
+      : { visibility: 'hidden', count: cards.hand.length },
+    trash: cards.trash.map(publicCardProjection),
+    apCount: cards.ap.length,
+    characters,
+    actorSlot: state.actorIndex,
+    skillsUsedThisTurn: state.skillsUsedThisTurn,
+    nextSkillCostDelta: state.nextSkillCostDelta,
+    nextDrawDelta: state.nextDrawDelta,
+    actorLockUntilTurn: state.actorLockUntilTurn,
+    incomingDamageReduction: state.incomingDamageReduction
+      ? { ...state.incomingDamageReduction }
+      : null,
+    chargedThisTurn: state.chargedThisTurn,
+  };
+}
+
+/**
+ * OLG-124 wire専用allowlist。authoritative snapshotをcloneして削る方式を禁止し、
+ * viewerに公開してよい値だけを新しいobjectへ写す。
+ */
+export function createPlayerBattleProjection(
+  checkpoint: AuthoritativeBattleCheckpoint,
+  input: PlayerBattleProjectionInput,
+): MatchPlayerProjection {
+  // projectionは永続化済みcheckpointのtrust boundaryでもある。削除式redactionへ
+  // 退化しないだけでなく、全zone/owner/printing/ID一意性のdriftを先にfail closedする。
+  immutableCatalogFromLedger(checkpoint.state, checkpoint.battleCards);
+  const viewer = projectionPlayerForSeat(input.viewerSeat) as PlayerIndex;
+  const state = checkpoint.state;
+  const cards = checkpoint.battleCards;
+  let field: MatchPlayerProjection['field'] = null;
+  if (state.field !== null || cards.field !== null) {
+    if (
+      !state.field ||
+      !cards.field ||
+      state.field.cardId !== cards.field.printingId ||
+      state.field.owner !== cards.field.owner
+    ) {
+      throw new EngineBattleAdapterError('BATTLE_IDENTITY_INVALID');
+    }
+    field = {
+      ...publicCardProjection(cards.field),
+      owner: cards.field.owner,
+    };
+  }
+  const pendingAttack = state.pendingAttack
+    ? {
+        skillPrintingId: state.pendingAttack.skillId,
+        value: state.pendingAttack.value,
+        targeting: state.pendingAttack.targeting,
+        ...(state.pendingAttack.chosenIndex === undefined
+          ? {}
+          : { chosenSlot: state.pendingAttack.chosenIndex }),
+        noGuard: state.pendingAttack.noGuard,
+        attackerSlot: state.pendingAttack.attackerChar,
+        suppressRotate: state.pendingAttack.suppressRotate,
+        guard: state.pendingAttack.guard
+          ? {
+              characterSlot: state.pendingAttack.guard.charIndex,
+              value: state.pendingAttack.guard.value,
+            }
+          : null,
+      }
+    : null;
+  const viewerLegalActions =
+    input.terminal === null &&
+    state.phase !== 'finished' &&
+    actingPlayer(state) === viewer
+      ? legalActions(state).map((action) =>
+          matchActionFromEngineAction(state, cards, viewer, action))
+      : [];
+  const candidate: MatchPlayerProjection = {
+    type: 'matchPlayerProjection',
+    projectionVersion: MATCH_PLAYER_PROJECTION_VERSION,
+    matchId: input.matchId,
+    viewerSeat: input.viewerSeat,
+    viewerPlayer: viewer,
+    revision: input.revision,
+    eventSequence: state.eventSeq,
+    contentVersion: input.contentVersion,
+    formatVersionId: input.formatVersionId,
+    turn: state.turn,
+    activePlayer: state.active,
+    phase: state.phase,
+    firstPlayer: state.firstPlayer,
+    pendingAttack,
+    field,
+    players: [
+      playerBoardProjection(checkpoint, 0, viewer),
+      playerBoardProjection(checkpoint, 1, viewer),
+    ],
+    winner: state.winner,
+    endReason: state.endReason,
+    terminal: input.terminal,
+    legalActions: viewerLegalActions,
+  };
+  const decoded = parseMatchPlayerProjection(candidate);
+  if (!decoded) throw new EngineBattleAdapterError('BATTLE_RUNTIME_INVALID');
+  return decoded;
 }
 
 const ENGINE_ACTION_KEYS: Record<BattleAction['type'], readonly string[]> = {

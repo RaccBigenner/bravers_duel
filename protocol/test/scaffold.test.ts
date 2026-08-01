@@ -5,26 +5,31 @@ import {
   MATCH_COMMAND_ID_PATTERN,
   MATCH_ID_PATTERN,
   MATCH_ACTION_TYPES,
+  MATCH_PLAYER_PROJECTION_VERSION,
   MAX_MATCH_REVISION,
   PROTOCOL_SCAFFOLD,
   parseBattleCardId,
   parseMatchAction,
   parseMatchCommandCandidate,
   parseMatchCommandEnvelope,
+  parseMatchCommandClientFrame,
   parseMatchCommandId,
   parseMatchCommandResult,
   parseMatchId,
+  parseMatchPlayerProjection,
   parseMatchRevision,
+  parseMatchServerFrame,
   type MatchAction,
   type MatchCommandEnvelope,
   type MatchCommandResult,
+  type MatchPlayerProjection,
 } from '../src/index';
 
 describe('@bravers/protocol scaffold', () => {
-  it('実型を先行確定せずworkspaceの入口だけを公開する', () => {
+  it('OLG-124 browser command/projection wireをoperationalとして公開する', () => {
     expect(PROTOCOL_SCAFFOLD).toEqual({
-      version: 'OLG-101',
-      operational: false,
+      version: 'OLG-124',
+      operational: true,
     });
   });
 
@@ -332,5 +337,164 @@ describe('@bravers/protocol scaffold', () => {
     expect(missingRelation).toBeTruthy();
     expect(invalidActionRelation).toBeTruthy();
     expect(conflictRevision).toBeTruthy();
+  });
+
+  it('OLG-124 projectionとclient/server frameをnested exact decodeする', () => {
+    const matchId = parseMatchId('match_projection');
+    const revision = parseMatchRevision(1);
+    const commandId = parseMatchCommandId('cmd_00112233445566778899aabbccddeeff');
+    const ownHandId = parseBattleCardId('bc_00112233445566778899aabbccddeeff');
+    const ownCharacterId = parseBattleCardId('bc_11112222333344445555666677778888');
+    const enemyCharacterId = parseBattleCardId('bc_9999aaaabbbbccccddddeeeeffff0000');
+    if (!matchId || revision === null || !commandId || !ownHandId || !ownCharacterId || !enemyCharacterId) {
+      throw new Error('Expected valid projection fixtures');
+    }
+    const projection = {
+      type: 'matchPlayerProjection',
+      projectionVersion: MATCH_PLAYER_PROJECTION_VERSION,
+      matchId,
+      viewerSeat: 'player-1',
+      viewerPlayer: 0,
+      revision,
+      eventSequence: 3,
+      contentVersion: 'content-test',
+      formatVersionId: 'standard@1',
+      turn: 1,
+      activePlayer: 0,
+      phase: 'play',
+      firstPlayer: 0,
+      pendingAttack: null,
+      field: null,
+      players: [
+        {
+          player: 0,
+          deckCount: 34,
+          hand: {
+            visibility: 'private',
+            cards: [{ battleCardId: ownHandId, printingId: 'B-001' }],
+          },
+          trash: [],
+          apCount: 1,
+          characters: [{
+            card: { battleCardId: ownCharacterId, printingId: 'C-001' },
+            damage: 0,
+            addedAttributes: [],
+            equipment: null,
+          }],
+          actorSlot: 0,
+          skillsUsedThisTurn: 0,
+          nextSkillCostDelta: 0,
+          nextDrawDelta: 0,
+          actorLockUntilTurn: 0,
+          incomingDamageReduction: null,
+          chargedThisTurn: 0,
+        },
+        {
+          player: 1,
+          deckCount: 35,
+          hand: { visibility: 'hidden', count: 4 },
+          trash: [],
+          apCount: 0,
+          characters: [{
+            card: { battleCardId: enemyCharacterId, printingId: 'C-002' },
+            damage: 1,
+            addedAttributes: [],
+            equipment: null,
+          }],
+          actorSlot: 0,
+          skillsUsedThisTurn: 0,
+          nextSkillCostDelta: 0,
+          nextDrawDelta: 0,
+          actorLockUntilTurn: 0,
+          incomingDamageReduction: null,
+          chargedThisTurn: 0,
+        },
+      ],
+      winner: null,
+      endReason: null,
+      terminal: null,
+      legalActions: [{ type: 'charge', battleCardId: ownHandId }, { type: 'endPlay' }],
+    } as const satisfies MatchPlayerProjection;
+    expect(parseMatchPlayerProjection(projection)).toEqual(projection);
+    expect(JSON.stringify(projection)).not.toContain('seed');
+    expect(JSON.stringify(projection)).not.toContain('rngState');
+
+    const commandFrame = {
+      type: 'matchCommand',
+      command: {
+        matchId,
+        commandId,
+        expectedRevision: revision,
+        action: { type: 'charge', battleCardId: ownHandId },
+      },
+    } as const;
+    expect(parseMatchCommandClientFrame(commandFrame)).toEqual(commandFrame);
+    expect(parseMatchCommandClientFrame({ ...commandFrame, extra: true })).toBeNull();
+
+    const receipt = {
+      type: 'matchCommandResult',
+      state: 'rejected',
+      matchId,
+      commandId,
+      errorCode: 'MATCH_ACTION_INVALID',
+      revision,
+    } as const satisfies MatchCommandResult;
+    const update = { type: 'matchCommandUpdate', receipt, projection } as const;
+    expect(parseMatchServerFrame(update)).toEqual(update);
+    expect(parseMatchServerFrame({ ...update, lifecycle: 'active' })).toBeNull();
+    expect(parseMatchServerFrame({
+      ...update,
+      projection: { ...projection, revision: 0 },
+    })).toBeNull();
+
+    expect(parseMatchPlayerProjection({ ...projection, seed: 123 })).toBeNull();
+    expect(parseMatchPlayerProjection({
+      ...projection,
+      viewerPlayer: 1,
+      players: [
+        { ...projection.players[0], hand: { visibility: 'hidden', count: 1 } },
+        { ...projection.players[1], hand: { visibility: 'private', cards: [] } },
+      ],
+      legalActions: [],
+    })).toBeNull();
+    expect(parseMatchPlayerProjection({
+      ...projection,
+      players: [
+        projection.players[0],
+        { ...projection.players[1], hand: { visibility: 'private', cards: [] } },
+      ],
+    })).toBeNull();
+    const foreignId = parseBattleCardId('bc_ffffffffffffffffffffffffffffffff');
+    if (!foreignId) throw new Error('Expected foreign ID');
+    expect(parseMatchPlayerProjection({
+      ...projection,
+      legalActions: [{ type: 'charge', battleCardId: foreignId }],
+    })).toBeNull();
+    expect(parseMatchPlayerProjection({
+      ...projection,
+      activePlayer: 1,
+    })).toBeNull();
+    expect(parseMatchPlayerProjection({
+      ...projection,
+      activePlayer: 1,
+      phase: 'guard',
+    })).toEqual({ ...projection, activePlayer: 1, phase: 'guard' });
+    expect(parseMatchPlayerProjection({
+      ...projection,
+      terminal: { state: 'cancelled', winner: null, reason: 'server_cancelled' },
+    })).toBeNull();
+    expect(parseMatchPlayerProjection({
+      ...projection,
+      winner: 0,
+      endReason: 'wipeout',
+    })).toBeNull();
+    expect(parseMatchPlayerProjection({
+      ...projection,
+      phase: 'finished',
+      winner: 1,
+      endReason: 'wipeout',
+      terminal: { state: 'abandoned', winner: 1, reason: 'player_abandoned' },
+      legalActions: [],
+    })).toBeNull();
   });
 });

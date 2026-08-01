@@ -23,6 +23,7 @@ import {
   INTERNAL_ACCOUNT_ID_HEADER,
   INTERNAL_SESSION_ID_HEADER,
   INTERNAL_SESSION_VERSION_HEADER,
+  NPC_MATCH_ID_PATTERN,
   SEAT_TOKEN_TTL_MS,
   type MatchSessionPrincipal,
   type SeatTokenIssueResult,
@@ -44,8 +45,6 @@ const SEAT_TOKEN_PATH = /^\/matches\/([A-Za-z0-9_-]{1,64})\/seat-token$/;
 const WEB_SOCKET_PATH = /^\/matches\/([A-Za-z0-9_-]{1,64})\/ws$/;
 const NPC_MATCH_START_PATH = '/matches/npc';
 const LOCAL_SMOKE_MATCH_ID = 'local-smoke';
-const NPC_MATCH_ID_PATTERN =
-  /^npc-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 /** server-owned予約とmembership preflightを必ず通すpublic match port。 */
 export const MATCH_SEAT_PUBLIC_PORT_ENABLED = true;

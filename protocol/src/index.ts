@@ -1,11 +1,10 @@
 /**
- * OLG-101で作った共有protocolの入口。
- * OLG-123でカードを指すaction、OLG-122でcommand envelope / receiptを固定する。
- * Event / Snapshotと実際のbrowser wireはOLG-125/124まで閉じたままにする。
+ * OLG-124でplayer projectionとbrowser command/update wire v1を固定した入口。
+ * authoritative snapshot/raw engine eventはserver内部限定。delta/reconnectはOLG-126で追加する。
  */
 export const PROTOCOL_SCAFFOLD = {
-  version: 'OLG-101',
-  operational: false,
+  version: 'OLG-124',
+  operational: true,
 } as const;
 
 export type ProtocolScaffold = typeof PROTOCOL_SCAFFOLD;
@@ -399,6 +398,534 @@ export function parseMatchCommandResult(value: unknown): MatchCommandResult | nu
         matchId,
         commandId,
         errorCode: 'MATCH_COMMAND_ID_CONFLICT',
-        originalRevision,
-      };
+      originalRevision,
+    };
+}
+
+/** OLG-124 browser wireの版。権威snapshotやengine eventとは独立に更新する。 */
+export const MATCH_PLAYER_PROJECTION_VERSION = 1 as const;
+
+export type MatchProjectionPlayerIndex = 0 | 1;
+export type MatchProjectionPhase = 'choice' | 'play' | 'guard' | 'charge' | 'finished';
+export type MatchViewerSeat = 'player-1' | 'player-2';
+
+export interface MatchPublicCardProjection {
+  battleCardId: BattleCardId;
+  printingId: string;
+}
+
+export interface MatchCharacterProjection {
+  card: MatchPublicCardProjection;
+  damage: number;
+  addedAttributes: string[];
+  equipment: MatchPublicCardProjection | null;
+}
+
+export interface MatchPrivateHandProjection {
+  visibility: 'private';
+  cards: MatchPublicCardProjection[];
+}
+
+export interface MatchHiddenHandProjection {
+  visibility: 'hidden';
+  count: number;
+}
+
+export interface MatchPlayerBoardProjection {
+  player: MatchProjectionPlayerIndex;
+  deckCount: number;
+  hand: MatchPrivateHandProjection | MatchHiddenHandProjection;
+  trash: MatchPublicCardProjection[];
+  apCount: number;
+  characters: MatchCharacterProjection[];
+  actorSlot: number;
+  skillsUsedThisTurn: number;
+  nextSkillCostDelta: number;
+  nextDrawDelta: number;
+  actorLockUntilTurn: number;
+  incomingDamageReduction: { value: number; untilTurn: number } | null;
+  chargedThisTurn: number;
+}
+
+export interface MatchPendingAttackProjection {
+  skillPrintingId: string;
+  value: number;
+  targeting: 'actor' | 'all' | 'standby' | 'choose';
+  chosenSlot?: number;
+  noGuard: boolean;
+  attackerSlot: number;
+  suppressRotate: boolean;
+  guard: { characterSlot: number; value: number } | null;
+}
+
+export interface MatchFieldProjection extends MatchPublicCardProjection {
+  owner: MatchProjectionPlayerIndex;
+}
+
+export type MatchTerminalProjection =
+  | {
+      state: 'finished';
+      winner: MatchProjectionPlayerIndex | null;
+      reason: 'wipeout' | 'deckout' | 'turnLimit';
+    }
+  | {
+      state: 'cancelled';
+      winner: null;
+      reason: 'server_cancelled' | 'start_failed';
+    }
+  | {
+      state: 'abandoned';
+      winner: 1;
+      reason: 'player_abandoned';
+    };
+
+/**
+ * allowlistだけで組み立てるviewer別盤面。
+ * raw BattleState/event/header/hash/seedと相手hidden zoneの配列は型として存在させない。
+ */
+export interface MatchPlayerProjection {
+  type: 'matchPlayerProjection';
+  projectionVersion: typeof MATCH_PLAYER_PROJECTION_VERSION;
+  matchId: MatchId;
+  viewerSeat: MatchViewerSeat;
+  viewerPlayer: MatchProjectionPlayerIndex;
+  revision: MatchRevision;
+  eventSequence: number;
+  contentVersion: string;
+  formatVersionId: string;
+  turn: number;
+  activePlayer: MatchProjectionPlayerIndex;
+  phase: MatchProjectionPhase;
+  firstPlayer: MatchProjectionPlayerIndex;
+  pendingAttack: MatchPendingAttackProjection | null;
+  field: MatchFieldProjection | null;
+  players: [MatchPlayerBoardProjection, MatchPlayerBoardProjection];
+  winner: MatchProjectionPlayerIndex | null;
+  endReason: 'wipeout' | 'deckout' | 'turnLimit' | null;
+  terminal: MatchTerminalProjection | null;
+  legalActions: MatchAction[];
+}
+
+export interface MatchCommandClientFrame {
+  type: 'matchCommand';
+  command: MatchCommandCandidate;
+}
+
+export interface MatchProjectionServerFrame {
+  type: 'matchProjection';
+  projection: MatchPlayerProjection;
+}
+
+export interface MatchCommandUpdateServerFrame {
+  type: 'matchCommandUpdate';
+  receipt: MatchCommandResult;
+  projection: MatchPlayerProjection;
+}
+
+export type MatchServerFrame = MatchProjectionServerFrame | MatchCommandUpdateServerFrame;
+
+const PUBLIC_CARD_KEYS = ['battleCardId', 'printingId'] as const;
+const CHARACTER_PROJECTION_KEYS = ['card', 'damage', 'addedAttributes', 'equipment'] as const;
+const PLAYER_BOARD_KEYS = [
+  'player',
+  'deckCount',
+  'hand',
+  'trash',
+  'apCount',
+  'characters',
+  'actorSlot',
+  'skillsUsedThisTurn',
+  'nextSkillCostDelta',
+  'nextDrawDelta',
+  'actorLockUntilTurn',
+  'incomingDamageReduction',
+  'chargedThisTurn',
+] as const;
+const PENDING_ATTACK_KEYS = [
+  'skillPrintingId',
+  'value',
+  'targeting',
+  'chosenSlot',
+  'noGuard',
+  'attackerSlot',
+  'suppressRotate',
+  'guard',
+] as const;
+const PLAYER_PROJECTION_KEYS = [
+  'type',
+  'projectionVersion',
+  'matchId',
+  'viewerSeat',
+  'viewerPlayer',
+  'revision',
+  'eventSequence',
+  'contentVersion',
+  'formatVersionId',
+  'turn',
+  'activePlayer',
+  'phase',
+  'firstPlayer',
+  'pendingAttack',
+  'field',
+  'players',
+  'winner',
+  'endReason',
+  'terminal',
+  'legalActions',
+] as const;
+
+function safeInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value);
+}
+
+function projectionPlayer(value: unknown): value is MatchProjectionPlayerIndex {
+  return value === 0 || value === 1;
+}
+
+function boundedProjectionString(value: unknown, maxLength = 128): value is string {
+  return typeof value === 'string' && value.length >= 1 && value.length <= maxLength;
+}
+
+function parsePublicCardProjection(value: unknown): MatchPublicCardProjection | null {
+  if (!plainObject(value) || !exactKeys(value, PUBLIC_CARD_KEYS, PUBLIC_CARD_KEYS)) return null;
+  const battleCardId = parseBattleCardId(value.battleCardId);
+  return battleCardId && boundedProjectionString(value.printingId)
+    ? { battleCardId, printingId: value.printingId }
+    : null;
+}
+
+function parsePublicCardList(value: unknown, maxLength = 128): MatchPublicCardProjection[] | null {
+  if (!Array.isArray(value) || value.length > maxLength) return null;
+  const cards: MatchPublicCardProjection[] = [];
+  for (const raw of value) {
+    const card = parsePublicCardProjection(raw);
+    if (!card) return null;
+    cards.push(card);
+  }
+  return cards;
+}
+
+function parseProjectionStringList(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.length > 32) return null;
+  const strings: string[] = [];
+  for (const item of value) {
+    if (!boundedProjectionString(item, 64)) return null;
+    strings.push(item);
+  }
+  return strings;
+}
+
+function parseCharacterProjection(value: unknown): MatchCharacterProjection | null {
+  if (
+    !plainObject(value) ||
+    !exactKeys(value, CHARACTER_PROJECTION_KEYS, CHARACTER_PROJECTION_KEYS) ||
+    !nonNegativeSafeInteger(value.damage)
+  ) {
+    return null;
+  }
+  const card = parsePublicCardProjection(value.card);
+  const addedAttributes = parseProjectionStringList(value.addedAttributes);
+  const equipment = value.equipment === null ? null : parsePublicCardProjection(value.equipment);
+  return card && addedAttributes && (value.equipment === null || equipment)
+    ? { card, damage: value.damage, addedAttributes, equipment }
+    : null;
+}
+
+function parseHandProjection(
+  value: unknown,
+  privateForViewer: boolean,
+): MatchPrivateHandProjection | MatchHiddenHandProjection | null {
+  if (!plainObject(value)) return null;
+  if (privateForViewer) {
+    if (!exactKeys(value, ['visibility', 'cards'], ['visibility', 'cards'])) return null;
+    const cards = parsePublicCardList(value.cards, 64);
+    return value.visibility === 'private' && cards ? { visibility: 'private', cards } : null;
+  }
+  return exactKeys(value, ['visibility', 'count'], ['visibility', 'count']) &&
+    value.visibility === 'hidden' &&
+    nonNegativeSafeInteger(value.count)
+    ? { visibility: 'hidden', count: value.count }
+    : null;
+}
+
+function parsePlayerBoardProjection(
+  value: unknown,
+  expectedPlayer: MatchProjectionPlayerIndex,
+  viewerPlayer: MatchProjectionPlayerIndex,
+): MatchPlayerBoardProjection | null {
+  if (
+    !plainObject(value) ||
+    !exactKeys(value, PLAYER_BOARD_KEYS, PLAYER_BOARD_KEYS) ||
+    value.player !== expectedPlayer ||
+    !nonNegativeSafeInteger(value.deckCount) ||
+    !nonNegativeSafeInteger(value.apCount) ||
+    !nonNegativeSafeInteger(value.actorSlot) ||
+    !nonNegativeSafeInteger(value.skillsUsedThisTurn) ||
+    !safeInteger(value.nextSkillCostDelta) ||
+    !safeInteger(value.nextDrawDelta) ||
+    !nonNegativeSafeInteger(value.actorLockUntilTurn) ||
+    !nonNegativeSafeInteger(value.chargedThisTurn) ||
+    !Array.isArray(value.characters) ||
+    value.characters.length > 4
+  ) {
+    return null;
+  }
+  const hand = parseHandProjection(value.hand, expectedPlayer === viewerPlayer);
+  const trash = parsePublicCardList(value.trash);
+  if (!hand || !trash) return null;
+  const characters: MatchCharacterProjection[] = [];
+  for (const raw of value.characters) {
+    const character = parseCharacterProjection(raw);
+    if (!character) return null;
+    characters.push(character);
+  }
+  let incomingDamageReduction: MatchPlayerBoardProjection['incomingDamageReduction'] = null;
+  if (value.incomingDamageReduction !== null) {
+    if (
+      !plainObject(value.incomingDamageReduction) ||
+      !exactKeys(
+        value.incomingDamageReduction,
+        ['value', 'untilTurn'],
+        ['value', 'untilTurn'],
+      ) ||
+      !nonNegativeSafeInteger(value.incomingDamageReduction.value) ||
+      !nonNegativeSafeInteger(value.incomingDamageReduction.untilTurn)
+    ) {
+      return null;
+    }
+    incomingDamageReduction = {
+      value: value.incomingDamageReduction.value,
+      untilTurn: value.incomingDamageReduction.untilTurn,
+    };
+  }
+  return {
+    player: expectedPlayer,
+    deckCount: value.deckCount,
+    hand,
+    trash,
+    apCount: value.apCount,
+    characters,
+    actorSlot: value.actorSlot,
+    skillsUsedThisTurn: value.skillsUsedThisTurn,
+    nextSkillCostDelta: value.nextSkillCostDelta,
+    nextDrawDelta: value.nextDrawDelta,
+    actorLockUntilTurn: value.actorLockUntilTurn,
+    incomingDamageReduction,
+    chargedThisTurn: value.chargedThisTurn,
+  };
+}
+
+function parsePendingAttackProjection(value: unknown): MatchPendingAttackProjection | null {
+  if (
+    !plainObject(value) ||
+    !exactKeys(
+      value,
+      PENDING_ATTACK_KEYS,
+      PENDING_ATTACK_KEYS.filter((key) => key !== 'chosenSlot'),
+    ) ||
+    !boundedProjectionString(value.skillPrintingId) ||
+    !safeInteger(value.value) ||
+    !['actor', 'all', 'standby', 'choose'].includes(String(value.targeting)) ||
+    (Object.hasOwn(value, 'chosenSlot') && !nonNegativeSafeInteger(value.chosenSlot)) ||
+    typeof value.noGuard !== 'boolean' ||
+    !nonNegativeSafeInteger(value.attackerSlot) ||
+    typeof value.suppressRotate !== 'boolean'
+  ) {
+    return null;
+  }
+  let guard: MatchPendingAttackProjection['guard'] = null;
+  if (value.guard !== null) {
+    if (
+      !plainObject(value.guard) ||
+      !exactKeys(value.guard, ['characterSlot', 'value'], ['characterSlot', 'value']) ||
+      !nonNegativeSafeInteger(value.guard.characterSlot) ||
+      !nonNegativeSafeInteger(value.guard.value)
+    ) {
+      return null;
+    }
+    guard = { characterSlot: value.guard.characterSlot, value: value.guard.value };
+  }
+  return {
+    skillPrintingId: value.skillPrintingId,
+    value: value.value,
+    targeting: value.targeting as MatchPendingAttackProjection['targeting'],
+    ...(Object.hasOwn(value, 'chosenSlot') ? { chosenSlot: value.chosenSlot as number } : {}),
+    noGuard: value.noGuard,
+    attackerSlot: value.attackerSlot,
+    suppressRotate: value.suppressRotate,
+    guard,
+  };
+}
+
+function parseTerminalProjection(value: unknown): MatchTerminalProjection | null {
+  if (
+    !plainObject(value) ||
+    !exactKeys(value, ['state', 'winner', 'reason'], ['state', 'winner', 'reason'])
+  ) {
+    return null;
+  }
+  if (
+    value.state === 'finished' &&
+    (value.winner === null || projectionPlayer(value.winner)) &&
+    (value.reason === 'wipeout' || value.reason === 'deckout' || value.reason === 'turnLimit')
+  ) {
+    return { state: 'finished', winner: value.winner, reason: value.reason };
+  }
+  if (
+    value.state === 'cancelled' &&
+    value.winner === null &&
+    (value.reason === 'server_cancelled' || value.reason === 'start_failed')
+  ) {
+    return { state: 'cancelled', winner: null, reason: value.reason };
+  }
+  return value.state === 'abandoned' &&
+    value.winner === 1 &&
+    value.reason === 'player_abandoned'
+    ? { state: 'abandoned', winner: 1, reason: 'player_abandoned' }
+    : null;
+}
+
+/** browserが受け取るplayer projection用のnested exact decoder。 */
+export function parseMatchPlayerProjection(value: unknown): MatchPlayerProjection | null {
+  if (
+    !plainObject(value) ||
+    !exactKeys(value, PLAYER_PROJECTION_KEYS, PLAYER_PROJECTION_KEYS) ||
+    value.type !== 'matchPlayerProjection' ||
+    value.projectionVersion !== MATCH_PLAYER_PROJECTION_VERSION ||
+    (value.viewerSeat !== 'player-1' && value.viewerSeat !== 'player-2') ||
+    !projectionPlayer(value.viewerPlayer) ||
+    (value.viewerSeat === 'player-1' ? value.viewerPlayer !== 0 : value.viewerPlayer !== 1) ||
+    !nonNegativeSafeInteger(value.eventSequence) ||
+    !boundedProjectionString(value.contentVersion) ||
+    !boundedProjectionString(value.formatVersionId) ||
+    !nonNegativeSafeInteger(value.turn) ||
+    !projectionPlayer(value.activePlayer) ||
+    !['choice', 'play', 'guard', 'charge', 'finished'].includes(String(value.phase)) ||
+    !projectionPlayer(value.firstPlayer) ||
+    (value.winner !== null && !projectionPlayer(value.winner)) ||
+    ![null, 'wipeout', 'deckout', 'turnLimit'].includes(value.endReason as null | string) ||
+    !Array.isArray(value.players) ||
+    value.players.length !== 2 ||
+    !Array.isArray(value.legalActions) ||
+    value.legalActions.length > 128
+  ) {
+    return null;
+  }
+  const matchId = parseMatchId(value.matchId);
+  const revision = parseMatchRevision(value.revision);
+  const first = parsePlayerBoardProjection(value.players[0], 0, value.viewerPlayer);
+  const second = parsePlayerBoardProjection(value.players[1], 1, value.viewerPlayer);
+  const pendingAttack = value.pendingAttack === null
+    ? null
+    : parsePendingAttackProjection(value.pendingAttack);
+  let field: MatchFieldProjection | null = null;
+  if (value.field !== null) {
+    if (
+      !plainObject(value.field) ||
+      !exactKeys(value.field, ['battleCardId', 'printingId', 'owner'], ['battleCardId', 'printingId', 'owner']) ||
+      !projectionPlayer(value.field.owner)
+    ) {
+      return null;
+    }
+    const battleCardId = parseBattleCardId(value.field.battleCardId);
+    if (!battleCardId || !boundedProjectionString(value.field.printingId)) return null;
+    field = {
+      battleCardId,
+      printingId: value.field.printingId,
+      owner: value.field.owner,
+    };
+  }
+  const terminal = value.terminal === null ? null : parseTerminalProjection(value.terminal);
+  const actingPlayer = value.phase === 'guard' ? 1 - value.activePlayer : value.activePlayer;
+  if (
+    !matchId ||
+    revision === null ||
+    !first ||
+    !second ||
+    (value.pendingAttack !== null && !pendingAttack) ||
+    (value.terminal !== null && !terminal) ||
+    (terminal !== null && value.legalActions.length !== 0) ||
+    (terminal === null && (value.winner !== null || value.endReason !== null)) ||
+    (terminal?.state === 'finished' &&
+      (value.phase !== 'finished' ||
+        value.winner !== terminal.winner ||
+        value.endReason !== terminal.reason)) ||
+    (terminal !== null &&
+      terminal.state !== 'finished' &&
+      (value.phase === 'finished' || value.winner !== null || value.endReason !== null)) ||
+    (terminal === null && value.phase === 'finished') ||
+    (value.legalActions.length > 0 && value.viewerPlayer !== actingPlayer)
+  ) {
+    return null;
+  }
+  const legalActions: MatchAction[] = [];
+  const ownHand = value.viewerPlayer === 0 ? first.hand : second.hand;
+  if (ownHand.visibility !== 'private') return null;
+  const ownHandIds = new Set(ownHand.cards.map((card) => card.battleCardId));
+  for (const raw of value.legalActions) {
+    const action = parseMatchAction(raw);
+    if (!action || ('battleCardId' in action && !ownHandIds.has(action.battleCardId))) return null;
+    legalActions.push(action);
+  }
+  return {
+    type: 'matchPlayerProjection',
+    projectionVersion: MATCH_PLAYER_PROJECTION_VERSION,
+    matchId,
+    viewerSeat: value.viewerSeat,
+    viewerPlayer: value.viewerPlayer,
+    revision,
+    eventSequence: value.eventSequence,
+    contentVersion: value.contentVersion,
+    formatVersionId: value.formatVersionId,
+    turn: value.turn,
+    activePlayer: value.activePlayer,
+    phase: value.phase as MatchProjectionPhase,
+    firstPlayer: value.firstPlayer,
+    pendingAttack,
+    field,
+    players: [first, second],
+    winner: value.winner,
+    endReason: value.endReason as MatchPlayerProjection['endReason'],
+    terminal,
+    legalActions,
+  };
+}
+
+/** action schema前のdomain拒否もreceiptへ固定できるようcandidateまでをdecodeする。 */
+export function parseMatchCommandClientFrame(value: unknown): MatchCommandClientFrame | null {
+  if (
+    !plainObject(value) ||
+    !exactKeys(value, ['type', 'command'], ['type', 'command']) ||
+    value.type !== 'matchCommand'
+  ) {
+    return null;
+  }
+  const command = parseMatchCommandCandidate(value.command);
+  return command ? { type: 'matchCommand', command } : null;
+}
+
+export function parseMatchServerFrame(value: unknown): MatchServerFrame | null {
+  if (!plainObject(value) || typeof value.type !== 'string') return null;
+  if (value.type === 'matchProjection') {
+    if (!exactKeys(value, ['type', 'projection'], ['type', 'projection'])) return null;
+    const projection = parseMatchPlayerProjection(value.projection);
+    return projection ? { type: 'matchProjection', projection } : null;
+  }
+  if (
+    value.type !== 'matchCommandUpdate' ||
+    !exactKeys(value, ['type', 'receipt', 'projection'], ['type', 'receipt', 'projection'])
+  ) {
+    return null;
+  }
+  const receipt = parseMatchCommandResult(value.receipt);
+  const projection = parseMatchPlayerProjection(value.projection);
+  if (!receipt || !projection || receipt.matchId !== projection.matchId) return null;
+  const receiptRevision = receipt.state === 'accepted'
+    ? receipt.revision
+    : receipt.errorCode === 'MATCH_COMMAND_ID_CONFLICT'
+      ? receipt.originalRevision
+      : receipt.revision;
+  return receiptRevision <= projection.revision
+    ? { type: 'matchCommandUpdate', receipt, projection }
+    : null;
 }

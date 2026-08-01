@@ -135,8 +135,8 @@
   `POST /matches/npc`、MatchDOのNPC lifecycleを接続した。正常終了・取消・放棄をSQLiteへ先に確定し、
   SessionCoordinatorの参照解除→予約解放を二段outboxで回収する。失効後start/action、改変action、
   改変履歴からのseed再生成はfail closed。OLG-125完了後はactive evictionも保存履歴から復旧する。
-  browser game frameは後続OLGまで`game-not-ready`のまま。
-  server 181 test、関連77 test、server-engine境界5 test、leak検査はgreen。
+  browser game frameはOLG-124のexact player projection / command updateだけを公開する。
+  server 246 test、protocol 8 test、server-engine境界5 test、leak検査はgreen。
 - P2へNPCシングル市場を正式登録した。G2 Collection Closed Betaは固定買取/販売、有限な実在個体在庫、
   atomic quote/orderで開始する。固定価格のraw集計からpolicyを承認し、2〜4週間shadow計算する。
   日次±5%・基準80〜120%の動的価格を実注文へ使えるのはG8だけとし、G4以降の標本、
@@ -174,29 +174,35 @@
   同一UUIDのaccount行、直接read拒否、削除cascadeまで通れば完了にする。HTTP routeはOLG-113で接続済み。
 - **OLG-113も実装済み・実stack受入待ち**。同じ実stackでguest cookie発行、session復元、logout後401、
   pgTAPを完走したら完了にする。通常matchはOLG-121でserver生成NPC予約からだけ正方向を開いた。
-- **OLG-121はコード実装済み**。active runtimeの再起動復旧はOLG-125で完了し、
-  player projection / ACK後closeはOLG-124へ続く。終端後まで極端に遅延した旧開始要求の
+- **OLG-121はコード実装済み**。active runtimeの再起動復旧はOLG-125、
+  player projection / terminal配信後closeはOLG-124で完了。終端後まで極端に遅延した旧開始要求の
   区別はOLG-129、logout失効後のactive lifecycle終端条件はOLG-127で固定する。
   OLG-003PのCloudflare作業はG0 blockerとして並行管理する。
 - **OLG-123は2026-08-01にコード実装済み**。全カードへseed非依存の128-bit `battleCardId`を割り当て、
   engine移動traceとserver全zone台帳でshuffle・重複printing・zone移動後も個体を保持する。
   protocol / action logから`handIndex`を除き、未知・stale・他owner・非hand IDを盤面不変で拒否する。
   engine state hash / replay v1は不変。NPC pump前の初期ID manifestとstable stepsからCSPRNG再採番なしで
-  hash検証付き再演もできる。OLG-125でこの履歴とcurrent snapshotの原子的な保存まで完了し、OLG-124で秘匿する。
+  hash検証付き再演もできる。OLG-125で履歴/current snapshot保存、OLG-124でallowlist秘匿まで完了した。
 - **OLG-122は2026-08-01にコード実装済み**。`cmd_` + 128-bit ID、初期revision 0、
   player action＋NPC pump単位の+1、bounded canonical payload＋SHA-256を固定した。同一ID・同一payloadは
   成功／拒否とも初回receiptを返し、別payload・stale / ahead・不正actionは盤面不変で拒否する。
   wire receiptはACK-onlyでtransition / events / lifecycleを絶対に含めない。メモリ台帳は全2,048件のうち
   拒否receiptを最大512件に制限してaccepted用を予約する。最終手のterminal commit失敗も同一再送で
-  二重適用しない。DO evictionを跨ぐprepare→SQLite atomic commit→runtime swapはOLG-125で完了し、
-  terminal ACK喪失後のreceipt / result readはOLG-126、raw frame byte上限とviewer別projectionはOLG-124へ続くため、
-  browser game frameはまだ開かない。
+  二重適用しない。DO evictionを跨ぐprepare→SQLite atomic commit→runtime swapはOLG-125、raw frame gateと
+  viewer別projectionはOLG-124で完了。terminal ACK喪失後にリロードした新規接続のreceipt / result readはOLG-126へ続く。
 - **OLG-125は2026-08-02にコード実装済み**。manifest / state / command / step / eventの5表へ初期ID配置、
   current checkpoint、canonical payload / digest・exact receipt、stable step / eventを保存し、関連lifecycle・
   terminal cleanup outbox / deadlineも同じtransactionで確定してからruntimeをswapする。constructorは16 MiBを
   materialize前に制限し、初期manifestから全stepを再演してrevision / state / identity hashと照合する。
   accepted / rejected / finalのrollback、実`ctx.abort()`、request終了後eviction、改変constructor gateを検証済み。
-  外部cleanupはalarm-onlyで、projection / ACK配信後のauthenticated socket closeはOLG-124へ続く。
+  外部cleanupはalarm-onlyで、projection配信後のauthenticated socket closeはOLG-124で完了。
+- **OLG-124は2026-08-02にコード実装済み**。protocol projection v1とnested exact browser frame、
+  16 KiB入力/128 KiB出力gate、認証直後のcurrent projection、commandごとの単一receipt+projection update、
+  terminal projection送信後の`1000 / MATCH_ENDED` closeを実装した。相手handはcount、両deck/APはcountのみ。
+  seed / rng / raw state / event / header / hash / hidden IDは非公開。通常決着・取消・放棄、同一viewer複数tab、
+  rejected / duplicate / conflict、raw/canonical上限、ACK喪失相当、terminal send/close後のDO再生成を自動検査する。
+  browser game frameは開いたが、active-match / receipt-result read / event delta / reload復帰はOLG-126で未実装。
+  v1の`eventSequence`はG1 NPC-onlyのraw cursorなので、PvP前にhidden event数を漏らさないviewer別cursorへversion upする。
 - ここまでの経緯は一番下の「開発の記録」を見る。
 
 ## オープンβ要件 決定（2026-07-23）

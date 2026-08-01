@@ -10,8 +10,10 @@ import {
   parseMatchCommandId,
   parseMatchId,
   parseMatchRevision,
+  parseMatchServerFrame,
   type MatchCommandCandidate,
   type MatchCommandId,
+  type MatchServerFrame,
 } from '@bravers/protocol';
 import {
   evictDurableObject,
@@ -32,7 +34,9 @@ import {
   type MatchSeatId,
 } from '../src/match/matchDurableObject';
 import {
+  EngineBattleAdapterError,
   HUMAN_PLAYER,
+  NPC_PLAYER,
   matchActionFromEngineAction,
   type AuthoritativeBattleSnapshot,
 } from '../src/battle/engineBattleAdapter';
@@ -45,6 +49,7 @@ import {
   generateSeatToken,
   seatTokenDigestCandidates,
 } from '../src/match/seatToken';
+import { MAX_MATCH_CLIENT_FRAME_BYTES } from '../src/match/matchWire';
 
 type MatchStub = DurableObjectStub<MatchDO>;
 type SessionCoordinatorStub = DurableObjectStub<SessionCoordinatorDO>;
@@ -379,6 +384,81 @@ function socketOutcome(socket: WebSocket, timeoutMs = 2_000): Promise<SocketOutc
   });
 }
 
+function socketOutcomes(
+  socket: WebSocket,
+  expectedCount: number,
+  timeoutMs = 2_000,
+): Promise<SocketOutcome[]> {
+  return new Promise((resolve, reject) => {
+    const outcomes: SocketOutcome[] = [];
+    const finish = () => {
+      cleanup();
+      resolve(outcomes);
+    };
+    const onMessage = (event: MessageEvent) => {
+      outcomes.push({ kind: 'message', data: String(event.data) });
+      if (outcomes.length === expectedCount) finish();
+    };
+    const onClose = (event: CloseEvent) => {
+      outcomes.push({ kind: 'close', code: event.code, reason: event.reason });
+      finish();
+    };
+    const onError = () => {
+      cleanup();
+      reject(new Error('Unexpected WebSocket error'));
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error('Timed out waiting for WebSocket outcomes'));
+    }, timeoutMs);
+    const cleanup = () => {
+      clearTimeout(timer);
+      socket.removeEventListener('message', onMessage);
+      socket.removeEventListener('close', onClose);
+      socket.removeEventListener('error', onError);
+    };
+
+    socket.addEventListener('message', onMessage);
+    socket.addEventListener('close', onClose);
+    socket.addEventListener('error', onError);
+  });
+}
+
+function socketTranscriptUntilClose(
+  socket: WebSocket,
+  timeoutMs = 5_000,
+): Promise<SocketOutcome[]> {
+  return new Promise((resolve, reject) => {
+    const outcomes: SocketOutcome[] = [];
+    const onMessage = (event: MessageEvent) => {
+      outcomes.push({ kind: 'message', data: String(event.data) });
+    };
+    const onClose = (event: CloseEvent) => {
+      outcomes.push({ kind: 'close', code: event.code, reason: event.reason });
+      cleanup();
+      resolve(outcomes);
+    };
+    const onError = () => {
+      cleanup();
+      reject(new Error('Unexpected WebSocket error'));
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error('Timed out waiting for WebSocket close transcript'));
+    }, timeoutMs);
+    const cleanup = () => {
+      clearTimeout(timer);
+      socket.removeEventListener('message', onMessage);
+      socket.removeEventListener('close', onClose);
+      socket.removeEventListener('error', onError);
+    };
+
+    socket.addEventListener('message', onMessage);
+    socket.addEventListener('close', onClose);
+    socket.addEventListener('error', onError);
+  });
+}
+
 async function openPlayerSocket(
   stub: MatchStub,
   id: string,
@@ -424,6 +504,25 @@ async function authenticate(socket: WebSocket, seatToken: string): Promise<Socke
   const outcome = socketOutcome(socket);
   socket.send(JSON.stringify({ type: 'auth', seatToken }));
   return outcome;
+}
+
+async function authenticateBattle(
+  socket: WebSocket,
+  seatToken: string,
+): Promise<Extract<MatchServerFrame, { type: 'matchProjection' }>> {
+  const pending = socketOutcomes(socket, 2);
+  socket.send(JSON.stringify({ type: 'auth', seatToken }));
+  const outcomes = await pending;
+  expect(outcomes[0]).toEqual({ kind: 'message', data: 'auth_ok' });
+  const projectionMessage = outcomes[1];
+  if (projectionMessage?.kind !== 'message') {
+    throw new Error('Expected initial match projection');
+  }
+  const decoded = parseMatchServerFrame(JSON.parse(projectionMessage.data) as unknown);
+  if (decoded?.type !== 'matchProjection') {
+    throw new Error('Expected exact match projection frame');
+  }
+  return decoded;
 }
 
 function expectGenericAuthClose(outcome: SocketOutcome, rawToken: string): void {
@@ -1758,35 +1857,664 @@ describe('OLG-121 MatchDO authoritative NPC battle lifecycle', () => {
     );
   });
 
-  it('認証済みWSのgame frameをwireへ通さずauthoritative stateを不変に保つ', async () => {
+  it('認証直後の秘匿projectionからcommandを適用し、exact再送を同じupdateへ収束させる', async () => {
     const battle = await startReservedNpcBattle();
     const issued = await battle.stub.issueSeatToken(battle.session);
     expect(issued.state).toBe('issued');
     if (issued.state !== 'issued') throw new Error('Expected issued seat token');
     const socket = await openPlayerSocket(battle.stub, battle.id, battle.session);
-    await expect(authenticate(socket, issued.seatToken)).resolves.toEqual({
-      kind: 'message',
-      data: 'auth_ok',
-    });
+    const initial = await authenticateBattle(socket, issued.seatToken);
     const before = await battle.stub.getNpcBattleSnapshot(battle.session);
-
-    const ownBattleCardId = before.battleCards.players[HUMAN_PLAYER].hand[0]?.battleCardId;
-    if (!ownBattleCardId) throw new Error('Expected own hand battleCardId');
-    for (const frame of [
-      { type: 'action', action: { type: 'charge', handIndex: 0 } },
-      { type: 'action', action: { type: 'charge', battleCardId: ownBattleCardId } },
+    expect(initial.projection).toMatchObject({
+      matchId: battle.id,
+      viewerSeat: 'player-1',
+      viewerPlayer: HUMAN_PLAYER,
+      revision: 0,
+      terminal: null,
+    });
+    expect(initial.projection.players[NPC_PLAYER].hand).toEqual({
+      visibility: 'hidden',
+      count: before.battleCards.players[NPC_PLAYER].hand.length,
+    });
+    const initialEncoded = JSON.stringify(initial);
+    for (const card of [
+      ...before.battleCards.players[NPC_PLAYER].hand,
+      ...before.battleCards.players[NPC_PLAYER].deck,
+      ...before.battleCards.players[NPC_PLAYER].ap,
     ]) {
-      const rejected = socketOutcome(socket);
-      socket.send(JSON.stringify(frame));
-      await expect(rejected).resolves.toEqual({
-        kind: 'message',
-        data: 'error:game-not-ready',
-      });
+      expect(initialEncoded).not.toContain(card.battleCardId);
     }
 
+    const action = initial.projection.legalActions[0];
+    if (!action) throw new Error('Expected a legal player action');
+    const command = npcCommand(battle.id, initial.projection.revision, action);
+    const encodedCommand = JSON.stringify({ type: 'matchCommand', command });
+    const firstPending = socketOutcome(socket);
+    socket.send(encodedCommand);
+    const firstOutcome = await firstPending;
+    if (firstOutcome.kind !== 'message') throw new Error('Expected command update');
+    const firstUpdate = parseMatchServerFrame(JSON.parse(firstOutcome.data) as unknown);
+    expect(firstUpdate).toMatchObject({
+      type: 'matchCommandUpdate',
+      receipt: { state: 'accepted', baseRevision: 0, revision: 1 },
+      projection: { revision: 1 },
+    });
+    if (firstUpdate?.type !== 'matchCommandUpdate') {
+      throw new Error('Expected exact command update frame');
+    }
+
+    const duplicatePending = socketOutcome(socket);
+    socket.send(encodedCommand);
+    const duplicateOutcome = await duplicatePending;
+    if (duplicateOutcome.kind !== 'message') throw new Error('Expected duplicate update');
+    const duplicateUpdate = parseMatchServerFrame(JSON.parse(duplicateOutcome.data) as unknown);
+    expect(duplicateUpdate).toEqual(firstUpdate);
+
     const after = await battle.stub.getNpcBattleSnapshot(battle.session);
-    expect(after).toEqual(before);
+    const updateEncoded = JSON.stringify(firstUpdate);
+    for (const card of [
+      ...after.battleCards.players[NPC_PLAYER].hand,
+      ...after.battleCards.players[NPC_PLAYER].deck,
+      ...after.battleCards.players[NPC_PLAYER].ap,
+    ]) {
+      expect(updateEncoded).not.toContain(card.battleCardId);
+    }
+    for (const forbiddenKey of ['seed', 'rngState', 'header', 'stateHash', 'events', 'steps']) {
+      expect(updateEncoded).not.toContain(`"${forbiddenKey}"`);
+    }
+    const durable = await runInDurableObject(battle.stub, (_instance, state) => ({
+      battle: state.storage.sql.exec<SqlRow>(
+        `SELECT revision, command_count FROM match_battle_state`,
+      ).one(),
+      humanSteps: state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM match_battle_step WHERE source = 'human'`,
+      ).one().count,
+    }));
+    expect(durable).toEqual({
+      battle: { revision: 1, command_count: 1 },
+      humanSteps: 1,
+    });
     socket.close(1000, 'done');
+  });
+
+  it('domain拒否・revision不一致・ID衝突もcurrent projection付きexact updateで返す', async () => {
+    const battle = await startReservedNpcBattle();
+    const issued = await battle.stub.issueSeatToken(battle.session);
+    expect(issued.state).toBe('issued');
+    if (issued.state !== 'issued') throw new Error('Expected issued seat token');
+    const socket = await openPlayerSocket(battle.stub, battle.id, battle.session);
+    const initial = await authenticateBattle(socket, issued.seatToken);
+    const legalAction = initial.projection.legalActions[0];
+    if (!legalAction) throw new Error('Expected a legal player action');
+
+    const sendCommand = async (command: MatchCommandCandidate) => {
+      const pending = socketOutcome(socket);
+      socket.send(JSON.stringify({ type: 'matchCommand', command }));
+      const outcome = await pending;
+      if (outcome.kind !== 'message') throw new Error('Expected command update');
+      const decoded = parseMatchServerFrame(JSON.parse(outcome.data) as unknown);
+      if (decoded?.type !== 'matchCommandUpdate') {
+        throw new Error('Expected exact command update frame');
+      }
+      return decoded;
+    };
+
+    const invalid = npcCommand(battle.id, 0, { type: 'unknown' });
+    const invalidUpdate = await sendCommand(invalid);
+    expect(invalidUpdate).toMatchObject({
+      receipt: {
+        state: 'rejected',
+        errorCode: 'MATCH_ACTION_INVALID',
+        revision: 0,
+      },
+      projection: { revision: 0 },
+    });
+    await expect(sendCommand(invalid)).resolves.toEqual(invalidUpdate);
+
+    const aheadUpdate = await sendCommand(npcCommand(battle.id, 1, legalAction));
+    expect(aheadUpdate).toMatchObject({
+      receipt: {
+        state: 'rejected',
+        errorCode: 'MATCH_REVISION_MISMATCH',
+        revision: 0,
+        relation: 'ahead',
+      },
+      projection: { revision: 0 },
+    });
+
+    const acceptedCommand = npcCommand(battle.id, 0, legalAction);
+    const acceptedUpdate = await sendCommand(acceptedCommand);
+    expect(acceptedUpdate).toMatchObject({
+      receipt: { state: 'accepted', baseRevision: 0, revision: 1 },
+      projection: { revision: 1 },
+    });
+
+    const staleUpdate = await sendCommand(npcCommand(battle.id, 0, legalAction));
+    expect(staleUpdate).toMatchObject({
+      receipt: {
+        state: 'rejected',
+        errorCode: 'MATCH_REVISION_MISMATCH',
+        revision: 1,
+        relation: 'stale',
+      },
+      projection: { revision: 1 },
+    });
+
+    const conflictUpdate = await sendCommand(npcCommand(
+      battle.id,
+      0,
+      { type: 'unknown' },
+      acceptedCommand.commandId,
+    ));
+    expect(conflictUpdate).toMatchObject({
+      receipt: {
+        state: 'rejected',
+        errorCode: 'MATCH_COMMAND_ID_CONFLICT',
+        originalRevision: 1,
+      },
+      projection: { revision: 1 },
+    });
+
+    const durable = await runInDurableObject(battle.stub, (_instance, state) =>
+      state.storage.sql.exec<SqlRow>(
+        `SELECT revision, command_count, rejection_count FROM match_battle_state`,
+      ).one());
+    expect(durable).toEqual({ revision: 1, command_count: 4, rejection_count: 3 });
+    socket.close(1000, 'done');
+  });
+
+  it.each(['auth-ready', 'game-command'] as const)(
+    '想定外の%s例外は内部詳細を隠して1011でcloseする',
+    async (failurePoint) => {
+      const battle = await startReservedNpcBattle();
+      const issued = await battle.stub.issueSeatToken(battle.session);
+      expect(issued.state).toBe('issued');
+      if (issued.state !== 'issued') throw new Error('Expected issued seat token');
+      const socket = await openPlayerSocket(battle.stub, battle.id, battle.session);
+      if (failurePoint === 'auth-ready') {
+        await runInDurableObject(battle.stub, (instance) => {
+          const target = instance as unknown as {
+            sendAuthenticatedReady: () => Promise<void>;
+          };
+          target.sendAuthenticatedReady = async () => {
+            throw new Error('SECRET_READY_FAILURE');
+          };
+        });
+        const closed = socketOutcome(socket);
+        socket.send(JSON.stringify({ type: 'auth', seatToken: issued.seatToken }));
+        await expect(closed).resolves.toEqual({
+          kind: 'close',
+          code: 1011,
+          reason: 'MATCH_UNAVAILABLE',
+        });
+      } else {
+        const initial = await authenticateBattle(socket, issued.seatToken);
+        const legalAction = initial.projection.legalActions[0];
+        if (!legalAction) throw new Error('Expected a legal player action');
+        await runInDurableObject(battle.stub, (instance) => {
+          const target = instance as unknown as {
+            applyNpcBattleCommandExclusive: () => Promise<void>;
+          };
+          target.applyNpcBattleCommandExclusive = async () => {
+            throw new Error('SECRET_COMMAND_FAILURE');
+          };
+        });
+        const closed = socketOutcome(socket);
+        socket.send(JSON.stringify({
+          type: 'matchCommand',
+          command: npcCommand(battle.id, 0, legalAction),
+        }));
+        await expect(closed).resolves.toEqual({
+          kind: 'close',
+          code: 1011,
+          reason: 'MATCH_UNAVAILABLE',
+        });
+      }
+    },
+  );
+
+  it('raw/canonical上限違反はcommandIdを消費せず同じIDの修正版を受理する', async () => {
+    const battle = await startReservedNpcBattle();
+    const firstIssued = await battle.stub.issueSeatToken(battle.session);
+    expect(firstIssued.state).toBe('issued');
+    if (firstIssued.state !== 'issued') throw new Error('Expected issued seat token');
+    const firstSocket = await openPlayerSocket(battle.stub, battle.id, battle.session);
+    const initial = await authenticateBattle(firstSocket, firstIssued.seatToken);
+    const action = initial.projection.legalActions[0];
+    if (!action) throw new Error('Expected a legal player action');
+    const command = npcCommand(battle.id, 0, action);
+    const validFrame = JSON.stringify({ type: 'matchCommand', command });
+    const oversizedFrame = `${validFrame}${' '.repeat(
+      MAX_MATCH_CLIENT_FRAME_BYTES - new TextEncoder().encode(validFrame).byteLength + 1,
+    )}`;
+    expect(new TextEncoder().encode(oversizedFrame).byteLength).toBe(
+      MAX_MATCH_CLIENT_FRAME_BYTES + 1,
+    );
+    const oversizedClose = socketOutcome(firstSocket);
+    firstSocket.send(oversizedFrame);
+    await expect(oversizedClose).resolves.toEqual({
+      kind: 'close',
+      code: 1009,
+      reason: 'MATCH_FRAME_TOO_LARGE',
+    });
+
+    const afterOversized = await runInDurableObject(battle.stub, (_instance, state) =>
+      state.storage.sql.exec<SqlRow>(
+        `SELECT revision, command_count FROM match_battle_state`,
+      ).one());
+    expect(afterOversized).toEqual({ revision: 0, command_count: 0 });
+
+    const secondIssued = await battle.stub.issueSeatToken(battle.session);
+    expect(secondIssued.state).toBe('issued');
+    if (secondIssued.state !== 'issued') throw new Error('Expected issued seat token');
+    const secondSocket = await openPlayerSocket(battle.stub, battle.id, battle.session);
+    await authenticateBattle(secondSocket, secondIssued.seatToken);
+    const canonicalOversizedFrame = JSON.stringify({
+      type: 'matchCommand',
+      command: {
+        ...command,
+        action: Object.fromEntries(
+          Array.from({ length: 9 }, (_, index) => [`padding${index}`, 'x'.repeat(500)]),
+        ),
+      },
+    });
+    expect(new TextEncoder().encode(canonicalOversizedFrame).byteLength).toBeLessThan(
+      MAX_MATCH_CLIENT_FRAME_BYTES,
+    );
+    const canonicalClose = socketOutcome(secondSocket);
+    secondSocket.send(canonicalOversizedFrame);
+    await expect(canonicalClose).resolves.toEqual({
+      kind: 'close',
+      code: 1008,
+      reason: 'MATCH_FRAME_INVALID',
+    });
+    const afterCanonical = await runInDurableObject(battle.stub, (_instance, state) =>
+      state.storage.sql.exec<SqlRow>(
+        `SELECT revision, command_count FROM match_battle_state`,
+      ).one());
+    expect(afterCanonical).toEqual({ revision: 0, command_count: 0 });
+
+    const thirdIssued = await battle.stub.issueSeatToken(battle.session);
+    expect(thirdIssued.state).toBe('issued');
+    if (thirdIssued.state !== 'issued') throw new Error('Expected issued seat token');
+    const thirdSocket = await openPlayerSocket(battle.stub, battle.id, battle.session);
+    await authenticateBattle(thirdSocket, thirdIssued.seatToken);
+    const acceptedPending = socketOutcome(thirdSocket);
+    thirdSocket.send(validFrame);
+    const acceptedOutcome = await acceptedPending;
+    if (acceptedOutcome.kind !== 'message') throw new Error('Expected accepted update');
+    expect(parseMatchServerFrame(JSON.parse(acceptedOutcome.data) as unknown)).toMatchObject({
+      type: 'matchCommandUpdate',
+      receipt: {
+        state: 'accepted',
+        commandId: command.commandId,
+        baseRevision: 0,
+        revision: 1,
+      },
+      projection: { revision: 1 },
+    });
+    thirdSocket.close(1000, 'done');
+  });
+
+  it.each([
+    { authorizationState: 'invalidated' as const, reason: 'SESSION_ENDED' },
+    { authorizationState: 'stale-assignment' as const, reason: 'SEAT_REASSIGNED' },
+  ])('$authorizationState認可拒否をraw frame上限より先に判定する', async ({
+    authorizationState,
+    reason,
+  }) => {
+    const battle = await startReservedNpcBattle();
+    const issued = await battle.stub.issueSeatToken(battle.session);
+    expect(issued.state).toBe('issued');
+    if (issued.state !== 'issued') throw new Error('Expected issued seat token');
+    const socket = await openPlayerSocket(battle.stub, battle.id, battle.session);
+    await authenticateBattle(socket, issued.seatToken);
+    await runInDurableObject(battle.stub, (_instance, state) => {
+      if (authorizationState === 'invalidated') {
+        state.storage.sql.exec(
+          `INSERT INTO match_session_invalidation (
+             session_id, invalidated_version, invalidated_at_ms
+           ) VALUES (?, ?, ?)`,
+          battle.session.sessionId,
+          battle.session.sessionVersion + 1,
+          Date.now(),
+        );
+      } else {
+        state.storage.sql.exec(
+          `UPDATE match_seat_assignment
+              SET assignment_version = assignment_version + 1`,
+        );
+      }
+    });
+
+    const closed = socketOutcome(socket);
+    socket.send(`{${'x'.repeat(MAX_MATCH_CLIENT_FRAME_BYTES)}`);
+    await expect(closed).resolves.toEqual({ kind: 'close', code: 1008, reason });
+    const commandCount = await runInDurableObject(battle.stub, (_instance, state) =>
+      state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM match_battle_command`,
+      ).one().count);
+    expect(commandCount).toBe(0);
+  });
+
+  it('final commandはterminal updateを送ってからauthenticated socketをcloseする', async () => {
+    const battle = await startReservedNpcBattle();
+    const rolledBack = await runInDurableObject(battle.stub, (instance) =>
+      leaveFinalCommandRolledBack(instance as MatchDO, battle.session, battle.id));
+    const [issued, peerIssued] = await Promise.all([
+      battle.stub.issueSeatToken(battle.session),
+      battle.stub.issueSeatToken(battle.session),
+    ]);
+    expect(issued.state).toBe('issued');
+    expect(peerIssued.state).toBe('issued');
+    if (issued.state !== 'issued' || peerIssued.state !== 'issued') {
+      throw new Error('Expected issued seat tokens');
+    }
+    const socket = await openPlayerSocket(battle.stub, battle.id, battle.session);
+    const peerSocket = await openPlayerSocket(battle.stub, battle.id, battle.session);
+    const initial = await authenticateBattle(socket, issued.seatToken);
+    await authenticateBattle(peerSocket, peerIssued.seatToken);
+    expect(initial.projection.revision).toBe(rolledBack.finalCommand.expectedRevision);
+
+    const transcriptPending = socketTranscriptUntilClose(socket);
+    const peerTranscriptPending = socketTranscriptUntilClose(peerSocket);
+    socket.send(JSON.stringify({
+      type: 'matchCommand',
+      command: rolledBack.finalCommand,
+    }));
+    const transcript = await transcriptPending;
+    const peerTranscript = await peerTranscriptPending;
+    expect(transcript).toHaveLength(2);
+    const updateOutcome = transcript[0];
+    if (updateOutcome?.kind !== 'message') throw new Error('Expected terminal update');
+    const update = parseMatchServerFrame(JSON.parse(updateOutcome.data) as unknown);
+    expect(update).toMatchObject({
+      type: 'matchCommandUpdate',
+      receipt: {
+        state: 'accepted',
+        revision: rolledBack.finalCommand.expectedRevision + 1,
+      },
+      projection: {
+        revision: rolledBack.finalCommand.expectedRevision + 1,
+        phase: 'finished',
+        terminal: { state: 'finished' },
+        legalActions: [],
+      },
+    });
+    expect(transcript[1]).toEqual({
+      kind: 'close',
+      code: 1000,
+      reason: 'MATCH_ENDED',
+    });
+    expect(peerTranscript).toHaveLength(2);
+    const peerProjectionOutcome = peerTranscript[0];
+    if (peerProjectionOutcome?.kind !== 'message') {
+      throw new Error('Expected peer terminal projection');
+    }
+    expect(parseMatchServerFrame(JSON.parse(peerProjectionOutcome.data) as unknown)).toMatchObject({
+      type: 'matchProjection',
+      projection: {
+        revision: rolledBack.finalCommand.expectedRevision + 1,
+        terminal: { state: 'finished' },
+        legalActions: [],
+      },
+    });
+    expect(peerTranscript[1]).toEqual({
+      kind: 'close',
+      code: 1000,
+      reason: 'MATCH_ENDED',
+    });
+
+    const durable = await runInDurableObject(battle.stub, (_instance, state) => ({
+      lifecycle: state.storage.sql.exec<SqlRow>(
+        `SELECT lifecycle_state FROM match_battle_lifecycle`,
+      ).one(),
+      terminalCommands: state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM match_battle_command WHERE terminal_flag = 1`,
+      ).one().count,
+      releases: state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM match_terminal_release`,
+      ).one().count,
+    }));
+    expect(durable).toEqual({
+      lifecycle: { lifecycle_state: 'finished' },
+      terminalCommands: 1,
+      releases: 1,
+    });
+  }, 20_000);
+
+  it('final ACK喪失相当でも既存owner socketのexact再送だけを保存ACKへ収束させる', async () => {
+    const battle = await startReservedNpcBattle();
+    const rolledBack = await runInDurableObject(battle.stub, (instance) =>
+      leaveFinalCommandRolledBack(instance as MatchDO, battle.session, battle.id));
+    const issued = await battle.stub.issueSeatToken(battle.session);
+    expect(issued.state).toBe('issued');
+    if (issued.state !== 'issued') throw new Error('Expected issued seat token');
+    const socket = await openPlayerSocket(battle.stub, battle.id, battle.session);
+    await authenticateBattle(socket, issued.seatToken);
+    const beforeCommandCount = await runInDurableObject(battle.stub, (_instance, state) =>
+      state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM match_battle_command`,
+      ).one().count);
+    const committedReceipt = await battle.stub.applyNpcBattleCommand({
+      principal: battle.session,
+      command: rolledBack.finalCommand,
+    });
+    expect(committedReceipt).toMatchObject({ state: 'accepted' });
+    await evictDurableObject(battle.stub);
+
+    const transcriptPending = socketTranscriptUntilClose(socket);
+    socket.send(JSON.stringify({
+      type: 'matchCommand',
+      command: rolledBack.finalCommand,
+    }));
+    const transcript = await transcriptPending;
+    expect(transcript).toHaveLength(2);
+    const updateOutcome = transcript[0];
+    if (updateOutcome?.kind !== 'message') throw new Error('Expected replayed terminal ACK');
+    const replayed = parseMatchServerFrame(JSON.parse(updateOutcome.data) as unknown);
+    expect(replayed).toMatchObject({
+      type: 'matchCommandUpdate',
+      receipt: {
+        state: 'accepted',
+        commandId: rolledBack.finalCommand.commandId,
+        revision: rolledBack.finalCommand.expectedRevision + 1,
+      },
+      projection: { terminal: { state: 'finished' }, legalActions: [] },
+    });
+    if (replayed?.type !== 'matchCommandUpdate') throw new Error('Expected replay update');
+    expect(replayed.receipt).toEqual(committedReceipt);
+    expect(transcript[1]).toEqual({
+      kind: 'close',
+      code: 1000,
+      reason: 'MATCH_ENDED',
+    });
+    const afterReplay = await runInDurableObject(battle.stub, (_instance, state) => ({
+      assignmentCount: state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM match_seat_assignment`,
+      ).one().count,
+      tokenCount: state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM match_seat_token`,
+      ).one().count,
+      commandCount: state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM match_battle_command`,
+      ).one().count,
+    }));
+    expect(afterReplay).toEqual({
+      assignmentCount: 0,
+      tokenCount: 0,
+      commandCount: beforeCommandCount + 1,
+    });
+  }, 20_000);
+
+  it.each([
+    {
+      cutpoint: 'afterTerminalFrameSend' as const,
+      resetReason: 'MATCH_TERMINAL_POST_SEND_FAILED',
+      closeCode: 1006,
+    },
+    {
+      cutpoint: 'afterTerminalSocketsClose' as const,
+      resetReason: 'MATCH_TERMINAL_POST_CLOSE_FAILED',
+      closeCode: 1000,
+    },
+  ])('$cutpointの失敗でもterminal updateを先に送りcommitを巻き戻さない', async ({
+    cutpoint,
+    resetReason,
+    closeCode,
+  }) => {
+    const battle = await startReservedNpcBattle();
+    const rolledBack = await runInDurableObject(battle.stub, (instance) =>
+      leaveFinalCommandRolledBack(instance as MatchDO, battle.session, battle.id));
+    const issued = await battle.stub.issueSeatToken(battle.session);
+    expect(issued.state).toBe('issued');
+    if (issued.state !== 'issued') throw new Error('Expected issued seat token');
+    const socket = await openPlayerSocket(battle.stub, battle.id, battle.session);
+    await authenticateBattle(socket, issued.seatToken);
+    const transcriptPending = socketTranscriptUntilClose(socket);
+    let committedAtCutpoint: {
+      lifecycleState: string;
+      terminalCommands: number;
+      assignments: number;
+    } | null = null;
+
+    const interrupted = runInDurableObject(battle.stub, async (instance, state) => {
+      const serverSocket = state.getWebSockets().find((candidate) => {
+        const attachment = candidate.deserializeAttachment() as { mode?: string } | null;
+        return attachment?.mode === 'authenticated';
+      });
+      if (!serverSocket) throw new Error('Expected authenticated server socket');
+      const attachment = serverSocket.deserializeAttachment();
+      const target = instance as unknown as {
+        afterTerminalFrameSend: () => Promise<void>;
+        afterTerminalSocketsClose: () => Promise<void>;
+        handleAuthenticatedGameFrame(
+          socket: WebSocket,
+          attachment: unknown,
+          message: string,
+        ): Promise<void>;
+      };
+      target[cutpoint] = async () => {
+        committedAtCutpoint = {
+          lifecycleState: String(state.storage.sql.exec<SqlRow>(
+            `SELECT lifecycle_state FROM match_battle_lifecycle`,
+          ).one().lifecycle_state),
+          terminalCommands: state.storage.sql.exec<{ count: number }>(
+            `SELECT COUNT(*) AS count FROM match_battle_command WHERE terminal_flag = 1`,
+          ).one().count,
+          assignments: state.storage.sql.exec<{ count: number }>(
+            `SELECT COUNT(*) AS count FROM match_seat_assignment`,
+          ).one().count,
+        };
+        throw new Error(`INJECTED_${cutpoint}`);
+      };
+      await target.handleAuthenticatedGameFrame(
+        serverSocket,
+        attachment,
+        JSON.stringify({ type: 'matchCommand', command: rolledBack.finalCommand }),
+      );
+    });
+    await expectDurableObjectReset(interrupted, resetReason);
+    const recoveredStub = stubFor(battle.id);
+    const recovered = await recoveredStub.getNpcBattleLifecycle(battle.session);
+    expect(recovered).toMatchObject({
+      state: 'finished',
+      terminalResult: { kind: 'finished' },
+    });
+    const durableAfterReset = await runInDurableObject(recoveredStub, (_instance, state) => ({
+      lifecycleState: String(state.storage.sql.exec<SqlRow>(
+        `SELECT lifecycle_state FROM match_battle_lifecycle`,
+      ).one().lifecycle_state),
+      terminalCommands: state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM match_battle_command WHERE terminal_flag = 1`,
+      ).one().count,
+      assignments: state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM match_seat_assignment`,
+      ).one().count,
+      releases: state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM match_terminal_release`,
+      ).one().count,
+    }));
+    expect(durableAfterReset).toEqual({
+      lifecycleState: 'finished',
+      terminalCommands: 1,
+      assignments: 0,
+      releases: 1,
+    });
+    expect(committedAtCutpoint).toEqual({
+      lifecycleState: 'finished',
+      terminalCommands: 1,
+      assignments: 0,
+    });
+    const transcript = await transcriptPending;
+    const message = transcript.find((outcome) => outcome.kind === 'message');
+    if (message?.kind !== 'message') throw new Error('Expected terminal update before reset');
+    expect(parseMatchServerFrame(JSON.parse(message.data) as unknown)).toMatchObject({
+      type: 'matchCommandUpdate',
+      receipt: { state: 'accepted' },
+      projection: { terminal: { state: 'finished' }, legalActions: [] },
+    });
+    expect(transcript.at(-1)).toMatchObject({
+      kind: 'close',
+      code: closeCode,
+    });
+  }, 20_000);
+
+  it.each([
+    {
+      operation: 'cancel' as const,
+      terminalState: 'cancelled',
+      reason: 'server_cancelled',
+    },
+    {
+      operation: 'abandon' as const,
+      terminalState: 'abandoned',
+      reason: 'player_abandoned',
+    },
+  ])('$operation RPCもterminal projection送信後にsocketをcloseする', async ({
+    operation,
+    terminalState,
+    reason,
+  }) => {
+    const battle = await startReservedNpcBattle();
+    const issued = await battle.stub.issueSeatToken(battle.session);
+    expect(issued.state).toBe('issued');
+    if (issued.state !== 'issued') throw new Error('Expected issued seat token');
+    const socket = await openPlayerSocket(battle.stub, battle.id, battle.session);
+    await authenticateBattle(socket, issued.seatToken);
+    const transcriptPending = socketTranscriptUntilClose(socket);
+    const lifecycle = operation === 'cancel'
+      ? await battle.stub.cancelNpcBattle({
+          principal: battle.session,
+          reason: 'server_cancelled',
+        })
+      : await battle.stub.abandonNpcBattle({
+          principal: battle.session,
+          reason: 'player_abandoned',
+        });
+    expect(lifecycle).toMatchObject({ state: terminalState });
+
+    const transcript = await transcriptPending;
+    expect(transcript).toHaveLength(2);
+    const projectionOutcome = transcript[0];
+    if (projectionOutcome?.kind !== 'message') {
+      throw new Error('Expected lifecycle terminal projection');
+    }
+    expect(parseMatchServerFrame(JSON.parse(projectionOutcome.data) as unknown)).toMatchObject({
+      type: 'matchProjection',
+      projection: {
+        phase: expect.not.stringMatching(/^finished$/),
+        winner: null,
+        endReason: null,
+        terminal: { state: terminalState, reason },
+        legalActions: [],
+      },
+    });
+    expect(transcript[1]).toEqual({
+      kind: 'close',
+      code: 1000,
+      reason: 'MATCH_ENDED',
+    });
   });
 
   it('session失効後はsocketを閉じ、exact startとbattle commandを盤面不変で拒否する', async () => {
@@ -1795,10 +2523,7 @@ describe('OLG-121 MatchDO authoritative NPC battle lifecycle', () => {
     expect(issued.state).toBe('issued');
     if (issued.state !== 'issued') throw new Error('Expected issued seat token');
     const socket = await openPlayerSocket(battle.stub, battle.id, battle.session);
-    await expect(authenticate(socket, issued.seatToken)).resolves.toEqual({
-      kind: 'message',
-      data: 'auth_ok',
-    });
+    await authenticateBattle(socket, issued.seatToken);
     const before = await battle.stub.getNpcBattleSnapshot(battle.session);
     const engineAction = searchAi({ keepHand: 2 }).choose(
       before.state as BattleState,
@@ -2936,6 +3661,62 @@ describe('OLG-125 MatchDO battle persistence and crash recovery', () => {
       battle.stub.applyNpcBattleCommand({ principal: battle.session, command }),
       'MATCH_COMMAND_POST_INSTALL_FAILED',
     );
+  });
+
+  it('SQLite commit成功後にbattleCommands.rememberが例外を投げてもctx.abortでDOを強制resetする', async () => {
+    const battle = await startReservedNpcBattle();
+    const command = npcCommand(battle.id, 1, { type: 'endPlay' });
+    const interrupted = runInDurableObject(battle.stub, async (instance) => {
+      const target = instance as unknown as {
+        battleCommands: { remember: (...args: unknown[]) => unknown };
+      };
+      target.battleCommands.remember = () => {
+        throw new Error('INJECTED_LEDGER_REMEMBER_FAILURE');
+      };
+      await (instance as MatchDO).applyNpcBattleCommand({
+        principal: battle.session,
+        command,
+      });
+    });
+    await expectDurableObjectReset(
+      interrupted,
+      'MATCH_COMMAND_CACHE_INSTALL_FAILED',
+    );
+  });
+
+  it('prepareHumanActionのBATTLE_ACTION_INVALID以外のEngineBattleAdapterErrorはMATCH_BATTLE_STATE_INVALIDへ変換する', async () => {
+    const battle = await startReservedNpcBattle();
+    const before = await battle.stub.getNpcBattleSnapshot(battle.session);
+    const command = npcCommand(
+      battle.id,
+      0,
+      stableHumanAction(
+        before,
+        searchAi({ keepHand: 2 }).choose(before.state as BattleState, HUMAN_PLAYER),
+      ),
+    );
+    const errorMessage = await runInDurableObject(battle.stub, async (instance) => {
+      const target = instance as unknown as {
+        battleRuntime: { prepareHumanAction: (...args: unknown[]) => unknown } | null;
+      };
+      if (!target.battleRuntime) throw new Error('Expected active battle runtime');
+      const original = target.battleRuntime.prepareHumanAction;
+      target.battleRuntime.prepareHumanAction = () => {
+        throw new EngineBattleAdapterError('BATTLE_RUNTIME_INVALID');
+      };
+      try {
+        await (instance as MatchDO).applyNpcBattleCommand({
+          principal: battle.session,
+          command,
+        });
+        return null;
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      } finally {
+        target.battleRuntime.prepareHumanAction = original;
+      }
+    });
+    expect(errorMessage).toBe('MATCH_BATTLE_STATE_INVALID');
   });
 
   it('final runtime install後・ACK前のcutpointがctx.abortでDOを強制resetする', async () => {

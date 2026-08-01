@@ -10,7 +10,7 @@ export const SERVER_FOUNDATION = {
   packageName: '@bravers/server',
   protocolVersion: PROTOCOL_SCAFFOLD.version,
   operational: true,
-  gameProtocolOperational: false,
+  gameProtocolOperational: PROTOCOL_SCAFFOLD.operational,
 } as const;
 
 function json(body: unknown, init: ResponseInit = {}): Response {

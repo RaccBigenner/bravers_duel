@@ -80,7 +80,9 @@ player-visible exit conditions:
 player-visible exit conditions:
 
 - 招待URLまたは6文字コードで非公開ルームへ入り、対戦、リロード復帰、結果/BP確定まで完走できる
-- 相手と観戦者に手札、山札順、個体IDが漏れず、同じ注文や報酬の再送でも二重取得が起きない
+- 相手と観戦者に手札、山札順、所持個体ID（global `instance_id`）とhidden zoneの`battleCardId`が漏れず、
+  同じ注文や報酬の再送でも二重取得が起きない。相手playerには公開zoneのtarget識別用`battleCardId`を見せるが、
+  spectatorは別projectionで全`battleCardId`を省くかviewer-scoped aliasへ変換する
 - スマホ2台またはスマホ/PC間で、招待、Ready、対戦、切断復帰、再戦を実機確認できる
 
 ### G4: Public Online Beta
@@ -456,8 +458,8 @@ Web/Admin production build、未公開データ漏洩検査を通過
 
 補足（P1で扱う）:
 
-- 「seedと完全ログは試合終了までプレイヤーへ渡さない」（設計11.4）はサーバー側の配信制御。
-  エンジンは入れ物と検査だけを持つ
+- seedと完全ログはlive/terminal player wireで常時非公開とする（設計11.3〜11.4）。将来replay endpointで
+  公開する場合だけ別policy / schemaを使う。エンジンは入れ物と検査だけを持つ
 - `createBattle`は先攻を省略したときだけ乱数を1つ引くため、同じseedでも
   「省略」と「明示」で山札の並びが変わる。replay headerへ`firstPlayerFromSeed`として記録し、
   再生時は記録時と同じ呼び方を再現する
@@ -552,7 +554,7 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
   使い、production build用Vite 5/React pluginの設定をVitest内蔵Viteへ読み込ませない
 - `MatchDO`は宣言的Durable Object exportとSQLite storageを使い、WebSocket Hibernation APIで
   疎通確認用socketを受ける。内部action型はOLG-123、Command envelope型はOLG-122で実装済み。
-  ゲーム本体のbrowser wire / Event / SnapshotはOLG-125/124へ残す
+  Event / Snapshotの永続化はOLG-125、ゲーム本体のbrowser wire公開はOLG-124で完了済み
 - `GET /health`はWorkerだけで成功にせず、health専用MatchDOを呼び、DO SQLiteの`SELECT 1`まで確認する
 - `npm run dev:online`はlocal Supabaseの状態確認→必要なら起動→`migration up --local`→
   status/migration確認→pgTAP DB受入→Wrangler local起動の順に行う。Supabase CLIの`--workdir`は
@@ -720,7 +722,7 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
   SessionCoordinator参照解除を含む）— **コード実装済み（2026-08-01）**
 - OLG-122 `commandId + expectedRevision` — **コード実装済み（2026-08-01）**
 - OLG-123 stable `battleCardId` — **コード実装済み（2026-08-01）**
-- OLG-124 player projection
+- OLG-124 player projection — **コード実装済み（2026-08-02）**
 - OLG-125 snapshot/event persistence — **コード実装済み（2026-08-02）**
 - OLG-126 reconnect/resume
 - OLG-127 timeout/disconnect（PvP標準クロック・切断との関係・レート反映の設計: 11.5）
@@ -741,7 +743,7 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
   client指定のmatch ID / seat / deck / seed / engine・content・format versionからDOを作らない
 - MatchDO SQLiteへ`provisioning / active / finished / cancelled / abandoned`を保存する。正常終了では
   engine結果を、取消・放棄では理由を先に確定し、token/assignmentを削除する。pending/verifying socketは
-  保存済み認証deadlineからalarmで閉じ、authenticated socketのACK後closeはOLG-124が担う
+  保存済み認証deadlineからalarmで閉じる。authenticated socketはOLG-124でterminal projection送信後に閉じる
 - 終端後の外部cleanupは、登録済みなら`unregisterMatch`→`releaseNpcMatch`、登録前取消なら
   `releaseNpcMatch`だけを別outbox＋alarmで再試行する。応答喪失、追加参照、古いreleaseと新予約の競合、
   旧seat cleanupとの同居で新しい予約・参照を消さない
@@ -754,13 +756,13 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
 - NPC戦を最後まで決定論的に進め、勝敗をSQLiteへ保存してからassignmentと予約を解除できる
 - OLG-125完了後のactive DO evictionは保存履歴から同じruntime / revision / receiptへ復旧する。
   改変・sequence gap・版不一致はseedから再生成せずfail closed。terminal lifecycle/resultもeviction後に読める
-- authoritative snapshot / seed / deck / engine-native actionは内部RPCだけで扱い、browser WebSocketの
-  game frameはOLG-124完了まで`error:game-not-ready`で盤面不変にする
+- authoritative snapshot / seed / deck / engine-native actionは内部RPCだけで扱う。browser WebSocketは
+  OLG-124のexact player projection / command updateだけを公開する
 
 残余:
 
-- active runtime・action stream、battleCardId台帳、revision / command receiptの再構築はOLG-125で完了。
-  player projectionとterminal ACK後closeはOLG-124で実装する
+- active runtime・action stream、battleCardId台帳、revision / command receiptの再構築はOLG-125、
+  player projectionとterminal配信後closeはOLG-124で完了
 - terminal解放後まで極端に遅延した旧`POST /matches/npc`は新規開始と区別できないためOLG-129へ送る
 - logout失効後にactive lifecycleを自動終端する条件は、NPC idle suspendを扱うOLG-127で固定する
 - MatchDOのbattle lifecycle / terminal outboxは後続機能追加時に別moduleへ分割する
@@ -794,20 +796,20 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
 - 同一IDのpayload衝突、stale / ahead、schema / rules違反を区別し、exact再送は後のstateでも同じ結果
 - 1 commandでNPCが複数step動いてもrevisionは1だけ進み、最終手のACK喪失でも二重適用しない
 - authoritative transition / events / lifecycle / snapshot / seed / opponent情報を共有protocol receiptへ
-  一切含めず、browser wireは閉じたまま
+  一切含めない。OLG-124の`matchCommandUpdate`でもreceipt自体はACK-onlyのままprojectionと型責務を分ける
 - 台帳を拒否receipt上限まで埋めてもaccepted用容量が残り、sparse array等の別payloadが同一identityにならない
 
-残余:
+完了した後続:
 
 - OLG-125で全2,048 record・拒否最大512 recordの台帳をSQLiteへ移し、active DO eviction後もexact receiptと
   runtime / revisionを復旧する。cloneした次状態、canonical payload / SHA-256 digest、seat、成功／拒否／finalの
   ACK-only receipt、stable steps / events、current snapshot、terminal lifecycle、cleanup outbox / deadlineは
   同一SQLite transactionへcommitしてからruntimeをswapする。transaction失敗ではtrialを破棄し、commit後の
   DO reset / ACK喪失では保存済みreceiptへ収束する
-- OLG-124は保存済みreceiptとviewer projectionを配信し、terminal時は配信後にauthenticated socketを閉じる。
-  terminal送信・close前後のcutpointもOLG-124で検査する
-- OLG-124はJSON.parse前にraw WebSocket frameのUTF-8 byte上限を検査し、decode後にcanonical上限を適用する。
-  receiptとは別にviewer projectionを作り、初期／current revisionだけを安全に公開する
+- OLG-124は保存済みreceiptと同revision以上のviewer projectionを単一exact update frameで配信する。
+  terminal frame送信後・close後のcutpointも検査する
+- OLG-124はJSON.parse前にraw WebSocket frameを16 KiBで止め、decode後にcanonical上限を適用する。
+  viewer projectionはauthoritative snapshotを削るのでなくallowlistから構築する
 
 #### OLG-123 stable battleCardId
 
@@ -842,8 +844,48 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
   全再演監査を維持したまま履歴上限到達前に入れる将来最適化
 - G2の所持個体連携はOLG-200で、lock済みinstance poolと初期printing配置を1対1照合して
   server-only `battleCardId → instance_id`対応表を作る。キラ等の表示属性以外は同printingで同値とする
-- opponent hand / deckのIDとprintingをwireから隠すprojectionはOLG-124
-- browser向けgame frameはOLG-124まで`error:game-not-ready`のまま開かない
+- opponent hand / deckのIDとprintingをwireから隠すprojectionはOLG-124で完了
+- browser向けgame frameはOLG-124のexact decoder / viewer projectionで開いた
+
+#### OLG-124 player projection
+
+状態: **コード実装済み**（2026-08-02）
+
+- protocol v1へ`MatchPlayerProjection`、clientの`matchCommand`、初期/currentの`matchProjection`、
+  command応答の`matchCommandUpdate { receipt, projection }`を追加し、nested fieldまでexact decodeする
+- projectionはallowlistだけから新規構築する。自分handだけ`battleCardId + printingId`、相手handはcount、
+  両deck/APはcount、trash / character / equipment / field / pending attack / 公開効果状態は公開する。
+  seed / rng / raw state / raw event / header / hash / hidden ID / global instance IDは型として持たない
+- 公開効果状態は`skillsUsedThisTurn / nextSkillCostDelta / nextDrawDelta / actorLockUntilTurn /
+  incomingDamageReduction / chargedThisTurn / suppressRotate`までをv1 allowlistとする。hidden effectを足す時は
+  このlistへ暗黙追加せずprojection versionを上げる。seedはlive/terminal wireで常時非公開とし、将来の
+  replay endpointで公開する場合も別policy・別schemaにする
+- 認証・session失効・seatをframe decodeより先に検査する。raw入力はJSON.parse前のUTF-8 16 KiB、
+  candidate decode後は既存canonical 4 KiB等、server出力はexact decode後128 KiBでfail closedにする
+- 認証直後はcurrent projection、command後は保存receiptとcurrent projectionを単一update frameで返す。
+  同じviewerの別tabにはprojectionだけを送り、相手seatやspectatorへ転送しない
+- 通常決着・取消・放棄はterminal projectionを送ってから対象authenticated socketを
+  `1000 / MATCH_ENDED`で閉じる。terminal後の未知commandは台帳を増やさず、既存socketのexact再送だけ
+  保存receiptへ収束する。外部Coordinator cleanupは引き続きalarm-only
+
+受入:
+
+- viewer/hand visibility/terminal/resultをexact decodeし、相手hand/deck/APのID・printing canary、
+  seed/hash/raw event等の禁止keyがwireへ0件であることを両viewerで検査する
+- ASCII / multi-byte / ArrayBufferの16 KiB入力境界と128 KiB出力境界、canonical超過、壊れたframeを
+  commandId未消費で拒否する
+- auth直後、accepted / rejected / duplicate / conflict、terminal ACK喪失相当、複数tab、cancel/abandon、
+  terminal send/close後のDO再生成を実WebSocket＋SQLite件数で検査する
+
+残余:
+
+- OLG-126で`GET /me/active-match`、認証session所有権によるreceipt/result read、viewer-visible event delta、
+  `last_event_sequence` / snapshot fallbackを実装する。v1の`eventSequence`はG1 NPC-only wireのraw current cursor
+  なので、PvP前にviewer別の単調cursorへ置換し、hidden event数がgapから分からないようversion upする。
+  リロード後の新規socket復帰はまだできない
+- G3のOLG-301/302は2 seatそれぞれでprojectionを再生成し、同一viewer用frameを相手へ流さないことを実機検査する。
+  NPC専用の`abandoned { winner: 1 }`も、離脱seatと勝者を両向きに表せるterminal unionへversion upする
+- 自分deckの順不同multiset / AP内容はv1では非対応（両者countのみ）。必要なUIと秘匿条件を決めて版付き追加する
 
 #### OLG-125 snapshot/event persistence
 
@@ -869,7 +911,6 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
 
 残余:
 
-- OLG-124でviewer projection / ACKを配信し、terminal時はその後にauthenticated socketをcloseする
 - OLG-126で認証session所有権を照合するactive-match / receipt / result readとevent差分resumeを公開する
 - 周期checkpoint + tail再演は、版付きrestore APIと全再演監査を保つ将来の性能最適化
 
@@ -1005,11 +1046,11 @@ G2/G3のshadowは探索用であり、activation合格用windowはG4開放後に
 ## 7. Milestone P3: ルームPvP
 
 - OLG-300 招待URL/6文字code
-- OLG-301 2人用seat認可
-- OLG-302 player projection漏洩検査
+- OLG-301 2人用seat認可＋両seat対応のabandon terminal schema
+- OLG-302 2 seat / 2端末でOLG-124 projection契約を再検証する漏洩検査
 - OLG-303 clock（標準/ゆっくりpreset・設計: 4.3）/reconnect/複数タブ
 - OLG-304 共通BPと同一ペア逓減
-- OLG-305 招待観戦用spectator projection
+- OLG-305 招待観戦用spectator projection（player projectionをredact流用せずbattleCardIdも非公開）
 
 ## 8. Milestone P4: デュエルスペースとクイック
 
