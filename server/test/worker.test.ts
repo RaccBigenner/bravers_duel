@@ -64,7 +64,21 @@ describe('@bravers/server OLG-102 foundation', () => {
       { method: 'POST', body: '{}' },
     );
     const noUpgrade = await workerExports.default.fetch(
-      'http://local.test/matches/local-smoke/ws',
+      'http://127.0.0.1:8787/matches/local-smoke/ws',
+    );
+    const normalWithoutOrigin = await workerExports.default.fetch(
+      'http://127.0.0.1:8787/matches/normal-match/ws',
+      { headers: { Upgrade: 'websocket' } },
+    );
+    const normalBeforeAssignments = await workerExports.default.fetch(
+      'http://127.0.0.1:8787/matches/normal-match/ws',
+      {
+        headers: {
+          Upgrade: 'websocket',
+          Origin: 'http://127.0.0.1:8787',
+          'Sec-Fetch-Site': 'same-origin',
+        },
+      },
     );
     const noSession = await workerExports.default.fetch(
       'http://127.0.0.1:8787/auth/session',
@@ -82,6 +96,10 @@ describe('@bravers/server OLG-102 foundation', () => {
     expect(await rejectedGuest.json()).toEqual({ error: 'AUTH_REQUEST_REJECTED' });
     expect(noUpgrade.status).toBe(426);
     expect(await noUpgrade.json()).toEqual({ error: 'WEBSOCKET_UPGRADE_REQUIRED' });
+    expect(normalWithoutOrigin.status).toBe(403);
+    expect(await normalWithoutOrigin.json()).toEqual({ error: 'AUTH_REQUEST_REJECTED' });
+    expect(normalBeforeAssignments.status).toBe(404);
+    expect(await normalBeforeAssignments.json()).toEqual({ error: 'MATCH_NOT_AVAILABLE' });
     expect(noSession.status).toBe(401);
     expect(noSession.headers.get('Cache-Control')).toBe('private, no-store');
     expect(await noSession.json()).toEqual({ error: 'SESSION_REQUIRED' });
@@ -90,7 +108,7 @@ describe('@bravers/server OLG-102 foundation', () => {
   it('MatchDOの最小WebSocket probeが休止復帰後も往復する', async () => {
     const matchId = 'local-smoke';
     const response = await workerExports.default.fetch(
-      `http://local.test/matches/${matchId}/ws`,
+      `http://127.0.0.1:8787/matches/${matchId}/ws`,
       { headers: { Upgrade: 'websocket' } },
     );
     const socket = response.webSocket;

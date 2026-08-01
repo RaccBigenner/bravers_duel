@@ -58,6 +58,32 @@ export function validateSafeAuthRequest(request: Request, appOrigin: string): vo
   if (request.method !== 'GET') rejectRequest();
 }
 
+/** Browser WebSocketはcustom headerを設定できないため、exact Originを必須にする。 */
+export function validateWebSocketAuthRequest(
+  request: Request,
+  appOrigin: string,
+): void {
+  let target: URL;
+  try {
+    target = new URL(request.url);
+  } catch {
+    rejectRequest();
+  }
+  const fetchSite = request.headers.get('Sec-Fetch-Site');
+  if (
+    target.origin !== appOrigin ||
+    target.username !== '' ||
+    target.password !== '' ||
+    target.search !== '' ||
+    request.method !== 'GET' ||
+    request.headers.get('Origin') !== appOrigin ||
+    (fetchSite !== null && fetchSite !== 'same-origin') ||
+    request.headers.get('Upgrade')?.toLowerCase() !== 'websocket'
+  ) {
+    rejectRequest();
+  }
+}
+
 async function boundedBodyBytes(request: Request): Promise<Uint8Array> {
   const declaredLength = request.headers.get('Content-Length');
   if (

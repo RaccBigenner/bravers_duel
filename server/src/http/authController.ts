@@ -13,6 +13,7 @@ import {
   tokenDigestHex,
   type SessionCryptoKeys,
 } from '../auth/sessionCrypto';
+import { lookupOpaqueSessionToken } from '../auth/sessionAuthentication';
 import {
   GuestAuthError,
   createAnonymousPrincipal,
@@ -21,15 +22,15 @@ import {
   type AuthServerCredential,
   type CreateAnonymousPrincipalInput,
 } from '../auth/supabaseGuestAuth';
-import { deleteGuestAuthUser } from '../auth/supabaseGuestAdmin';
+import { GuestAdminError, deleteGuestAuthUser } from '../auth/supabaseGuestAdmin';
 import {
   SupabaseSessionStore,
   type BootstrapClaim,
   type DigestCandidate,
-  type SessionPrincipal,
   type SessionStore,
   type SessionStoreCredential,
 } from '../auth/supabaseSessionStore';
+import type { SessionPrincipal } from '../auth/supabaseSessionStore';
 import {
   SessionRuntimeConfigError,
   createSessionRequestPolicy,
@@ -54,17 +55,6 @@ const AUTH_ROUTES = new Map<string, 'GET' | 'POST'>([
 
 export const AUTH_UPSTREAM_TIMEOUT_MS = 7_000;
 export const BOOTSTRAP_CLAIM_LEASE_MS = 30_000;
-
-interface PrincipalLookup {
-  principal: SessionPrincipal;
-  matchedCandidate: DigestCandidate;
-}
-
-type SessionLookup =
-  | { state: 'missing' }
-  | { state: 'ambiguous' }
-  | { state: 'integrity_failure' }
-  | ({ state: 'ready' } & PrincipalLookup);
 
 export interface AuthControllerDependencies {
   createStore(
@@ -180,22 +170,6 @@ function bootstrapRequired(profile: CookieProfile, clear: boolean): Response {
   return authJson({ error: 'BOOTSTRAP_REQUIRED' }, 409, headers);
 }
 
-async function lookupSession(
-  token: string,
-  store: SessionStore,
-  keys: SessionCryptoKeys,
-): Promise<SessionLookup> {
-  const candidates = await tokenDigestCandidates(token, 'session', keys);
-  const resolution = await store.resolveSessionCandidates(candidates);
-  if (resolution === null) return { state: 'missing' };
-  if ('state' in resolution) return { state: 'ambiguous' };
-  const matchedCandidate = candidates.find(
-    (candidate) => candidate.keyVersion === resolution.credentialKeyVersion,
-  );
-  if (!matchedCandidate) return { state: 'integrity_failure' };
-  return { state: 'ready', principal: resolution, matchedCandidate };
-}
-
 async function recoverReadySession(
   claim: Extract<BootstrapClaim, { state: 'session_ready' }>,
   bootstrapToken: string,
@@ -212,7 +186,7 @@ async function recoverReadySession(
     claim.attemptId,
     derivationSecret,
   );
-  const lookup = await lookupSession(sessionToken, store, config.cryptoKeys);
+  const lookup = await lookupOpaqueSessionToken(sessionToken, store, config.cryptoKeys);
   if (lookup.state !== 'ready') return integrityFailure();
   if (
     lookup.principal.sessionId !== claim.sessionId ||
@@ -279,7 +253,11 @@ async function handleBootstrap(
   if (sessionCookie.state !== 'missing') {
     if (sessionCookie.state === 'invalid') return sessionRequired(profile, true);
     const store = dependencies.createStore(config.storeCredential, request.signal);
-    const lookup = await lookupSession(sessionCookie.token, store, config.cryptoKeys);
+    const lookup = await lookupOpaqueSessionToken(
+      sessionCookie.token,
+      store,
+      config.cryptoKeys,
+    );
     if (lookup.state === 'ready') {
       return readyResponse(lookup.principal, profile, {
         sessionToken: sessionCookie.token,
@@ -332,7 +310,11 @@ async function handleGuest(
   if (sessionCookie.state !== 'missing') {
     if (sessionCookie.state === 'invalid') return sessionRequired(profile, true);
     const store = dependencies.createStore(config.storeCredential, request.signal);
-    const lookup = await lookupSession(sessionCookie.token, store, config.cryptoKeys);
+    const lookup = await lookupOpaqueSessionToken(
+      sessionCookie.token,
+      store,
+      config.cryptoKeys,
+    );
     if (lookup.state === 'ready') {
       return readyResponse(lookup.principal, profile, {
         sessionToken: sessionCookie.token,
@@ -369,8 +351,13 @@ async function handleGuest(
         claim.accountId,
         request.signal,
       );
-    } catch {
-      // delete応答喪失もあり得る。下のDB absence確認だけを正本にする。
+    } catch (error) {
+      // delete応答喪失もあり得るため、下のDB absence確認だけを正本にする。
+      // ただしsecretKey取り違え等の恒久障害も同じ経路に落ちるため、safeなcodeだけ記録して気付けるようにする。
+      console.error(
+        'guest_auth_recover_delete_failed',
+        error instanceof GuestAdminError ? error.code : 'UNKNOWN',
+      );
     }
     const reset = await store.resetBootstrapAfterAuthDelete({
       attemptId: claim.attemptId,
@@ -520,7 +507,11 @@ async function handleSession(
     return sessionRequired(profile, sessionCookie.state === 'invalid');
   }
   const store = dependencies.createStore(config.storeCredential, request.signal);
-  const lookup = await lookupSession(sessionCookie.token, store, config.cryptoKeys);
+  const lookup = await lookupOpaqueSessionToken(
+    sessionCookie.token,
+    store,
+    config.cryptoKeys,
+  );
   if (lookup.state === 'ready') {
     return readyResponse(lookup.principal, profile, { sessionToken: sessionCookie.token });
   }
@@ -544,7 +535,11 @@ async function handleLogout(
   }
 
   const store = dependencies.createStore(config.storeCredential, request.signal);
-  const lookup = await lookupSession(sessionCookie.token, store, config.cryptoKeys);
+  const lookup = await lookupOpaqueSessionToken(
+    sessionCookie.token,
+    store,
+    config.cryptoKeys,
+  );
   if (lookup.state === 'ambiguous' || lookup.state === 'integrity_failure') {
     return integrityFailure();
   }
