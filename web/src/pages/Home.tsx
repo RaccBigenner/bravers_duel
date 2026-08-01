@@ -1,10 +1,18 @@
 import { cardByPrintingId } from '@bravers/engine';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { CardFrame } from '../CardFrame';
 import { IMG } from '../cardAssets';
 import { RulesModal } from './RulesModal';
 
-export function Home({ onBattle, onGallery }: { onBattle: () => void; onGallery: () => void }) {
+export function Home({
+  onBattle,
+  onGallery,
+  recovery,
+}: {
+  onBattle: () => void;
+  onGallery: () => void;
+  recovery?: ReactNode;
+}) {
   const [showRules, setShowRules] = useState(false);
 
   return (
@@ -27,6 +35,7 @@ export function Home({ onBattle, onGallery }: { onBattle: () => void; onGallery:
           </h1>
           <p className="home-tagline">回転式パーティキャラクターカードバトル</p>
         </div>
+        {recovery}
         <div className="home-menu">
           <button className="big-btn primary" onClick={onBattle}>
             バトル
@@ -40,7 +49,8 @@ export function Home({ onBattle, onGallery }: { onBattle: () => void; onGallery:
           </button>
         </div>
         <p className="home-note">
-          オープンβテスト — ゲームデータは保存されません。デッキはJSONで書き出せます。
+          オープンβテスト — CPU対戦のローカルデータは保存されません。デッキはJSONで書き出せます。
+          オンライン対戦はサーバーに保存され、リロード後も続きから戻れます。
           品質向上のため、匿名のプレイ統計とレビューを送信します（個人情報は含みません）。
         </p>
       </div>

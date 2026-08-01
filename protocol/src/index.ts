@@ -406,6 +406,118 @@ export function parseMatchCommandResult(value: unknown): MatchCommandResult | nu
 export const MATCH_PLAYER_PROJECTION_VERSION = 2 as const;
 export const MATCH_VIEWER_EVENT_VERSION = 1 as const;
 export const MAX_MATCH_VIEWER_DELTA_BATCHES = 128;
+/** MatchDOがauth成功時に返す唯一のplain-text control message。 */
+export const MATCH_AUTH_OK = 'auth_ok' as const;
+
+declare const matchSeatTokenBrand: unique symbol;
+/** WebSocket接続直後のauthだけに使う、256 bit canonical base64url opaque token。 */
+export type MatchSeatToken = string & { readonly [matchSeatTokenBrand]: true };
+// 32 bytesの末尾2 padding bitが0であるcanonical base64urlだけを受理する。
+export const MATCH_SEAT_TOKEN_PATTERN = /^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/;
+
+export function parseMatchSeatToken(value: unknown): MatchSeatToken | null {
+  return typeof value === 'string' && MATCH_SEAT_TOKEN_PATTERN.test(value)
+    ? (value as MatchSeatToken)
+    : null;
+}
+
+export interface MatchSeatAuthResume {
+  readonly projectionVersion: typeof MATCH_PLAYER_PROJECTION_VERSION;
+  readonly viewerEventVersion: typeof MATCH_VIEWER_EVENT_VERSION;
+  readonly lastEventSequence: number;
+}
+
+/**
+ * protocol上は旧2-key frameをresume:nullへ正規化する。
+ * wireへserializeするときはnull key自体を送らず、serverのexact schemaを維持する。
+ */
+export interface MatchSeatAuthClientFrame {
+  readonly type: 'auth';
+  readonly seatToken: MatchSeatToken;
+  readonly resume: MatchSeatAuthResume | null;
+}
+
+function parseMatchSeatAuthResume(value: unknown): MatchSeatAuthResume | null {
+  if (
+    !plainObject(value) ||
+    !exactKeys(
+      value,
+      ['projectionVersion', 'viewerEventVersion', 'lastEventSequence'],
+      ['projectionVersion', 'viewerEventVersion', 'lastEventSequence'],
+    ) ||
+    value.projectionVersion !== MATCH_PLAYER_PROJECTION_VERSION ||
+    value.viewerEventVersion !== MATCH_VIEWER_EVENT_VERSION ||
+    !nonNegativeSafeInteger(value.lastEventSequence)
+  ) {
+    return null;
+  }
+  return Object.freeze({
+    projectionVersion: MATCH_PLAYER_PROJECTION_VERSION,
+    viewerEventVersion: MATCH_VIEWER_EVENT_VERSION,
+    lastEventSequence: value.lastEventSequence,
+  });
+}
+
+/** server/browser双方が使う、旧2-keyまたはresume付き3-keyのexact decoder。 */
+export function parseMatchSeatAuthClientFrame(value: unknown): MatchSeatAuthClientFrame | null {
+  if (!plainObject(value) || value.type !== 'auth') return null;
+  const hasResume = Object.hasOwn(value, 'resume');
+  if (
+    !exactKeys(
+      value,
+      hasResume ? ['type', 'seatToken', 'resume'] : ['type', 'seatToken'],
+      hasResume ? ['type', 'seatToken', 'resume'] : ['type', 'seatToken'],
+    )
+  ) {
+    return null;
+  }
+  const seatToken = parseMatchSeatToken(value.seatToken);
+  const resume = hasResume ? parseMatchSeatAuthResume(value.resume) : null;
+  if (!seatToken || (hasResume && !resume)) return null;
+  return Object.freeze({ type: 'auth', seatToken, resume });
+}
+
+/** versionを呼び出し側に委ねず、安全なcursorだけからresume frameを作る。 */
+export function createSeatAuthFrame(
+  seatToken: unknown,
+  lastEventSequence: unknown,
+): MatchSeatAuthClientFrame | null {
+  const token = parseMatchSeatToken(seatToken);
+  if (!token || !nonNegativeSafeInteger(lastEventSequence)) return null;
+  return Object.freeze({
+    type: 'auth',
+    seatToken: token,
+    resume: Object.freeze({
+      projectionVersion: MATCH_PLAYER_PROJECTION_VERSION,
+      viewerEventVersion: MATCH_VIEWER_EVENT_VERSION,
+      lastEventSequence,
+    }),
+  });
+}
+
+/** @deprecated createSeatAuthFrameを使う。 */
+export const createMatchSeatAuthClientFrame = createSeatAuthFrame;
+
+/** runtimeで偽装された型も再検査し、raw tokenをerrorへ含めずnullで拒否する。 */
+export function serializeMatchSeatAuthClientFrame(value: unknown): string | null {
+  if (
+    !plainObject(value) ||
+    !exactKeys(value, ['type', 'seatToken', 'resume'], ['type', 'seatToken', 'resume']) ||
+    value.type !== 'auth'
+  ) {
+    return null;
+  }
+  const normalizedCandidate = value.resume === null
+    ? { type: value.type, seatToken: value.seatToken }
+    : { type: value.type, seatToken: value.seatToken, resume: value.resume };
+  const frame = parseMatchSeatAuthClientFrame(normalizedCandidate);
+  if (!frame) return null;
+  return JSON.stringify(
+    frame.resume === null
+      ? { type: frame.type, seatToken: frame.seatToken }
+      : { type: frame.type, seatToken: frame.seatToken, resume: frame.resume },
+  );
+}
 
 export type MatchProjectionPlayerIndex = 0 | 1;
 export type MatchProjectionPhase = 'choice' | 'play' | 'guard' | 'charge' | 'finished';
@@ -676,6 +788,12 @@ export interface ActiveMatchDescriptor {
 export interface ActiveMatchResponse {
   type: 'activeMatch';
   match: ActiveMatchDescriptor | null;
+}
+
+export interface MatchSeatTokenResponse {
+  seatToken: MatchSeatToken;
+  /** serverがDate#toISOStringで返すUTC expiry。 */
+  expiresAt: string;
 }
 
 export interface MatchReceiptResponse {
@@ -1509,6 +1627,34 @@ export function parseActiveMatchResponse(value: unknown): ActiveMatchResponse | 
           state: value.match.state,
         },
       }
+    : null;
+}
+
+function canonicalIsoInstant(value: unknown): value is string {
+  if (
+    typeof value !== 'string' ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)
+  ) {
+    return false;
+  }
+  try {
+    return new Date(value).toISOString() === value;
+  } catch {
+    return false;
+  }
+}
+
+/** POST /matches/:id/seat-token のsecret-bearing responseをexact decodeする。 */
+export function parseMatchSeatTokenResponse(value: unknown): MatchSeatTokenResponse | null {
+  if (
+    !plainObject(value) ||
+    !exactKeys(value, ['seatToken', 'expiresAt'], ['seatToken', 'expiresAt'])
+  ) {
+    return null;
+  }
+  const seatToken = parseMatchSeatToken(value.seatToken);
+  return seatToken && canonicalIsoInstant(value.expiresAt)
+    ? { seatToken, expiresAt: value.expiresAt }
     : null;
 }
 

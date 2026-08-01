@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  createSeatAuthFrame,
+  serializeMatchSeatAuthClientFrame,
+} from '@bravers/protocol';
+import {
   createSessionCryptoKeys,
   tokenDigestHex,
   type HmacSecret,
@@ -175,6 +179,15 @@ describe('OLG-113 seat token', () => {
     expect(farAhead.resume?.lastEventSequence).toBe(Number.MAX_SAFE_INTEGER);
     expect(Object.isFrozen(first)).toBe(true);
     expect(Object.isFrozen(first.resume)).toBe(true);
+  });
+
+  it('protocolのbrowser factory/serializer出力を同じexact parserで受理する', () => {
+    const token = deterministicToken();
+    const frame = createSeatAuthFrame(token, 17);
+    const serialized = serializeMatchSeatAuthClientFrame(frame);
+    if (!serialized) throw new Error('Expected serialized seat auth frame');
+
+    expect(parseSeatAuthFrame(serialized)).toEqual(frame);
   });
 
   it('欠損・余分key・型違い・不正JSON・不正tokenを同じstable errorで拒否する', () => {

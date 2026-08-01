@@ -497,6 +497,7 @@
 
 /* ホーム・デッキ選択まわり */
 .home {
+  min-height: 100dvh;
   height: 100dvh;
   display: flex;
   align-items: center;
@@ -506,9 +507,20 @@
     radial-gradient(ellipse at 15% 100%, rgba(90, 60, 160, 0.28), transparent 55%),
     radial-gradient(ellipse at 85% 90%, rgba(40, 90, 160, 0.22), transparent 55%),
     linear-gradient(#171a22, #0d0f16);
-  overflow: hidden;
+  overflow-y: auto;
 }
-.home-inner { text-align: center; display: flex; flex-direction: column; gap: 20px; padding: 24px; }
+.home-inner {
+  width: 100%;
+  max-width: 420px;
+  min-height: min-content;
+  box-sizing: border-box;
+  margin: auto;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: max(18px, env(safe-area-inset-top)) 16px max(18px, env(safe-area-inset-bottom));
+}
 .home-logo { display: flex; flex-direction: column; align-items: center; gap: 4px; }
 .home-emblem {
   font-size: 34px;
@@ -2426,5 +2438,4 @@ section h3 { font-size: 14px; color: #bbc; margin: 14px 0 4px; }
 
 /* 狭い画面のはみ出し調整も boardMetrics（--pile-w / --zone-vis）が面倒を見るので、
  * ここでの上書きは不要になった。 */
-
 

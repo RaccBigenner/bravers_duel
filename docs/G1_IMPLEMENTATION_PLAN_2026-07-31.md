@@ -118,8 +118,14 @@ P1 exit の一言まとめ:
 - **OLG-126（2026-08-02コード実装済み）** reconnect / resume（設計 §9.2）:
   `GET /me/active-match` → 新seat token → WebSocket authの`lastEventSequence` → 最大128 batchの差分またはsnapshot。
   ACK喪失時のreceiptとterminal resultは同じsession ownershipからHTTPで復旧する
-- **OLG-133** active-match recovery UX: リロード後に「試合に戻る」導線が出て、
-  操作待ちの状態まで自動で戻る
+- **OLG-133（2026-08-02コード実装済み）** active-match recovery UX: 起動時に
+  `GET /me/active-match`をno-storeで確認し、進行中なら日本語の「試合に戻る」1タップから
+  新seat token、v2/v1/cursor付きWebSocket auth、exact projection受信までをsingle-flightで行う。
+  seat tokenはmemory外へ出さず、cursorだけをversion付きsessionStorageへ保存する。terminalは
+  WebSocketを開かずresult GETへ直行し、失効・offline・一時障害・protocol不整合を別表示にする。
+  server projection専用の共通盤面を追加し、mobileは操作をsticky表示、PCは同じDOMの右railへ
+  操作・接続・公開event logを表示する。現行GitHub PagesのCPUβではAPI未配置のfresh 404を
+  通常ホームとして扱い、同一origin配備はOLG-103、browser縦切りE2EはOLG-128で完了させる
 - **OLG-131** manifest / installable shell: PWA の最低限（インストール可能・
   縦持ち対応の共通盤面シェル）
 - **OLG-114** active session / 複数タブ制御: 操作権は 1 タブ、他タブは観戦

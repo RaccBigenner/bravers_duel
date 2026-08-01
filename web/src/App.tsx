@@ -9,6 +9,11 @@ import { DeckBuilder, type CustomDeck } from './pages/DeckBuilder';
 import { DeckSelect } from './pages/DeckSelect';
 import { Gallery } from './pages/Gallery';
 import { Home } from './pages/Home';
+import { OnlineBattle } from './pages/OnlineBattle';
+import { onlineBattleMessages } from './online/onlineBattleMessages';
+import { RecoveryBanner } from './online/RecoveryBanner';
+import { resolveOnlineLocale } from './online/recoveryMessages';
+import { useMatchRecovery } from './online/useMatchRecovery';
 
 export interface BattleSetup {
   playerDeck: DeckList;
@@ -26,11 +31,33 @@ type View =
   | { name: 'deckSelect' }
   | { name: 'builder' }
   | { name: 'battle'; setup: BattleSetup; nonce: number }
+  | { name: 'onlineBattle' }
   | { name: 'sharedLog'; log: SharedLog };
 
 export function App() {
   const [view, setView] = useState<View>({ name: 'home' });
   const [customDeck, setCustomDeck] = useState<CustomDeck | null>(null);
+  const recovery = useMatchRecovery();
+  const onlineLocale = resolveOnlineLocale(navigator.language);
+
+  const recoveryBanner = (
+    <RecoveryBanner
+      snapshot={recovery.snapshot}
+      locale={onlineLocale}
+      onResume={() => {
+        void recovery.resume().then((ready) => {
+          if (ready) setView({ name: 'onlineBattle' });
+        });
+      }}
+      onRetry={() => {
+        void recovery.retry().then((ready) => {
+          if (ready) setView({ name: 'onlineBattle' });
+        });
+      }}
+      onOpen={() => setView({ name: 'onlineBattle' })}
+      onDismiss={recovery.dismissTerminal}
+    />
+  );
 
   // 公開βのログ: 全ページのアクセスを記録（どこから来たかも）
   useEffect(() => {
@@ -63,6 +90,7 @@ export function App() {
         <Home
           onBattle={() => setView({ name: 'deckSelect' })}
           onGallery={() => setView({ name: 'gallery' })}
+          recovery={recoveryBanner}
         />
       );
     case 'gallery':
@@ -127,5 +155,36 @@ export function App() {
           }}
         />
       );
+    case 'onlineBattle': {
+      const online = recovery.snapshot;
+      const battleMessages = onlineBattleMessages(onlineLocale);
+      if (online.phase !== 'playing') {
+        return (
+          <Home
+            onBattle={() => setView({ name: 'deckSelect' })}
+            onGallery={() => setView({ name: 'gallery' })}
+            recovery={recoveryBanner}
+          />
+        );
+      }
+      return (
+        <OnlineBattle
+          projection={online.projection}
+          locale={onlineLocale}
+          connectionLabel={battleMessages.connectionSynced}
+          commandPending={online.pendingCommandId !== null}
+          commandError={
+            online.commandError === 'rejected'
+              ? battleMessages.commandRejected
+              : online.commandError === 'send_failed'
+                ? battleMessages.commandSendFailed
+                : null
+          }
+          recentEvents={online.recentEvents}
+          onAction={(action) => { recovery.controller.sendAction(action); }}
+          onExit={() => setView({ name: 'home' })}
+        />
+      );
+    }
   }
 }

@@ -5,11 +5,14 @@ import {
   MATCH_COMMAND_ID_PATTERN,
   MATCH_ID_PATTERN,
   MATCH_ACTION_TYPES,
+  MATCH_AUTH_OK,
   MATCH_PLAYER_PROJECTION_VERSION,
+  MATCH_SEAT_TOKEN_PATTERN,
   MATCH_VIEWER_EVENT_VERSION,
   MAX_MATCH_VIEWER_DELTA_BATCHES,
   MAX_MATCH_REVISION,
   PROTOCOL_SCAFFOLD,
+  createSeatAuthFrame,
   parseActiveMatchResponse,
   parseBattleCardId,
   parseMatchAction,
@@ -23,10 +26,14 @@ import {
   parseMatchReceiptResponse,
   parseMatchRevision,
   parseMatchResultResponse,
+  parseMatchSeatAuthClientFrame,
+  parseMatchSeatToken,
+  parseMatchSeatTokenResponse,
   parseMatchServerFrame,
   parseMatchViewerEvent,
   parseMatchViewerEventBatch,
   parseMatchViewerSync,
+  serializeMatchSeatAuthClientFrame,
   type MatchAction,
   type MatchCommandEnvelope,
   type MatchCommandResult,
@@ -42,6 +49,115 @@ describe('@bravers/protocol scaffold', () => {
       version: 'OLG-126',
       operational: true,
     });
+  });
+
+  it('seat token responseとauth/resume wireをbrowser向けに安全に構築する', () => {
+    const seatTokenText = 'A'.repeat(43);
+    const seatToken = parseMatchSeatToken(seatTokenText);
+    if (!seatToken) throw new Error('Expected canonical seat token');
+    const response = {
+      seatToken,
+      expiresAt: '2026-08-02T03:45:12.345Z',
+    };
+
+    expect(MATCH_AUTH_OK).toBe('auth_ok');
+    expect(MATCH_SEAT_TOKEN_PATTERN.test(seatTokenText)).toBe(true);
+    expect(parseMatchSeatTokenResponse(response)).toEqual(response);
+
+    const frame = createSeatAuthFrame(seatToken, 0);
+    expect(frame).toEqual({
+      type: 'auth',
+      seatToken,
+      resume: {
+        projectionVersion: MATCH_PLAYER_PROJECTION_VERSION,
+        viewerEventVersion: MATCH_VIEWER_EVENT_VERSION,
+        lastEventSequence: 0,
+      },
+    });
+    expect(Object.isFrozen(frame)).toBe(true);
+    expect(Object.isFrozen(frame?.resume)).toBe(true);
+
+    const serialized = serializeMatchSeatAuthClientFrame(frame);
+    expect(serialized).toBe(JSON.stringify({
+      type: 'auth',
+      seatToken,
+      resume: {
+        projectionVersion: MATCH_PLAYER_PROJECTION_VERSION,
+        viewerEventVersion: MATCH_VIEWER_EVENT_VERSION,
+        lastEventSequence: 0,
+      },
+    }));
+    expect(parseMatchSeatAuthClientFrame(JSON.parse(serialized!))).toEqual(frame);
+  });
+
+  it('seat token/auth wireはnon-canonical token・余分key・不正cursorを拒否する', () => {
+    const seatToken = 'A'.repeat(43);
+    const resume = {
+      projectionVersion: MATCH_PLAYER_PROJECTION_VERSION,
+      viewerEventVersion: MATCH_VIEWER_EVENT_VERSION,
+      lastEventSequence: Number.MAX_SAFE_INTEGER,
+    };
+    expect(createSeatAuthFrame(seatToken, Number.MAX_SAFE_INTEGER)?.resume).toEqual(resume);
+
+    for (const invalidToken of [
+      '',
+      'A'.repeat(42),
+      `${'A'.repeat(42)}B`,
+      `${'A'.repeat(42)}=`,
+    ]) {
+      expect(parseMatchSeatToken(invalidToken), invalidToken).toBeNull();
+      expect(createSeatAuthFrame(invalidToken, 0), invalidToken).toBeNull();
+    }
+    for (const invalidSequence of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1, '0', null]) {
+      expect(createSeatAuthFrame(seatToken, invalidSequence), String(invalidSequence)).toBeNull();
+    }
+    for (const invalidFrame of [
+      { type: 'auth', seatToken, resume: null },
+      { type: 'auth', seatToken, extra: true },
+      { type: 'auth', seatToken, resume: { ...resume, projectionVersion: 1 } },
+      { type: 'auth', seatToken, resume: { ...resume, viewerEventVersion: 2 } },
+      { type: 'auth', seatToken, resume: { ...resume, extra: true } },
+      { type: 'auth', seatToken, resume: { ...resume, lastEventSequence: -1 } },
+    ]) {
+      expect(parseMatchSeatAuthClientFrame(invalidFrame), JSON.stringify(invalidFrame)).toBeNull();
+    }
+    expect(serializeMatchSeatAuthClientFrame({
+      type: 'auth',
+      seatToken,
+      resume: { ...resume, extra: true },
+    })).toBeNull();
+    expect(serializeMatchSeatAuthClientFrame({
+      type: 'auth',
+      seatToken,
+      resume,
+      extra: true,
+    })).toBeNull();
+
+    expect(parseMatchSeatAuthClientFrame({ type: 'auth', seatToken })).toEqual({
+      type: 'auth',
+      seatToken,
+      resume: null,
+    });
+    expect(serializeMatchSeatAuthClientFrame(
+      parseMatchSeatAuthClientFrame({ type: 'auth', seatToken }),
+    )).toBe(JSON.stringify({ type: 'auth', seatToken }));
+  });
+
+  it('seat token responseはexact keyとcanonical UTC expiryだけを受理する', () => {
+    const response = {
+      seatToken: 'A'.repeat(43),
+      expiresAt: '2026-08-02T03:45:12.345Z',
+    };
+    for (const invalid of [
+      { ...response, extra: true },
+      { ...response, seatToken: `${'A'.repeat(42)}B` },
+      { ...response, expiresAt: '2026-08-02T03:45:12Z' },
+      { ...response, expiresAt: '2026-08-02T12:45:12.345+09:00' },
+      { ...response, expiresAt: '2026-02-30T03:45:12.345Z' },
+      { ...response, expiresAt: 0 },
+    ]) {
+      expect(parseMatchSeatTokenResponse(invalid), JSON.stringify(invalid)).toBeNull();
+    }
   });
 
   it('OLG-123のaction種別を固定し、card actionはbattleCardIdを要求する', () => {

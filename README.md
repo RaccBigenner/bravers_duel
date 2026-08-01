@@ -75,6 +75,8 @@ lifecycleを含めない。DO evictionを跨ぐ原子的なreceipt・snapshot・
 viewer別projectionはOLG-124で実装済み。OLG-126では`GET /me/active-match`、session所有権で守る
 receipt / result GET、version付き`lastEventSequence`によるWebSocket resumeを追加した。cursorはraw event件数でなく
 stable step単位で、最大128 batchのdeltaまたはsnapshotへ復帰する。相手のhidden eventはcursorにも本文にも出さない。
+OLG-133ではホームの「試合に戻る」から新seat tokenとversion付きresumeを1タップで接続し、server projectionを
+直接描画するmobile/PC共通盤面を追加した。tokenはmemory限定、sessionStorageはversion付きcursorだけを保持する。
 browser向け`POST /auth/guest`、`GET /auth/session`、
 `POST /auth/logout`はopaque HttpOnly sessionとして接続済みで、Supabase Auth tokenはWorker内部grantだけに保持する。
 

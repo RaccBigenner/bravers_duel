@@ -957,7 +957,10 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
 
 - OLG-131 manifest/installable shell
 - OLG-132 IndexedDB draft/outbox
-- OLG-133 active-match recovery UX
+- OLG-133 active-match recovery UX（2026-08-02コード実装済み）:
+  relative same-origin active-match → memory-only seat token → version付きresume → authoritative projection盤面を
+  1タップで接続する。cursorだけをsessionStorageへ保存し、二重操作・stale callback・不正frame・terminal直行を
+  Web testで固定する。static CPUβのfresh 404は非表示、開発時はVite same-origin proxyを使う
 - OLG-134 safe Service Worker update
 
 P1 exit:

@@ -1,8 +1,8 @@
 # STATE — BRAVER'S DUEL
 
 - 最終更新: 2026-08-02
-- フェーズ: G0 FoundationはCloudflare smoke待ち。P1 / G1 Internal AlphaはOLG-126まで進み、
-  サーバー権威NPC戦の永続化・秘匿wire・reload復帰基盤を実装済み。Docker互換ランタイム待ちで
+- フェーズ: G0 FoundationはCloudflare smoke待ち。P1 / G1 Internal AlphaはOLG-133まで進み、
+  サーバー権威NPC戦の永続化・秘匿wire・reload後1タップ復帰UIを実装済み。Docker互換ランタイム待ちで
   OLG-102/111/113のSupabase migration・DB/Auth実stack受入が未完
 
 
@@ -208,7 +208,11 @@
   hidden-only stepも空batchとして進む。最大128 batchのdelta、ahead / gap / 128 KiB超のsnapshot fallbackを持つ。
   SessionCoordinatorはterminal cleanup後の所有権をsessionごと1件・90日保持し、新規試合・logout・失効で消す。
   DO eviction後の新seat token再接続・次command、ACK喪失receipt、cleanup後result、別account / match拒否を検証済み。
-  player-visibleな「試合に戻る」導線はOLG-133、端末の未送信command outboxはOLG-132へ続く。
+  **OLG-133も2026-08-02にコード実装済み**。ホームの「試合に戻る」はactive-match正本がある時だけ表示し、
+  新seat tokenをmemory内で直ちにversion付きWebSocket resumeへ渡す。`auth_ok`だけでは復帰成功にせず、期待する
+  match/seat/cursorのexact projectionを受信して初めてserver projection専用盤面へ移る。mobileはsticky操作、PCは
+  同じ盤面の右railへ操作・接続・公開event logを出す。static CPUβのfresh 404は通常ホームのままにする。
+  端末の未送信command outboxはOLG-132、同一origin本番配備はOLG-103、実browser縦切りはOLG-128へ続く。
 - ここまでの経緯は一番下の「開発の記録」を見る。
 
 ## オープンβ要件 決定（2026-07-23）

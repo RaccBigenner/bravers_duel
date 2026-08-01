@@ -1,6 +1,7 @@
 import {
-  MATCH_PLAYER_PROJECTION_VERSION,
-  MATCH_VIEWER_EVENT_VERSION,
+  parseMatchSeatAuthClientFrame,
+  type MatchSeatAuthClientFrame,
+  type MatchSeatAuthResume,
 } from '@bravers/protocol';
 import {
   generateOpaqueToken,
@@ -32,17 +33,8 @@ export class SeatTokenError extends Error {
   }
 }
 
-export interface SeatAuthFrame {
-  readonly type: 'auth';
-  readonly seatToken: string;
-  readonly resume: null | SeatAuthResume;
-}
-
-export interface SeatAuthResume {
-  readonly projectionVersion: typeof MATCH_PLAYER_PROJECTION_VERSION;
-  readonly viewerEventVersion: typeof MATCH_VIEWER_EVENT_VERSION;
-  readonly lastEventSequence: number;
-}
+export type SeatAuthFrame = MatchSeatAuthClientFrame;
+export type SeatAuthResume = MatchSeatAuthResume;
 
 function assertSeatToken(value: unknown): asserts value is string {
   if (typeof value !== 'string' || !isOpaqueToken(value)) {
@@ -143,33 +135,6 @@ function frameText(message: string | ArrayBuffer): string {
   }
 }
 
-function parseSeatAuthResume(value: unknown): SeatAuthResume {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new SeatTokenError('SEAT_AUTH_FRAME_INVALID');
-  }
-
-  const candidate = value as Record<string, unknown>;
-  const keys = Object.keys(candidate).sort();
-  if (
-    keys.length !== 3 ||
-    keys[0] !== 'lastEventSequence' ||
-    keys[1] !== 'projectionVersion' ||
-    keys[2] !== 'viewerEventVersion' ||
-    candidate.projectionVersion !== MATCH_PLAYER_PROJECTION_VERSION ||
-    candidate.viewerEventVersion !== MATCH_VIEWER_EVENT_VERSION ||
-    !Number.isSafeInteger(candidate.lastEventSequence) ||
-    (candidate.lastEventSequence as number) < 0
-  ) {
-    throw new SeatTokenError('SEAT_AUTH_FRAME_INVALID');
-  }
-
-  return Object.freeze({
-    projectionVersion: MATCH_PLAYER_PROJECTION_VERSION,
-    viewerEventVersion: MATCH_VIEWER_EVENT_VERSION,
-    lastEventSequence: candidate.lastEventSequence as number,
-  });
-}
-
 /** 最初のWebSocket message専用。旧2-keyとresume付き3-keyだけを受理する。 */
 export function parseSeatAuthFrame(message: string | ArrayBuffer): SeatAuthFrame {
   let value: unknown;
@@ -180,26 +145,7 @@ export function parseSeatAuthFrame(message: string | ArrayBuffer): SeatAuthFrame
     throw new SeatTokenError('SEAT_AUTH_FRAME_INVALID');
   }
 
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new SeatTokenError('SEAT_AUTH_FRAME_INVALID');
-  }
-  const candidate = value as Record<string, unknown>;
-  const keys = Object.keys(candidate).sort();
-  const isLegacyFrame = keys.length === 2 && keys[0] === 'seatToken' && keys[1] === 'type';
-  const isResumeFrame =
-    keys.length === 3 && keys[0] === 'resume' && keys[1] === 'seatToken' && keys[2] === 'type';
-  if ((!isLegacyFrame && !isResumeFrame) || candidate.type !== 'auth') {
-    throw new SeatTokenError('SEAT_AUTH_FRAME_INVALID');
-  }
-  try {
-    assertSeatToken(candidate.seatToken);
-  } catch {
-    throw new SeatTokenError('SEAT_AUTH_FRAME_INVALID');
-  }
-
-  return Object.freeze({
-    type: 'auth',
-    seatToken: candidate.seatToken,
-    resume: isResumeFrame ? parseSeatAuthResume(candidate.resume) : null,
-  });
+  const frame = parseMatchSeatAuthClientFrame(value);
+  if (!frame) throw new SeatTokenError('SEAT_AUTH_FRAME_INVALID');
+  return frame;
 }
