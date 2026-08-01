@@ -582,7 +582,7 @@ begin
     return jsonb_build_object('state', 'invalid');
   end if;
 
-  if v_attempt.attempt_state <> 'AUTH_LINKED'
+  if v_attempt.attempt_state not in ('AUTH_LINKED', 'CLEANUP_PENDING')
     or v_attempt.claim_id is distinct from p_claim_id
     or v_attempt.claim_lease_until is null
     or v_attempt.claim_lease_until <= v_now

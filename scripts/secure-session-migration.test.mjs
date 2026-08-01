@@ -108,7 +108,7 @@ describe('OLG-113 secure session migration', () => {
     assert.doesNotMatch(sql, /credential_state = 'grace'/);
     assert.match(sql, /credential_state = 'revoked'/);
     assert.match(sql, /last_seen_at <= v_now - interval '5 minutes'/);
-    assert.match(sql, /v_attempt\.attempt_state <> 'auth_linked'/);
+    assert.match(sql, /v_attempt\.attempt_state not in \('auth_linked', 'cleanup_pending'\)/);
     assert.match(sql, /p_token_digest_key_version <> v_attempt\.session_derivation_key_version/);
     assert.match(sql, /return jsonb_build_object\('state', 'ambiguous'\)/);
     assert.doesNotMatch(sql, /\{34,65536\}/);
@@ -118,7 +118,7 @@ describe('OLG-113 secure session migration', () => {
   it('実stack受入でschema/ACL/claim/期限/失効/cascadeを検査する', async () => {
     const sql = (await readFile(DB_TEST_PATH, 'utf8')).replace(/\s+/g, ' ').toLowerCase();
 
-    assert.match(sql, /select plan\(82\)/);
+    assert.match(sql, /select plan\(90\)/);
     assert.match(sql, /table_privs_are/);
     assert.match(sql, /function_privs_are/);
     assert.match(sql, /guest_bootstrap_claim_rejected/);
@@ -132,5 +132,12 @@ describe('OLG-113 secure session migration', () => {
     assert.match(sql, /bootstrap multi-hit mutates neither matching attempt/);
     assert.match(sql, /session multi-hit does not refresh either activity timestamp/);
     assert.match(sql, /auth_linked attempt enters compensation even inside the completion margin/);
+    assert.match(sql, /retry after a lost auth_linked response is offered recovery instead of a fresh claim/);
+    assert.match(sql, /cleanup-after-delete refuses to run while the auth user the recovery is meant to save still exists/);
+    assert.match(sql, /recovered cleanup_pending claim completes the app session the lost response was supposed to deliver/);
+    assert.match(sql, /recovered attempt reaches completed instead of being permanently stuck in cleanup_pending/);
+    assert.match(sql, /cleanup-after-delete succeeds once the auth user and its cascaded account are both confirmed gone/);
+    assert.match(sql, /compensated attempt returns to ready with every auth_linked trace cleared/);
+    assert.match(sql, /the same bootstrap cookie can drive a brand new signup after compensation completes/);
   });
 });

@@ -1,7 +1,7 @@
 begin;
 
 set local search_path = extensions, public;
-select plan(82);
+select plan(90);
 
 -- schema / FK / RLS / ACL (1-27)
 select has_table('public', 'guest_bootstrap_attempt', 'bootstrap attempt table exists');
@@ -631,6 +631,169 @@ select is(
   )::integer,
   1,
   'one session candidate resolves with the matched credential key version'
+);
+
+-- recover_auth response-loss recovery round trip (83-87)
+insert into olg113_session_case (case_name, bootstrap_digest_hex, account_id, session_id)
+values ('recover-auth', repeat('86', 32), gen_random_uuid(), gen_random_uuid());
+update olg113_session_case
+set create_result = public.create_guest_bootstrap_attempt(
+      bootstrap_digest_hex,
+      1::smallint,
+      1::smallint
+    )
+where case_name = 'recover-auth';
+update olg113_session_case
+set attempt_id = (create_result ->> 'attempt_id')::uuid,
+    first_claim_result = public.claim_guest_bootstrap_attempt(bootstrap_digest_hex, 1::smallint)
+where case_name = 'recover-auth';
+update olg113_session_case
+set first_claim_id = (first_claim_result ->> 'claim_id')::uuid
+where case_name = 'recover-auth';
+
+insert into auth.users (id, is_anonymous, raw_user_meta_data)
+select account_id, true, jsonb_build_object(
+  'guest_bootstrap_attempt_id', attempt_id,
+  'guest_bootstrap_claim_id', first_claim_id
+)
+from olg113_session_case
+where case_name = 'recover-auth';
+
+-- client never saw the AUTH_LINKED response and retries claim with the same bootstrap cookie.
+update olg113_session_case
+set second_claim_result = public.claim_guest_bootstrap_attempt(bootstrap_digest_hex, 1::smallint)
+where case_name = 'recover-auth';
+update olg113_session_case
+set second_claim_id = (second_claim_result ->> 'claim_id')::uuid
+where case_name = 'recover-auth';
+select is(
+  (select second_claim_result ->> 'state' from olg113_session_case where case_name = 'recover-auth'),
+  'recover_auth',
+  'retry after a lost AUTH_LINKED response is offered recovery instead of a fresh claim'
+);
+select ok(
+  exists (
+    select 1
+    from public.guest_bootstrap_attempt as attempt
+    join olg113_session_case as fixture on fixture.attempt_id = attempt.attempt_id
+    where fixture.case_name = 'recover-auth'
+      and attempt.attempt_state = 'CLEANUP_PENDING'
+      and attempt.claim_id = fixture.second_claim_id
+      and attempt.account_id = fixture.account_id
+      and attempt.last_auth_account_id = fixture.account_id
+  ),
+  'recover_auth rewrites the attempt to CLEANUP_PENDING under a new fenced claim, keeping account_id bound'
+);
+
+select ok(
+  not public.reset_guest_bootstrap_after_auth_delete(
+    (select attempt_id from olg113_session_case where case_name = 'recover-auth'),
+    (select second_claim_id from olg113_session_case where case_name = 'recover-auth'),
+    (select account_id from olg113_session_case where case_name = 'recover-auth')
+  ),
+  'cleanup-after-delete refuses to run while the Auth user the recovery is meant to save still exists'
+);
+
+update olg113_session_case
+set complete_result = public.complete_guest_app_session(
+  attempt_id,
+  second_claim_id,
+  account_id,
+  session_id,
+  repeat('67', 32),
+  1::smallint,
+  repeat('cc', 17),
+  repeat('dd', 12),
+  7::smallint,
+  extract(epoch from clock_timestamp() + interval '1 hour')::bigint
+)
+where case_name = 'recover-auth';
+select is(
+  (select complete_result ->> 'state' from olg113_session_case where case_name = 'recover-auth'),
+  'session_ready',
+  'recovered CLEANUP_PENDING claim completes the app session the lost response was supposed to deliver'
+);
+select ok(
+  exists (
+    select 1
+    from public.guest_bootstrap_attempt as attempt
+    join olg113_session_case as fixture on fixture.attempt_id = attempt.attempt_id
+    where fixture.case_name = 'recover-auth'
+      and attempt.attempt_state = 'COMPLETED'
+      and attempt.session_id = fixture.session_id
+  ),
+  'recovered attempt reaches COMPLETED instead of being permanently stuck in CLEANUP_PENDING'
+);
+
+-- recover_auth hard-delete-and-restart round trip, the compensation path
+-- authController.ts actually drives after a lost AUTH_LINKED response (83-90)
+insert into olg113_session_case (case_name, bootstrap_digest_hex, account_id, session_id)
+values ('recover-auth-hard-delete', repeat('97', 32), gen_random_uuid(), gen_random_uuid());
+update olg113_session_case
+set create_result = public.create_guest_bootstrap_attempt(
+      bootstrap_digest_hex,
+      1::smallint,
+      1::smallint
+    )
+where case_name = 'recover-auth-hard-delete';
+update olg113_session_case
+set attempt_id = (create_result ->> 'attempt_id')::uuid,
+    first_claim_result = public.claim_guest_bootstrap_attempt(bootstrap_digest_hex, 1::smallint)
+where case_name = 'recover-auth-hard-delete';
+update olg113_session_case
+set first_claim_id = (first_claim_result ->> 'claim_id')::uuid
+where case_name = 'recover-auth-hard-delete';
+
+insert into auth.users (id, is_anonymous, raw_user_meta_data)
+select account_id, true, jsonb_build_object(
+  'guest_bootstrap_attempt_id', attempt_id,
+  'guest_bootstrap_claim_id', first_claim_id
+)
+from olg113_session_case
+where case_name = 'recover-auth-hard-delete';
+
+update olg113_session_case
+set second_claim_result = public.claim_guest_bootstrap_attempt(bootstrap_digest_hex, 1::smallint)
+where case_name = 'recover-auth-hard-delete';
+update olg113_session_case
+set second_claim_id = (second_claim_result ->> 'claim_id')::uuid
+where case_name = 'recover-auth-hard-delete';
+
+-- authController.ts hard-deletes the orphaned Auth user (Admin API) before resetting the claim.
+delete from auth.users as auth_user
+using olg113_session_case as fixture
+where fixture.case_name = 'recover-auth-hard-delete' and auth_user.id = fixture.account_id;
+
+select ok(
+  public.reset_guest_bootstrap_after_auth_delete(
+    (select attempt_id from olg113_session_case where case_name = 'recover-auth-hard-delete'),
+    (select second_claim_id from olg113_session_case where case_name = 'recover-auth-hard-delete'),
+    (select account_id from olg113_session_case where case_name = 'recover-auth-hard-delete')
+  ),
+  'cleanup-after-delete succeeds once the Auth user and its cascaded account are both confirmed gone'
+);
+select ok(
+  exists (
+    select 1
+    from public.guest_bootstrap_attempt as attempt
+    join olg113_session_case as fixture on fixture.attempt_id = attempt.attempt_id
+    where fixture.case_name = 'recover-auth-hard-delete'
+      and attempt.attempt_state = 'READY'
+      and attempt.claim_id is null
+      and attempt.account_id is null
+      and attempt.last_auth_account_id is null
+      and attempt.auth_linked_at is null
+      and attempt.safe_error_code = 'AUTH_COMPENSATED'
+  ),
+  'compensated attempt returns to READY with every AUTH_LINKED trace cleared'
+);
+select is(
+  (public.claim_guest_bootstrap_attempt(
+    (select bootstrap_digest_hex from olg113_session_case where case_name = 'recover-auth-hard-delete'),
+    1::smallint
+  ) ->> 'state'),
+  'create_auth',
+  'the same bootstrap cookie can drive a brand new signup after compensation completes'
 );
 
 select * from finish();
