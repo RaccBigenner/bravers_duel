@@ -8,10 +8,9 @@ import {
   searchAi,
   stateHash,
   type BattleAction,
-  type BattleEvent,
   type BattleState,
-  type PlayerIndex,
 } from '@bravers/engine';
+import { parseBattleCardId, type BattleCardId, type MatchAction } from '@bravers/protocol';
 import { describe, expect, it, vi } from 'vitest';
 import {
   EngineBattleAdapter,
@@ -19,8 +18,10 @@ import {
   HUMAN_PLAYER,
   NPC_PLAYER,
   g1NpcBattleInput,
-  parseInternalBattleAction,
-  type AppliedBattleStep,
+  matchActionFromEngineAction,
+  parseMatchAction,
+  type BattleCardIdentity,
+  type BattleCardLedger,
   type CreateNpcBattleInput,
 } from '../src/battle/engineBattleAdapter';
 
@@ -34,48 +35,56 @@ function expectAdapterError(operation: () => unknown, code: string): void {
   }
 }
 
-function applyDirectStep(
-  state: BattleState,
-  player: PlayerIndex,
-  source: AppliedBattleStep['source'],
-  action: BattleAction,
-  sequence: number,
-): AppliedBattleStep {
-  const previousEventSequence = state.eventSeq;
+function applyDirectStep(state: BattleState, action: BattleAction): void {
   applyAction(state, action);
-  const eventCount = state.eventSeq - previousEventSequence;
-  if (eventCount < 0 || eventCount > state.events.length) {
-    throw new Error('direct event stream gap');
-  }
-  return {
-    sequence,
-    player,
-    source,
-    action: structuredClone(action),
-    stateHash: stateHash(state),
-    events: eventCount === 0
-      ? []
-      : structuredClone(state.events.slice(-eventCount)),
-  };
 }
 
-function pumpDirectNpc(state: BattleState, firstSequence: number): AppliedBattleStep[] {
+function pumpDirectNpc(state: BattleState): number {
   const npc = searchAi({ keepHand: 2 });
-  const steps: AppliedBattleStep[] = [];
+  let steps = 0;
   let safety = 0;
   while (state.phase !== 'finished' && actingPlayer(state) === NPC_PLAYER) {
     safety += 1;
     if (safety > 512) throw new Error('direct NPC watchdog exceeded');
-    const action = npc.choose(state, NPC_PLAYER);
-    steps.push(applyDirectStep(
-      state,
-      NPC_PLAYER,
-      'npc',
-      action,
-      firstSequence + steps.length,
-    ));
+    applyDirectStep(state, npc.choose(state, NPC_PLAYER));
+    steps += 1;
   }
   return steps;
+}
+
+function allBattleCards(ledger: BattleCardLedger): BattleCardIdentity[] {
+  const cards: BattleCardIdentity[] = [];
+  for (const player of [0, 1] as const) {
+    const current = ledger.players[player];
+    cards.push(...current.deck, ...current.hand, ...current.trash, ...current.ap);
+    cards.push(...current.characters);
+    cards.push(...current.equipment.filter(
+      (card): card is BattleCardIdentity => card !== null,
+    ));
+  }
+  if (ledger.field) cards.push(ledger.field);
+  return cards;
+}
+
+function sequentialBattleCardIds(start = 0): () => string {
+  let next = start;
+  return () => `bc_${(next++).toString(16).padStart(32, '0')}`;
+}
+
+function parsedId(value: string): BattleCardId {
+  const parsed = parseBattleCardId(value);
+  if (!parsed) throw new Error(`Invalid test battleCardId: ${value}`);
+  return parsed;
+}
+
+function stableHumanAction(adapter: EngineBattleAdapter, engineAction: BattleAction): MatchAction {
+  const snapshot = adapter.authoritativeSnapshot();
+  return matchActionFromEngineAction(
+    snapshot.state,
+    snapshot.battleCards,
+    HUMAN_PLAYER,
+    engineAction,
+  );
 }
 
 function finishWithDirectEngine(
@@ -90,30 +99,35 @@ function finishWithDirectEngine(
   });
   const human = searchAi({ keepHand: 2 });
   const initialEvents = structuredClone(direct.events);
-  const expectedSteps = pumpDirectNpc(direct, 0);
+  let expectedSteps = pumpDirectNpc(direct);
   const initialSnapshot = adapter.authoritativeSnapshot();
   expect(initialSnapshot.initialEvents).toEqual(initialEvents);
-  expect(initialSnapshot.steps).toEqual(expectedSteps);
+  expect(initialSnapshot.steps).toHaveLength(expectedSteps);
   expect(initialSnapshot.state).toEqual(direct);
+  expect(initialSnapshot.steps.every((step) => parseMatchAction(step.action) !== null)).toBe(true);
+  expect(initialSnapshot.steps.some((step) => 'handIndex' in step.action)).toBe(false);
 
   let safety = 0;
   while (direct.phase !== 'finished') {
     safety += 1;
     if (safety > 1_000) throw new Error('direct battle watchdog exceeded');
     expect(actingPlayer(direct)).toBe(HUMAN_PLAYER);
-    const action = human.choose(direct, HUMAN_PLAYER);
-    const transitionSteps = [
-      applyDirectStep(direct, HUMAN_PLAYER, 'human', action, expectedSteps.length),
-    ];
-    transitionSteps.push(...pumpDirectNpc(direct, expectedSteps.length + 1));
-    expectedSteps.push(...transitionSteps);
-    const transition = adapter.applyHumanAction(action);
+    const engineAction = human.choose(direct, HUMAN_PLAYER);
+    const matchAction = stableHumanAction(adapter, engineAction);
+    applyDirectStep(direct, engineAction);
+    const firstNewStep = expectedSteps;
+    expectedSteps += 1;
+    expectedSteps += pumpDirectNpc(direct);
+    const transition = adapter.applyHumanAction(matchAction);
     const snapshot = adapter.authoritativeSnapshot();
-    expect(transition.steps).toEqual(transitionSteps);
+    expect(transition.steps).toHaveLength(expectedSteps - firstNewStep);
+    expect(transition.steps[0]?.action).toEqual(matchAction);
+    expect(transition.steps.some((step) => 'handIndex' in step.action)).toBe(false);
     expect(transition.status.stateHash).toBe(stateHash(direct));
     expect(snapshot.state).toEqual(direct);
-    expect(snapshot.steps).toEqual(expectedSteps);
+    expect(snapshot.steps).toHaveLength(expectedSteps);
     expect(snapshot.currentStateHash).toBe(stateHash(direct));
+    expect(snapshot.currentIdentityHash).toBe(transition.status.identityHash);
   }
   const snapshot = adapter.authoritativeSnapshot();
   const completeEvents = [
@@ -137,17 +151,25 @@ describe('OLG-121 engine battle adapter', () => {
       endReason: directState.endReason,
       turns: directState.turn,
       finalStateHash: stateHash(directState),
+      finalIdentityHash: adapter.authoritativeSnapshot().currentIdentityHash,
       appliedActions: adapter.authoritativeSnapshot().steps.length,
     });
     expect(adapter.result()?.endReason).toMatch(/^(wipeout|deckout)$/);
   });
 
-  it('同じ入力はNPC先攻pumpを含め完全一致し、snapshot変更は権威stateへ戻らない', () => {
+  it('同seedのengine stateは一致するがbattleCardIdは試合ごとに異なり、snapshot変更は戻らない', () => {
     const input = g1NpcBattleInput(42);
     const first = EngineBattleAdapter.create(input);
     const second = EngineBattleAdapter.create(structuredClone(input));
-    expect(first.authoritativeSnapshot()).toEqual(second.authoritativeSnapshot());
     const initial = first.authoritativeSnapshot();
+    const other = second.authoritativeSnapshot();
+    expect(initial.header).toEqual(other.header);
+    expect(initial.state).toEqual(other.state);
+    expect(initial.currentStateHash).toBe(other.currentStateHash);
+    expect(initial.currentIdentityHash).not.toBe(other.currentIdentityHash);
+    const firstIds = new Set(allBattleCards(initial.battleCards).map((card) => card.battleCardId));
+    const secondIds = new Set(allBattleCards(other.battleCards).map((card) => card.battleCardId));
+    expect([...firstIds].some((id) => secondIds.has(id))).toBe(false);
     expect(initial.header.firstPlayer).toBe(NPC_PLAYER);
     expect(initial.steps.length).toBeGreaterThan(0);
     expect(initial.steps[0]).toMatchObject({ player: NPC_PLAYER, source: 'npc' });
@@ -155,10 +177,12 @@ describe('OLG-121 engine battle adapter', () => {
     const leaked = first.authoritativeSnapshot();
     leaked.state.turn = 999;
     leaked.header.decks[0].cardIds.length = 0;
+    leaked.battleCards.players[0].hand[0]!.printingId = 'tampered';
     leaked.steps.push({} as never);
     const after = first.authoritativeSnapshot();
     expect(after.state.turn).not.toBe(999);
     expect(after.header.decks[0].cardIds).toHaveLength(40);
+    expect(after.battleCards.players[0].hand[0]?.printingId).not.toBe('tampered');
     expect(after.steps).not.toContainEqual({});
   });
 
@@ -167,13 +191,20 @@ describe('OLG-121 engine battle adapter', () => {
     const before = adapter.authoritativeSnapshot();
     const legal = legalActions(before.state)[0];
     if (!legal) throw new Error('Expected legal human action');
+    const stable = matchActionFromEngineAction(
+      before.state,
+      before.battleCards,
+      HUMAN_PLAYER,
+      legal,
+    );
 
-    expect(parseInternalBattleAction({ ...legal, unexpected: true })).toBeNull();
+    expect(parseMatchAction({ ...stable, unexpected: true })).toBeNull();
     const rejected: unknown[] = [
       { type: 'unknown' },
       { type: 'charge', handIndex: -1 },
-      { type: 'charge', handIndex: 0.5 },
-      { ...legal, unexpected: true },
+      { type: 'charge', battleCardId: 'bc_invalid' },
+      { ...stable, handIndex: 0 },
+      { ...stable, unexpected: true },
     ];
     for (const action of rejected) {
       expectAdapterError(
@@ -184,49 +215,62 @@ describe('OLG-121 engine battle adapter', () => {
     }
   });
 
-  it('engine action union全枝をstrict decodeし、欠落・型違い・余剰keyを拒否する', () => {
-    const accepted: BattleAction[] = [
-      { type: 'playSkill', handIndex: 0 },
-      { type: 'playSkill', handIndex: 1, healTargetIndex: 0, targetIndex: 1, usingIndex: 2 },
-      { type: 'playCharacter', handIndex: 0 },
-      { type: 'playEquipment', handIndex: 0, targetIndex: 1 },
-      { type: 'playField', handIndex: 0 },
-      { type: 'turnStartAbility', charIndex: 0 },
+  it('MatchAction union全枝をstrict decodeし、旧index・欠落・型違い・余剰keyを拒否する', () => {
+    const battleCardId = parsedId('bc_00112233445566778899aabbccddeeff');
+    const accepted: MatchAction[] = [
+      { type: 'playSkill', battleCardId },
+      {
+        type: 'playSkill',
+        battleCardId,
+        healTargetSlot: 0,
+        targetSlot: 1,
+        usingCharacterSlot: 2,
+      },
+      { type: 'playCharacter', battleCardId },
+      { type: 'playEquipment', battleCardId, targetCharacterSlot: 1 },
+      { type: 'playField', battleCardId },
+      { type: 'turnStartAbility', characterSlot: 0 },
       { type: 'skipTurnStart' },
       { type: 'endPlay' },
-      { type: 'playGuard', handIndex: 0 },
+      { type: 'playGuard', battleCardId },
       { type: 'pass' },
-      { type: 'charge', handIndex: 0 },
+      { type: 'charge', battleCardId },
       { type: 'endTurn' },
     ];
     for (const action of accepted) {
-      expect(parseInternalBattleAction(action)).toEqual(action);
+      expect(parseMatchAction(action)).toEqual(action);
     }
 
     const rejected: unknown[] = [
       { type: 'playSkill' },
-      { type: 'playSkill', handIndex: 0, targetIndex: -1 },
-      { type: 'playCharacter', handIndex: '0' },
-      { type: 'playEquipment', handIndex: 0 },
-      { type: 'playField', handIndex: Number.NaN },
-      { type: 'turnStartAbility', charIndex: 0.5 },
+      { type: 'playSkill', battleCardId, targetSlot: -1 },
+      { type: 'playCharacter', battleCardId: 1 },
+      { type: 'playEquipment', battleCardId },
+      { type: 'playField', battleCardId, handIndex: 0 },
+      { type: 'turnStartAbility', characterSlot: 0.5 },
       { type: 'skipTurnStart', extra: true },
-      { type: 'endPlay', handIndex: 0 },
+      { type: 'endPlay', battleCardId },
       { type: 'playGuard' },
       { type: 'pass', extra: true },
-      { type: 'charge', handIndex: -1 },
+      { type: 'charge', battleCardId: 'bc_0' },
       { type: 'endTurn', extra: true },
     ];
     for (const action of rejected) {
-      expect(parseInternalBattleAction(action)).toBeNull();
+      expect(parseMatchAction(action)).toBeNull();
     }
   });
 
   it('human適用後に例外が起きてもtrialをcommitせずsnapshotを完全rollbackする', () => {
     const adapter = EngineBattleAdapter.create(g1NpcBattleInput(0));
     const before = adapter.authoritativeSnapshot();
-    const action = legalActions(before.state)[0];
-    if (!action) throw new Error('Expected legal human action');
+    const engineAction = legalActions(before.state)[0];
+    if (!engineAction) throw new Error('Expected legal human action');
+    const action = matchActionFromEngineAction(
+      before.state,
+      before.battleCards,
+      HUMAN_PLAYER,
+      engineAction,
+    );
 
     const nativeStructuredClone = globalThis.structuredClone.bind(globalThis);
     let actionCloneCount = 0;
@@ -234,7 +278,7 @@ describe('OLG-121 engine battle adapter', () => {
       if (
         value !== null &&
         typeof value === 'object' &&
-        Object.hasOwn(value, 'type')
+        Object.hasOwn(value, 'battleCardId')
       ) {
         actionCloneCount += 1;
         if (actionCloneCount === 2) throw new Error('injected after engine mutation');
@@ -252,7 +296,179 @@ describe('OLG-121 engine battle adapter', () => {
     }
     expect(thrown).toBeInstanceOf(EngineBattleAdapterError);
     expect((thrown as EngineBattleAdapterError).code).toBe('BATTLE_ENGINE_FAILURE');
+    expect(actionCloneCount).toBe(2);
     expect(adapter.authoritativeSnapshot()).toEqual(before);
+  });
+
+  it('全カードへ128-bit IDを一意に割り当て、重複printingも別個体として保持する', () => {
+    const input = g1NpcBattleInput(0);
+    const adapter = EngineBattleAdapter.create(input, sequentialBattleCardIds());
+    const snapshot = adapter.authoritativeSnapshot();
+    const cards = allBattleCards(snapshot.battleCards);
+    const expectedCount = input.decks.reduce(
+      (count, deck) => count + deck.cardIds.length + deck.characterIds.length,
+      0,
+    );
+    expect(cards).toHaveLength(expectedCount);
+    expect(new Set(cards.map((card) => card.battleCardId)).size).toBe(expectedCount);
+    expect(cards.every((card) => /^bc_[0-9a-f]{32}$/.test(card.battleCardId))).toBe(true);
+    expect(cards.every((card) => card.battleCardId !== card.printingId)).toBe(true);
+
+    const duplicatePrinting = new Map<string, BattleCardIdentity[]>();
+    for (const card of cards) {
+      const group = duplicatePrinting.get(card.printingId) ?? [];
+      group.push(card);
+      duplicatePrinting.set(card.printingId, group);
+    }
+    const duplicate = [...duplicatePrinting.values()].find((group) => group.length > 1);
+    expect(duplicate).toBeDefined();
+    expect(new Set(duplicate?.map((card) => card.battleCardId)).size).toBe(duplicate?.length);
+    expect(snapshot.currentIdentityHash).toMatch(/^i1-[0-9a-f]{16}$/);
+
+    const same = EngineBattleAdapter.create(input, sequentialBattleCardIds());
+    expect(same.authoritativeSnapshot()).toEqual(snapshot);
+  });
+
+  it('ID generatorの形式違反・衝突を開始前にfail closedにする', () => {
+    const input = g1NpcBattleInput(0);
+    expectAdapterError(
+      () => EngineBattleAdapter.create(input, () => 'bc_invalid'),
+      'BATTLE_IDENTITY_INVALID',
+    );
+    expectAdapterError(
+      () => EngineBattleAdapter.create(
+        input,
+        () => 'bc_00112233445566778899aabbccddeeff',
+      ),
+      'BATTLE_IDENTITY_INVALID',
+    );
+    expectAdapterError(
+      () => EngineBattleAdapter.create(input, () => {
+        throw new Error('generator failure');
+      }),
+      'BATTLE_IDENTITY_INVALID',
+    );
+  });
+
+  it('hand indexが詰まっても保存済みIDで正しい個体を選び、stale・他owner・別zoneを拒否する', () => {
+    const adapter = EngineBattleAdapter.create(g1NpcBattleInput(0), sequentialBattleCardIds());
+    expect(adapter.authoritativeSnapshot().state.phase).toBe('play');
+    adapter.applyHumanAction({ type: 'endPlay' });
+    const charge = adapter.authoritativeSnapshot();
+    expect(charge.state.phase).toBe('charge');
+    expect(charge.battleCards.players[HUMAN_PLAYER].hand.length).toBeGreaterThan(3);
+    const first = charge.battleCards.players[HUMAN_PLAYER].hand[0]!;
+    const selected = charge.battleCards.players[HUMAN_PLAYER].hand[3]!;
+
+    adapter.applyHumanAction({ type: 'charge', battleCardId: first.battleCardId });
+    const shifted = adapter.authoritativeSnapshot();
+    expect(
+      shifted.battleCards.players[HUMAN_PLAYER].hand.findIndex(
+        (card) => card.battleCardId === selected.battleCardId,
+      ),
+    ).toBe(2);
+    expect(
+      shifted.battleCards.players[HUMAN_PLAYER].ap.some(
+        (card) => card.battleCardId === first.battleCardId,
+      ),
+    ).toBe(true);
+
+    const opponent = shifted.battleCards.players[NPC_PLAYER].hand[0]!.battleCardId;
+    const ownDeck = shifted.battleCards.players[HUMAN_PLAYER].deck[0]!.battleCardId;
+    const unknown = parsedId('bc_ffffffffffffffffffffffffffffffff');
+    for (const battleCardId of [first.battleCardId, opponent, ownDeck, unknown]) {
+      expectAdapterError(
+        () => adapter.applyHumanAction({ type: 'charge', battleCardId }),
+        'BATTLE_ACTION_INVALID',
+      );
+      expect(adapter.authoritativeSnapshot()).toEqual(shifted);
+    }
+
+    const applied = adapter.applyHumanAction({
+      type: 'charge',
+      battleCardId: selected.battleCardId,
+    });
+    expect(applied.steps[0]?.action).toEqual({
+      type: 'charge',
+      battleCardId: selected.battleCardId,
+    });
+    const after = adapter.authoritativeSnapshot();
+    expect(after.currentIdentityHash).not.toBe(shifted.currentIdentityHash);
+    expect(
+      after.battleCards.players[HUMAN_PLAYER].ap.some(
+        (card) => card.battleCardId === selected.battleCardId &&
+          card.printingId === selected.printingId,
+      ),
+    ).toBe(true);
+  });
+
+  it('公開engine→MatchAction bridgeも破損owner・ID・範囲外indexをfail closedにする', () => {
+    const adapter = EngineBattleAdapter.create(g1NpcBattleInput(0), sequentialBattleCardIds());
+    const snapshot = adapter.authoritativeSnapshot();
+    const engineAction = legalActions(snapshot.state).find((action) => 'handIndex' in action);
+    if (!engineAction || !('handIndex' in engineAction)) {
+      throw new Error('Expected hand action');
+    }
+    const valid = matchActionFromEngineAction(
+      snapshot.state,
+      snapshot.battleCards,
+      HUMAN_PLAYER,
+      engineAction,
+    );
+    expect(parseMatchAction(valid)).toEqual(valid);
+
+    const wrongOwner = structuredClone(snapshot.battleCards);
+    wrongOwner.players[HUMAN_PLAYER].hand[engineAction.handIndex]!.owner = NPC_PLAYER;
+    expectAdapterError(
+      () => matchActionFromEngineAction(
+        snapshot.state,
+        wrongOwner,
+        HUMAN_PLAYER,
+        engineAction,
+      ),
+      'BATTLE_ACTION_INVALID',
+    );
+
+    const malformedId = structuredClone(snapshot.battleCards);
+    malformedId.players[HUMAN_PLAYER].hand[engineAction.handIndex]!.battleCardId =
+      'bc_invalid' as BattleCardId;
+    expectAdapterError(
+      () => matchActionFromEngineAction(
+        snapshot.state,
+        malformedId,
+        HUMAN_PLAYER,
+        engineAction,
+      ),
+      'BATTLE_ACTION_INVALID',
+    );
+    expectAdapterError(
+      () => matchActionFromEngineAction(
+        snapshot.state,
+        snapshot.battleCards,
+        HUMAN_PLAYER,
+        { ...engineAction, handIndex: 9_999 },
+      ),
+      'BATTLE_ACTION_INVALID',
+    );
+  });
+
+  it('台帳のID重複・printing改変をcatalog照合で検出する', () => {
+    const duplicate = EngineBattleAdapter.create(g1NpcBattleInput(0), sequentialBattleCardIds());
+    const duplicateTarget = duplicate as unknown as { battleCardsValue: BattleCardLedger };
+    duplicateTarget.battleCardsValue.players[HUMAN_PLAYER].hand[1]!.battleCardId =
+      duplicateTarget.battleCardsValue.players[HUMAN_PLAYER].hand[0]!.battleCardId;
+    expectAdapterError(
+      () => duplicate.authoritativeSnapshot(),
+      'BATTLE_IDENTITY_INVALID',
+    );
+
+    const printing = EngineBattleAdapter.create(g1NpcBattleInput(0), sequentialBattleCardIds());
+    const printingTarget = printing as unknown as { battleCardsValue: BattleCardLedger };
+    printingTarget.battleCardsValue.players[HUMAN_PLAYER].hand[0]!.printingId = 'tampered';
+    expectAdapterError(
+      () => printing.authoritativeSnapshot(),
+      'BATTLE_IDENTITY_INVALID',
+    );
   });
 
   it('版・format・deckの不一致を開始前にfail closedにする', () => {
