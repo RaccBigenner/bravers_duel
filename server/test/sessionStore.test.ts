@@ -51,8 +51,18 @@ describe('OLG-113 Supabase session store', () => {
     [{ state: 'invalid' }, { state: 'invalid' }],
     [{ state: 'pending', retry_after_seconds: 1 }, { state: 'pending', retryAfterSeconds: 1 }],
     [
-      { state: 'create_auth', attempt_id: ATTEMPT_ID, claim_id: CLAIM_ID },
-      { state: 'create_auth', attemptId: ATTEMPT_ID, claimId: CLAIM_ID },
+      {
+        state: 'create_auth',
+        attempt_id: ATTEMPT_ID,
+        claim_id: CLAIM_ID,
+        session_derivation_key_version: 3,
+      },
+      {
+        state: 'create_auth',
+        attemptId: ATTEMPT_ID,
+        claimId: CLAIM_ID,
+        sessionDerivationKeyVersion: 3,
+      },
     ],
     [
       {

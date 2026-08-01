@@ -340,7 +340,8 @@ begin
   return jsonb_build_object(
     'state', 'create_auth',
     'attempt_id', v_attempt.attempt_id,
-    'claim_id', v_claim_id
+    'claim_id', v_claim_id,
+    'session_derivation_key_version', v_attempt.session_derivation_key_version
   );
 end;
 $$;

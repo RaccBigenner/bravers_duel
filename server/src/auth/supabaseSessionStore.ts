@@ -23,7 +23,12 @@ export interface SessionPrincipal {
 export type BootstrapClaim =
   | { state: 'invalid' }
   | { state: 'pending'; retryAfterSeconds: number }
-  | { state: 'create_auth'; attemptId: string; claimId: string }
+  | {
+      state: 'create_auth';
+      attemptId: string;
+      claimId: string;
+      sessionDerivationKeyVersion: number;
+    }
   | { state: 'recover_auth'; attemptId: string; claimId: string; accountId: string }
   | {
       state: 'session_ready';
@@ -292,6 +297,9 @@ export class SupabaseSessionStore implements SessionStore {
         state: 'create_auth',
         attemptId: responseUuid(value.attempt_id),
         claimId: responseUuid(value.claim_id),
+        sessionDerivationKeyVersion: positiveSmallint(
+          safeInteger(value.session_derivation_key_version),
+        ),
       };
     }
     if (value.state === 'recover_auth') {

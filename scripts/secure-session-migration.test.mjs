@@ -113,7 +113,7 @@ describe('OLG-113 secure session migration', () => {
   it('実stack受入でschema/ACL/claim/期限/失効/cascadeを検査する', async () => {
     const sql = (await readFile(DB_TEST_PATH, 'utf8')).replace(/\s+/g, ' ').toLowerCase();
 
-    assert.match(sql, /select plan\(65\)/);
+    assert.match(sql, /select plan\(66\)/);
     assert.match(sql, /table_privs_are/);
     assert.match(sql, /function_privs_are/);
     assert.match(sql, /guest_bootstrap_claim_rejected/);
@@ -123,5 +123,6 @@ describe('OLG-113 secure session migration', () => {
     assert.match(sql, /expired auth grant cannot create an app session/);
     assert.match(sql, /auth grant beyond the storage horizon cannot create an app session/);
     assert.match(sql, /expired unlinked claimed attempt is reclaimed by bounded cleanup/);
+    assert.match(sql, /claim returns the derivation key version chosen when bootstrap was created/);
   });
 });

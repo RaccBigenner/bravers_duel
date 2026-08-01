@@ -1,7 +1,7 @@
 begin;
 
 set local search_path = extensions, public;
-select plan(65);
+select plan(66);
 
 -- schema / FK / RLS / ACL (1-27)
 select has_table('public', 'guest_bootstrap_attempt', 'bootstrap attempt table exists');
@@ -93,7 +93,7 @@ update olg113_session_case
 set attempt_id = (create_result ->> 'attempt_id')::uuid
 where case_name = 'complete';
 
--- happy path / input boundary / idempotency / expiry / revoke / cleanup (39-59)
+-- happy path / input boundary / idempotency / expiry / revoke / cleanup (39-60)
 select is((select create_result ->> 'state' from olg113_session_case where case_name = 'complete'), 'created', 'bootstrap creation succeeds');
 
 update olg113_session_case
@@ -103,6 +103,11 @@ update olg113_session_case
 set first_claim_id = (first_claim_result ->> 'claim_id')::uuid
 where case_name = 'complete';
 select is((select first_claim_result ->> 'state' from olg113_session_case where case_name = 'complete'), 'create_auth', 'first claim owns Auth creation');
+select is(
+  (select (first_claim_result ->> 'session_derivation_key_version')::integer from olg113_session_case where case_name = 'complete'),
+  1,
+  'claim returns the derivation key version chosen when bootstrap was created'
+);
 
 update olg113_session_case
 set second_claim_result = public.claim_guest_bootstrap_attempt(bootstrap_digest_hex, 1::smallint)
@@ -326,7 +331,7 @@ select is_empty(
   'expired unlinked CLAIMED attempt is reclaimed by bounded cleanup'
 );
 
--- lease generation fence / mandatory binding (60-65)
+-- lease generation fence / mandatory binding (61-66)
 update olg113_session_case
 set create_result = public.create_guest_bootstrap_attempt(
       bootstrap_digest_hex,
