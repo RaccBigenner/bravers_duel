@@ -231,6 +231,21 @@ describe('OLG-111 Supabase anonymous principal provider', () => {
     expect(String(failure)).not.toContain(REFRESH_TOKEN);
   });
 
+  it('429以外の拒否(400等)は曖昧失敗として再試行可能にしない', async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ error_code: 'validation_failed', msg: 'invalid signup payload' }, 400),
+    );
+
+    await expect(
+      createAnonymousPrincipal(localCredential, guestInput(), { fetch: fetchMock }),
+    ).rejects.toMatchObject({
+      code: 'ANONYMOUS_SIGN_IN_REJECTED',
+      safeToRetry: false,
+      upstreamStatus: 400,
+      upstreamCode: 'validation_failed',
+    });
+  });
+
   it.each([
     ['user欠損', { user: null }],
     ['非匿名user', { user: { ...successBody().user, is_anonymous: false } }],

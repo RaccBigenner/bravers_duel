@@ -696,13 +696,26 @@ describe('OLG-121 server-owned NPC match reservation', () => {
     });
   });
 
-  it('register前または未知registrationの解除要求で予約を消さない', async () => {
+  it('register前または未知registrationの解除要求は予約のstorage値そのものを変えない', async () => {
     const sessionId = crypto.randomUUID();
     const accountId = crypto.randomUUID();
     const sessionVersion = 2;
     const stub = coordinator(sessionId);
     const reserved = await stub.reserveNpcMatch({ sessionId, accountId, sessionVersion });
     if (reserved.state !== 'reserved') throw new Error('Expected NPC reservation');
+
+    // reserveNpcMatchの戻り値だけを見ると、unregisterMatchが予約keyへ一切触れなくても
+    // 常に同じ結果になり境界を検証できない。予約entry自体をstorageから直接比較する。
+    const reservationEntry = async () => {
+      const entries = await runInDurableObject(stub, async (_instance, state) => [
+        ...(await state.storage.list()).entries(),
+      ]);
+      return entries.find(
+        ([, value]) => typeof value === 'object' && value !== null && 'seed' in value,
+      );
+    };
+    const before = await reservationEntry();
+    expect(before).toBeDefined();
 
     await stub.unregisterMatch(reference(
       sessionId,
@@ -711,6 +724,7 @@ describe('OLG-121 server-owned NPC match reservation', () => {
       crypto.randomUUID(),
     ));
 
+    await expect(reservationEntry()).resolves.toEqual(before);
     await expect(stub.reserveNpcMatch({ sessionId, accountId, sessionVersion })).resolves.toEqual({
       ...reserved,
       created: false,

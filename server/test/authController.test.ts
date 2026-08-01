@@ -2,6 +2,7 @@ import { env } from 'cloudflare:workers';
 import { describe, expect, it, vi } from 'vitest';
 import { generateOpaqueToken } from '../src/auth/sessionCrypto';
 import { GuestAuthError } from '../src/auth/supabaseGuestAuth';
+import { GuestAdminError } from '../src/auth/supabaseGuestAdmin';
 import type {
   BootstrapClaim,
   CompletedSession,
@@ -366,6 +367,40 @@ describe('OLG-113 auth controller', () => {
     expect(deletePrincipal).toHaveBeenCalledWith(expect.anything(), ACCOUNT_ID, expect.anything());
     expect(reset).toHaveBeenCalledOnce();
     expect(flow.createPrincipal).not.toHaveBeenCalled();
+  });
+
+  it('recover_authでのdelete失敗は恒久障害と一時喪失を判別できるcodeを記録する', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const reset = vi.fn(async () => true);
+      const flow = controller(
+        fakeStore({
+          claimBootstrapCandidates: vi.fn(async () => ({
+            state: 'recover_auth',
+            attemptId: ATTEMPT_ID,
+            claimId: CLAIM_ID,
+            accountId: ACCOUNT_ID,
+          } as const)),
+          resetBootstrapAfterAuthDelete: reset,
+        }),
+        {
+          deletePrincipal: vi.fn(async () => {
+            throw new GuestAdminError('GUEST_ADMIN_CONFIG_INVALID');
+          }),
+        },
+      );
+
+      await flow.handle(
+        post('/auth/guest', {}, { cookie: `bd_bootstrap_local=${BOOTSTRAP_TOKEN}` }),
+        localBindings(),
+      );
+      expect(errorSpy).toHaveBeenCalledWith(
+        'guest_auth_recover_delete_failed',
+        'GUEST_ADMIN_CONFIG_INVALID',
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   it('429だけclaimを安全解放し、未知/曖昧失敗はpendingに保持する', async () => {
