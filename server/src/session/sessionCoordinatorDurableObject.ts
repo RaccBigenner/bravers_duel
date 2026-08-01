@@ -11,12 +11,15 @@ const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 const LOGOUT_WORK_KEY = 'logout-work-v1';
 const INVALIDATION_FLOOR_KEY = 'invalidation-floor-v1';
 const MATCH_REFERENCES_KEY = 'match-references-v1';
-const CANCELLED_REGISTRATION_FLOOR_KEY = 'cancelled-match-registration-floor-v1';
+// v1はsession全体で1本のfloorだった。v2はmatchId単位に分離し、無関係な別matchの
+// 初回登録を巻き込まないようにする（v1の値は新schemaと形が違うため読み捨てる）。
+const CANCELLED_REGISTRATION_FLOOR_KEY = 'cancelled-match-registration-floor-v2';
 const ACTIVE_NPC_MATCH_RESERVATION_KEY = 'active-npc-match-reservation-v1';
 const LOGOUT_REASON = 'LOGOUT';
 
 export const MAX_SESSION_MATCH_REFERENCES = 16;
 export const MAX_SESSION_MATCH_REGISTRATIONS_PER_MATCH = 8;
+export const MAX_TRACKED_CANCELLED_MATCH_FLOORS = 64;
 export const LOGOUT_RECOVERY_DELAY_MS = 5_000;
 export const INVALIDATION_RETRY_BASE_MS = 1_000;
 export const INVALIDATION_RETRY_MAX_MS = 60_000;
@@ -40,6 +43,9 @@ interface CancelledRegistrationFloor {
   registrationEpochMs: number;
   updatedAtEpochMs: number;
 }
+
+/** matchIdごとのfloor。無関係なmatchのregisterMatchを巻き込まないようscopeする。 */
+type CancelledRegistrationFloorsByMatch = Record<string, CancelledRegistrationFloor>;
 
 interface InvalidationFloor {
   invalidatedVersion: number;
@@ -295,6 +301,29 @@ function validateLogoutIntent(input: SessionLogoutIntent): void {
   }
 }
 
+/**
+ * matchId単位floorを上限件数に収める。溢れたら最も古いupdatedAtEpochMsから間引く。
+ * 間引かれたmatchの遅延registerは再び通り得るが、そのmatchのreference cleanupは
+ * 別途MatchDO側のterminal outboxが担うため、floorは再送検知の補助であり正本ではない。
+ */
+function boundedCancelledFloors(
+  floors: CancelledRegistrationFloorsByMatch,
+  matchId: string,
+  next: CancelledRegistrationFloor,
+): CancelledRegistrationFloorsByMatch {
+  const merged: CancelledRegistrationFloorsByMatch = { ...floors, [matchId]: next };
+  const entries = Object.entries(merged);
+  if (entries.length <= MAX_TRACKED_CANCELLED_MATCH_FLOORS) return merged;
+  entries.sort((a, b) => a[1].updatedAtEpochMs - b[1].updatedAtEpochMs);
+  const dropCount = entries.length - MAX_TRACKED_CANCELLED_MATCH_FLOORS;
+  const dropped = new Set(entries.slice(0, dropCount).map(([id]) => id));
+  const bounded: CancelledRegistrationFloorsByMatch = {};
+  for (const [id, floor] of entries) {
+    if (!dropped.has(id)) bounded[id] = floor;
+  }
+  return bounded;
+}
+
 function retryDelayMs(attempt: number): number {
   const exponent = Math.max(0, Math.min(16, attempt - 1));
   return Math.min(INVALIDATION_RETRY_MAX_MS, INVALIDATION_RETRY_BASE_MS * 2 ** exponent);
@@ -364,11 +393,11 @@ export class SessionCoordinatorDO extends DurableObject<Env> {
     validateIdentity(this.ctx.id.name, input.sessionId);
 
     return this.ctx.storage.transaction(async (transaction) => {
-      const [floor, work, storedReferences, cancelledFloor] = await Promise.all([
+      const [floor, work, storedReferences, cancelledFloors] = await Promise.all([
         transaction.get<InvalidationFloor>(INVALIDATION_FLOOR_KEY),
         transaction.get<LogoutWork>(LOGOUT_WORK_KEY),
         transaction.get<MatchReference[]>(MATCH_REFERENCES_KEY),
-        transaction.get<CancelledRegistrationFloor>(CANCELLED_REGISTRATION_FLOOR_KEY),
+        transaction.get<CancelledRegistrationFloorsByMatch>(CANCELLED_REGISTRATION_FLOOR_KEY),
       ]);
       const invalidatedVersion = blockedVersion(floor, work);
       if (invalidatedVersion !== null && invalidatedVersion > input.sessionVersion) {
@@ -383,6 +412,7 @@ export class SessionCoordinatorDO extends DurableObject<Env> {
           reference.registrationEpochMs === input.registrationEpochMs,
       );
       if (alreadyRegistered) return { state: 'registered' } as const;
+      const cancelledFloor = cancelledFloors?.[input.matchId];
       if (
         cancelledFloor &&
         input.registrationEpochMs <= cancelledFloor.registrationEpochMs
@@ -551,9 +581,9 @@ export class SessionCoordinatorDO extends DurableObject<Env> {
     validateReferenceInput(input);
     validateIdentity(this.ctx.id.name, input.sessionId);
     await this.ctx.storage.transaction(async (transaction) => {
-      const [references, cancelledFloor] = await Promise.all([
+      const [references, cancelledFloors] = await Promise.all([
         transaction.get<MatchReference[]>(MATCH_REFERENCES_KEY),
-        transaction.get<CancelledRegistrationFloor>(CANCELLED_REGISTRATION_FLOOR_KEY),
+        transaction.get<CancelledRegistrationFloorsByMatch>(CANCELLED_REGISTRATION_FLOOR_KEY),
       ]);
       const currentReferences = references ?? [];
       const next = currentReferences.filter(
@@ -563,16 +593,15 @@ export class SessionCoordinatorDO extends DurableObject<Env> {
           reference.registrationId !== input.registrationId ||
           reference.registrationEpochMs !== input.registrationEpochMs,
       );
-      if (
-        !cancelledFloor ||
-        input.registrationEpochMs > cancelledFloor.registrationEpochMs
-      ) {
-        await transaction.put<CancelledRegistrationFloor>(
+      const currentFloors = cancelledFloors ?? {};
+      const matchFloor = currentFloors[input.matchId];
+      if (!matchFloor || input.registrationEpochMs > matchFloor.registrationEpochMs) {
+        await transaction.put<CancelledRegistrationFloorsByMatch>(
           CANCELLED_REGISTRATION_FLOOR_KEY,
-          {
+          boundedCancelledFloors(currentFloors, input.matchId, {
             registrationEpochMs: input.registrationEpochMs,
             updatedAtEpochMs: Date.now(),
-          },
+          }),
         );
       }
       if (next.length !== currentReferences.length) {

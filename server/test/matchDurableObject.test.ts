@@ -485,7 +485,7 @@ describe('OLG-113 MatchDO seat authentication', () => {
       code: 1008,
       reason: 'SEAT_REASSIGNED',
     });
-    const [oldReferences, newReferences] = await Promise.all([
+    const [oldValues, newValues] = await Promise.all([
       runInDurableObject(
         coordinatorFor(firstSession.sessionId),
         async (_instance, state) => [...(await state.storage.list()).values()],
@@ -495,8 +495,16 @@ describe('OLG-113 MatchDO seat authentication', () => {
         async (_instance, state) => [...(await state.storage.list()).values()],
       ),
     ]);
-    expect(JSON.stringify(oldReferences)).not.toContain(id);
-    expect(JSON.stringify(newReferences)).toContain(id);
+    // 旧sessionの有効参照一覧からは消えているべき(取消floorがmatchIdをbookkeepingとして
+    // 保持し続けるのは意図した挙動であり、storage全体から文字列が消えることとは別)。
+    const oldActiveReferences = oldValues.find(Array.isArray) as
+      | Array<Record<string, unknown>>
+      | undefined;
+    expect(oldActiveReferences?.some((reference) => reference.matchId === id)).toBe(false);
+    const newActiveReferences = newValues.find(Array.isArray) as
+      | Array<Record<string, unknown>>
+      | undefined;
+    expect(newActiveReferences?.some((reference) => reference.matchId === id)).toBe(true);
   });
 
   it('同じsession IDを別accountへ付け替えず、既存coordinator参照も保持する', async () => {

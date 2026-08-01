@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   MAX_SESSION_MATCH_REGISTRATIONS_PER_MATCH,
   MAX_SESSION_MATCH_REFERENCES,
+  MAX_TRACKED_CANCELLED_MATCH_FLOORS,
   type SessionCoordinatorDO,
 } from '../src/session/sessionCoordinatorDurableObject';
 
@@ -148,6 +149,72 @@ describe('OLG-113 SessionCoordinatorDO', () => {
     await expect(stub.registerMatch(laterCancellation)).resolves.toEqual({
       state: 'cancelled',
       cancelledThroughEpochMs: laterCancellation.registrationEpochMs,
+    });
+  });
+
+  it('取消floorはmatchId単位に閉じ、無関係な別matchの初回登録を巻き込まない', async () => {
+    const sessionId = crypto.randomUUID();
+    const stub = coordinator(sessionId);
+    const matchA = 'floor-owner-match';
+    const matchB = 'unrelated-new-match';
+
+    const matchAReference = reference(sessionId, matchA);
+    await expect(stub.registerMatch(matchAReference)).resolves.toEqual({
+      state: 'registered',
+    });
+    // matchAだけを対象に、matchB用epochより十分高い取消floorを積む。
+    const matchAInflatedCancellation = {
+      ...reference(sessionId, matchA),
+      registrationEpochMs: matchAReference.registrationEpochMs + 10_000,
+    };
+    await expect(
+      stub.unregisterMatch(matchAInflatedCancellation),
+    ).resolves.toEqual({ state: 'acknowledged' });
+
+    // matchBは一度も登録・取消されていない全く別のmatch。epochがmatchAのfloorより
+    // 低くても、matchBの初回登録はmatchAのfloorに巻き込まれず成立するべき。
+    const matchBReference = {
+      ...reference(sessionId, matchB),
+      registrationEpochMs: matchAReference.registrationEpochMs + 1,
+    };
+    await expect(stub.registerMatch(matchBReference)).resolves.toEqual({
+      state: 'registered',
+    });
+    await expect(stub.checkMatch(matchBReference)).resolves.toEqual({
+      state: 'registered',
+    });
+
+    // matchA自身は引き続き自分のfloorで守られている。
+    await expect(stub.registerMatch(matchAInflatedCancellation)).resolves.toEqual({
+      state: 'cancelled',
+      cancelledThroughEpochMs: matchAInflatedCancellation.registrationEpochMs,
+    });
+  });
+
+  it('取消floorはmatchId件数を上限内に間引き、溢れても新しいfloorは効き続ける', async () => {
+    const sessionId = crypto.randomUUID();
+    const stub = coordinator(sessionId);
+
+    const cancellations = Array.from(
+      { length: MAX_TRACKED_CANCELLED_MATCH_FLOORS + 1 },
+      (_, index) => reference(sessionId, `floor-churn-${index}`),
+    );
+    for (const cancellation of cancellations) {
+      await expect(stub.unregisterMatch(cancellation)).resolves.toEqual({
+        state: 'acknowledged',
+      });
+    }
+
+    // 最も古いfloor(先頭)は間引かれ、遅延registerが素通りするようになる。
+    const oldest = cancellations[0]!;
+    await expect(stub.registerMatch(oldest)).resolves.toEqual({ state: 'registered' });
+    await expect(stub.unregisterMatch(oldest)).resolves.toEqual({ state: 'acknowledged' });
+
+    // 直近のfloorは残っており、引き続き遅延registerを拒否する。
+    const newest = cancellations[cancellations.length - 1]!;
+    await expect(stub.registerMatch(newest)).resolves.toEqual({
+      state: 'cancelled',
+      cancelledThroughEpochMs: newest.registrationEpochMs,
     });
   });
 
