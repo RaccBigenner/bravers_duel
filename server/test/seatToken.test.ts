@@ -75,8 +75,10 @@ describe('OLG-113 seat token', () => {
     ).resolves.not.toBe(digest);
   });
 
-  it('active+retained key versionのbounded候補をactive-firstで返す', async () => {
+  it('鍵更新前の発行digestをretained候補に保ち、active-firstで返す', async () => {
     const token = deterministicToken();
+    const legacySecret = hmacSecret(1, 40);
+    const issuedBeforeRotation = await seatTokenDigestHex(token, legacySecret);
     const keys = createSessionCryptoKeys({
       hmac: {
         activeVersion: 2,
@@ -99,6 +101,7 @@ describe('OLG-113 seat token', () => {
     await expect(
       seatTokenDigestHex(token, keys.hmacForVersion(1)!),
     ).resolves.toBe(candidates[1]?.digestHex);
+    expect(candidates[1]?.digestHex).toBe(issuedBeforeRotation);
     expect(Object.isFrozen(candidates)).toBe(true);
     expect(candidates.every(Object.isFrozen)).toBe(true);
     expect(JSON.stringify(candidates)).not.toContain(token);

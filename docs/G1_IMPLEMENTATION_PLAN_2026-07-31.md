@@ -62,17 +62,21 @@ P1 exit の一言まとめ:
   - Auth userと同一UUIDの`public.account`を同一transactionのtriggerで作り、clientのData APIから隠す
   - tokenを外へ返さないrequest-scoped Worker内部providerまでを担当する。曖昧な失敗は再試行しない
   - browser向け`POST /auth/guest`は、OLG-113がopaque sessionへ収容できる段階で同時に開く
-- **OLG-113（境界設計完了・実装中）** secure session / seat token（設計 §8.4）
+- **OLG-113（コード実装済み・実stack受入待ち）** secure session / seat token（設計 §8.4）
   - 10分TTLのHttpOnly bootstrap cookieとDB claimで、並行guest作成と応答喪失を同じaccountへ収束
   - Auth grantをserver-sideで暗号化し、HttpOnly / Secure / SameSite=Lax のopaque sessionへ収容
   - MatchDOのserver-owned assignmentからだけ30秒・一回限りのseat tokenを発行し、最初のauth frameで消費
-  - unsafe HTTP/WebSocketはOriginを認証・DB照会より先に検査。logoutはDB失効後に関連MatchDOへ
-    version付きinvalidateを送りACKを待ち、DOの処理順でinvalidate後commandを拒否
+  - unsafe HTTP/WebSocketはOriginを認証・DB照会より先に検査。logout intentをsession coordinatorへ
+    alarmと原子的に先置きし、DB失効後に関連MatchDOへversion付きinvalidateを送り全ACKを待つ。
+    応答喪失時もalarmでDB失効から再開し、DOの処理順でinvalidate後commandを拒否
+  - MatchDOはregister RPC前のpendingとseat置換の旧参照cleanupをSQLite+alarmに先置きし、
+    exact再送はmutating再登録でなくSessionCoordinatorのread-only barrierで確認する
 
 ### Step C: MatchDO の中核（OLG-121 → OLG-123 → OLG-122 → OLG-125 → OLG-124）
 
 - **OLG-121** engine server adapter: MatchDO の中で engine を動かす。
-  engine 公開 API のみ使用（前提②）。
+  engine 公開 API のみ使用（前提②）。server-owned assignment directoryを接続し、
+  試合の正常終了・取消・放棄を永続化した後にSessionCoordinatorの進行中参照を解除する。
 - **OLG-123** stable `battleCardId`: 手札 index でなくカード個体 ID で
   action を指定する（設計 §11.1。engine の action と protocol の action の変換層で吸収）
 - **OLG-122** `commandId + expectedRevision`: 重複 command と古い revision の拒否

@@ -2,6 +2,12 @@ import { DurableObject } from 'cloudflare:workers';
 import { createSessionRuntimeConfig } from '../auth/sessionRuntimeConfig';
 import type { TokenDigestCandidate } from '../auth/sessionCrypto';
 import {
+  sessionCoordinatorStub,
+  type SessionCoordinatorPort,
+  type SessionMatchRegistrationResult,
+  type SessionMatchReferenceInput,
+} from '../session/sessionCoordinatorDurableObject';
+import {
   generateSeatToken,
   parseSeatAuthFrame,
   seatTokenDigestCandidates,
@@ -9,6 +15,7 @@ import {
 } from './seatToken';
 
 const MATCH_PATH = /^\/matches\/([A-Za-z0-9_-]{1,64})\/ws$/;
+const MATCH_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 const PROBE_PREFIX = 'probe:';
@@ -16,6 +23,10 @@ const AUTHENTICATION_CLOSE_CODE = 1008;
 const AUTHENTICATION_CLOSE_REASON = 'AUTH_FAILED';
 const SESSION_CLOSE_REASON = 'SESSION_ENDED';
 const SEAT_CLOSE_REASON = 'SEAT_REASSIGNED';
+const REFERENCE_CLEANUP_DEADLINE_KIND = 'coordinator-cleanup';
+const REFERENCE_CLEANUP_RETRY_BASE_MS = 1_000;
+const REFERENCE_CLEANUP_RETRY_MAX_MS = 60_000;
+const REFERENCE_CLEANUP_BATCH_SIZE = 1;
 
 export const SEAT_TOKEN_TTL_MS = 30_000;
 export const SEAT_AUTH_FRAME_TIMEOUT_MS = 5_000;
@@ -89,12 +100,17 @@ type ConnectionAttachment =
   | AuthenticatedAttachment;
 
 interface AssignmentRow {
-  [key: string]: string | number;
+  [key: string]: string | number | null;
   seat_id: string;
   account_id: string;
   session_id: string;
   session_version: number;
   assignment_version: number;
+}
+
+interface AssignmentReferenceRow extends AssignmentRow {
+  coordinator_registration_id: string | null;
+  coordinator_registration_epoch_ms: number | null;
 }
 
 interface TokenMatchRow {
@@ -103,6 +119,24 @@ interface TokenMatchRow {
   digest_key_version: number;
   seat_id: string;
   assignment_version: number;
+}
+
+interface ReferenceCleanupRow {
+  [key: string]: string | number;
+  registration_id: string;
+  registration_epoch_ms: number;
+  seat_id: string;
+  account_id: string;
+  session_id: string;
+  session_version: number;
+  match_id: string;
+  work_kind: string;
+  retry_attempt: number;
+}
+
+interface MatchReferenceWork extends SessionMatchReferenceInput {
+  seatId: MatchSeatId;
+  accountId: string;
 }
 
 function json(body: unknown, init: ResponseInit = {}): Response {
@@ -182,6 +216,18 @@ function pendingDeadlineKey(connectionId: string): string {
   return `ws-auth:${connectionId}`;
 }
 
+function referenceCleanupDeadlineKey(registrationId: string): string {
+  return `coordinator-cleanup:${registrationId}`;
+}
+
+function referenceCleanupRetryDelayMs(attempt: number): number {
+  const exponent = Math.max(0, Math.min(16, attempt - 1));
+  return Math.min(
+    REFERENCE_CLEANUP_RETRY_MAX_MS,
+    REFERENCE_CLEANUP_RETRY_BASE_MS * 2 ** exponent,
+  );
+}
+
 export function matchIdFromPath(pathname: string): string | null {
   return pathname.match(MATCH_PATH)?.[1] ?? null;
 }
@@ -191,6 +237,8 @@ export function matchIdFromPath(pathname: string): string | null {
  * OLG-121がassignSeatを呼ぶまではissueSeatTokenの正方向は成立しない。
  */
 export class MatchDO extends DurableObject<Env> {
+  private referenceOperationTail: Promise<void> = Promise.resolve();
+
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.ctx.blockConcurrencyWhile(async () => {
@@ -201,10 +249,13 @@ export class MatchDO extends DurableObject<Env> {
           session_id TEXT NOT NULL,
           session_version INTEGER NOT NULL,
           assignment_version INTEGER NOT NULL,
+          coordinator_registration_id TEXT NOT NULL,
+          coordinator_registration_epoch_ms INTEGER NOT NULL,
           updated_at_ms INTEGER NOT NULL,
           CHECK (seat_id IN ('player-1', 'player-2')),
           CHECK (session_version >= 1),
-          CHECK (assignment_version >= 1)
+          CHECK (assignment_version >= 1),
+          CHECK (coordinator_registration_epoch_ms >= 1)
         );
         CREATE UNIQUE INDEX IF NOT EXISTS match_seat_assignment_account
           ON match_seat_assignment(account_id);
@@ -240,7 +291,48 @@ export class MatchDO extends DurableObject<Env> {
           due_at_ms INTEGER NOT NULL
         );
         CREATE INDEX IF NOT EXISTS do_deadline_due ON do_deadline(due_at_ms);
+        CREATE TABLE IF NOT EXISTS match_reference_cleanup (
+          registration_id TEXT PRIMARY KEY,
+          registration_epoch_ms INTEGER NOT NULL,
+          seat_id TEXT NOT NULL UNIQUE,
+          account_id TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          session_version INTEGER NOT NULL,
+          match_id TEXT NOT NULL,
+          work_kind TEXT NOT NULL,
+          retry_attempt INTEGER NOT NULL DEFAULT 0,
+          CHECK (seat_id IN ('player-1', 'player-2')),
+          CHECK (work_kind IN ('pending_assignment', 'cleanup')),
+          CHECK (registration_epoch_ms >= 1),
+          CHECK (session_version >= 1),
+          CHECK (retry_attempt >= 0)
+        );
+        CREATE TABLE IF NOT EXISTS match_reference_clock (
+          clock_key INTEGER PRIMARY KEY CHECK (clock_key = 1),
+          last_epoch_ms INTEGER NOT NULL CHECK (last_epoch_ms >= 1)
+        );
       `);
+      const assignmentColumns = this.ctx.storage.sql.exec<{ name: string }>(
+        `PRAGMA table_info(match_seat_assignment)`,
+      ).toArray();
+      if (!assignmentColumns.some((column) => column.name === 'coordinator_registration_id')) {
+        this.ctx.storage.sql.exec(
+          `ALTER TABLE match_seat_assignment
+             ADD COLUMN coordinator_registration_id TEXT`,
+        );
+      }
+      if (!assignmentColumns.some((column) => column.name === 'coordinator_registration_epoch_ms')) {
+        this.ctx.storage.sql.exec(
+          `ALTER TABLE match_seat_assignment
+             ADD COLUMN coordinator_registration_epoch_ms INTEGER`,
+        );
+        this.ctx.storage.sql.exec(
+          `UPDATE match_seat_assignment
+              SET coordinator_registration_epoch_ms = updated_at_ms
+            WHERE coordinator_registration_id IS NOT NULL
+              AND coordinator_registration_epoch_ms IS NULL`,
+        );
+      }
     });
   }
 
@@ -254,71 +346,299 @@ export class MatchDO extends DurableObject<Env> {
     if (!isPrincipal(input) || !isSeatId(input.seatId)) {
       throw new TypeError('MATCH_SEAT_ASSIGNMENT_INVALID');
     }
-    const result = this.ctx.storage.transactionSync(() => {
-      const invalidation = this.ctx.storage.sql.exec<{ invalidated_version: number }>(
-        `SELECT invalidated_version FROM match_session_invalidation WHERE session_id = ?`,
-        input.sessionId,
-      ).toArray()[0];
-      if (invalidation && invalidation.invalidated_version >= input.sessionVersion) {
-        return { state: 'conflict' } as const;
-      }
+    return this.withReferenceOperationLock(() => this.assignSeatExclusive(input));
+  }
 
-      const duplicate = this.ctx.storage.sql.exec<AssignmentRow>(
-        `SELECT seat_id, account_id, session_id, session_version, assignment_version
-           FROM match_seat_assignment
-          WHERE (account_id = ? OR session_id = ?) AND seat_id <> ?`,
-        input.accountId,
-        input.sessionId,
-        input.seatId,
-      ).toArray();
-      if (duplicate.length > 0) return { state: 'conflict' } as const;
-
-      const current = this.ctx.storage.sql.exec<AssignmentRow>(
-        `SELECT seat_id, account_id, session_id, session_version, assignment_version
-           FROM match_seat_assignment WHERE seat_id = ?`,
-        input.seatId,
-      ).toArray()[0];
-      if (
-        current &&
-        current.account_id === input.accountId &&
-        current.session_id === input.sessionId &&
-        current.session_version === input.sessionVersion
-      ) {
-        return {
-          state: 'assigned',
-          seatId: input.seatId,
-          assignmentVersion: current.assignment_version,
-        } as const;
-      }
-
-      const assignmentVersion = (current?.assignment_version ?? 0) + 1;
-      this.ctx.storage.sql.exec(
-        `DELETE FROM match_seat_token WHERE seat_id = ?`,
-        input.seatId,
-      );
-      this.ctx.storage.sql.exec(
-        `INSERT INTO match_seat_assignment (
-           seat_id, account_id, session_id, session_version, assignment_version, updated_at_ms
-         ) VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT(seat_id) DO UPDATE SET
-           account_id = excluded.account_id,
-           session_id = excluded.session_id,
-           session_version = excluded.session_version,
-           assignment_version = excluded.assignment_version,
-           updated_at_ms = excluded.updated_at_ms`,
-        input.seatId,
-        input.accountId,
-        input.sessionId,
-        input.sessionVersion,
-        assignmentVersion,
-        Date.now(),
-      );
-      return { state: 'assigned', seatId: input.seatId, assignmentVersion } as const;
-    });
-    if (result.state === 'assigned') {
-      this.closeStaleSeatConnections(result.seatId, result.assignmentVersion);
+  private async assignSeatExclusive(
+    input: MatchSessionPrincipal & { seatId: MatchSeatId },
+  ): Promise<SeatAssignmentResult> {
+    const matchId = this.ctx.id.name;
+    if (!matchId || !MATCH_ID_PATTERN.test(matchId)) {
+      throw new TypeError('MATCH_IDENTITY_INVALID');
     }
-    return result;
+
+    if (this.hasLocalAssignmentConflict(input)) return { state: 'conflict' };
+
+    const exactAssignment = this.ctx.storage.sql.exec<AssignmentReferenceRow>(
+      `SELECT seat_id, account_id, session_id, session_version, assignment_version,
+              coordinator_registration_id, coordinator_registration_epoch_ms
+         FROM match_seat_assignment
+        WHERE seat_id = ? AND account_id = ? AND session_id = ? AND session_version = ?`,
+      input.seatId,
+      input.accountId,
+      input.sessionId,
+      input.sessionVersion,
+    ).toArray()[0];
+    const coordinator = sessionCoordinatorStub(this.env, input.sessionId);
+    if (
+      exactAssignment &&
+      typeof exactAssignment.coordinator_registration_id === 'string' &&
+      UUID_PATTERN.test(exactAssignment.coordinator_registration_id) &&
+      positiveInteger(exactAssignment.coordinator_registration_epoch_ms)
+    ) {
+      const reference: SessionMatchReferenceInput = {
+        sessionId: input.sessionId,
+        sessionVersion: input.sessionVersion,
+        matchId,
+        registrationId: exactAssignment.coordinator_registration_id,
+        registrationEpochMs: exactAssignment.coordinator_registration_epoch_ms,
+      };
+      const status = await coordinator.checkMatch(reference);
+      if (status.state === 'invalidated') {
+        await this.invalidateSession({
+          sessionId: input.sessionId,
+          invalidatedVersion: status.invalidatedVersion,
+        });
+        return { state: 'conflict' };
+      }
+      return status.state === 'registered' &&
+        this.assignmentOwnsReference({
+          seatId: input.seatId,
+          accountId: input.accountId,
+          ...reference,
+        }) &&
+        !this.hasLocalAssignmentConflict(input)
+        ? {
+            state: 'assigned',
+            seatId: input.seatId,
+            assignmentVersion: exactAssignment.assignment_version,
+          }
+        : { state: 'conflict' };
+    }
+
+    const pending = this.referenceWorkForSeat(input.seatId);
+    let reference: MatchReferenceWork;
+    if (
+      pending?.work_kind === 'pending_assignment' &&
+      pending.account_id === input.accountId &&
+      pending.session_id === input.sessionId &&
+      pending.session_version === input.sessionVersion &&
+      pending.match_id === matchId
+    ) {
+      reference = this.referenceWorkFromRow(pending);
+    } else {
+      if (pending) {
+        const cleaned = await this.retryReferenceCleanup(
+          referenceCleanupDeadlineKey(pending.registration_id),
+        );
+        if (!cleaned) return { state: 'conflict' };
+      }
+      reference = {
+        seatId: input.seatId,
+        accountId: input.accountId,
+        sessionId: input.sessionId,
+        sessionVersion: input.sessionVersion,
+        matchId,
+        registrationId: crypto.randomUUID(),
+        registrationEpochMs: this.nextReferenceEpoch(),
+      };
+      await this.persistPendingReference(reference);
+    }
+
+    let registration: SessionMatchRegistrationResult;
+    try {
+      registration = await coordinator.registerMatch(reference);
+    } catch (error) {
+      await this.scheduleReferenceCleanup(reference);
+      throw error;
+    }
+    if (registration.state === 'invalidated') {
+      this.clearReferenceCleanup(reference.registrationId);
+      await this.invalidateSession({
+        sessionId: input.sessionId,
+        invalidatedVersion: registration.invalidatedVersion,
+      });
+      return { state: 'conflict' };
+    }
+    if (registration.state === 'cancelled') {
+      this.advanceReferenceEpoch(registration.cancelledThroughEpochMs);
+      this.clearReferenceCleanup(reference.registrationId);
+      return { state: 'conflict' };
+    }
+    if (registration.state === 'capacity_exceeded') {
+      this.clearReferenceCleanup(reference.registrationId);
+      return { state: 'conflict' };
+    }
+
+    let committed: {
+      result: SeatAssignmentResult;
+      referenceInstalled: boolean;
+      displacedReference: MatchReferenceWork | null;
+    };
+    try {
+      committed = await this.ctx.storage.transaction(async (transaction) => {
+        const invalidation = this.ctx.storage.sql.exec<{ invalidated_version: number }>(
+          `SELECT invalidated_version FROM match_session_invalidation WHERE session_id = ?`,
+          input.sessionId,
+        ).toArray()[0];
+        if (invalidation && invalidation.invalidated_version > input.sessionVersion) {
+          return {
+            result: { state: 'conflict' } as const,
+            referenceInstalled: false,
+            displacedReference: null,
+          };
+        }
+
+        const duplicate = this.ctx.storage.sql.exec<AssignmentRow>(
+          `SELECT seat_id, account_id, session_id, session_version, assignment_version
+             FROM match_seat_assignment
+            WHERE (account_id = ? OR session_id = ?) AND seat_id <> ?`,
+          input.accountId,
+          input.sessionId,
+          input.seatId,
+        ).toArray();
+        if (duplicate.length > 0) {
+          return {
+            result: { state: 'conflict' } as const,
+            referenceInstalled: false,
+            displacedReference: null,
+          };
+        }
+
+        const current = this.ctx.storage.sql.exec<AssignmentReferenceRow>(
+          `SELECT seat_id, account_id, session_id, session_version, assignment_version,
+                  coordinator_registration_id, coordinator_registration_epoch_ms
+             FROM match_seat_assignment WHERE seat_id = ?`,
+          input.seatId,
+        ).toArray()[0];
+        const currentIsExact = Boolean(
+          current &&
+          current.account_id === input.accountId &&
+          current.session_id === input.sessionId &&
+          current.session_version === input.sessionVersion
+        );
+        if (current?.session_id === input.sessionId && current.account_id !== input.accountId) {
+          return {
+            result: { state: 'conflict' } as const,
+            referenceInstalled: false,
+            displacedReference: null,
+          };
+        }
+        if (
+          current?.session_id === input.sessionId &&
+          current.account_id === input.accountId &&
+          current.session_version > input.sessionVersion
+        ) {
+          return {
+            result: { state: 'conflict' } as const,
+            referenceInstalled: false,
+            displacedReference: null,
+          };
+        }
+        if (currentIsExact && current) {
+          if (
+            typeof current.coordinator_registration_id === 'string' &&
+            UUID_PATTERN.test(current.coordinator_registration_id) &&
+            positiveInteger(current.coordinator_registration_epoch_ms)
+          ) {
+            return {
+              result: {
+                state: 'assigned',
+                seatId: input.seatId,
+                assignmentVersion: current.assignment_version,
+              } as const,
+              referenceInstalled:
+                current.coordinator_registration_id === reference.registrationId &&
+                current.coordinator_registration_epoch_ms === reference.registrationEpochMs,
+              displacedReference: null,
+            };
+          }
+          this.ctx.storage.sql.exec(
+            `UPDATE match_seat_assignment
+                SET coordinator_registration_id = ?,
+                    coordinator_registration_epoch_ms = ?, updated_at_ms = ?
+              WHERE seat_id = ? AND assignment_version = ?`,
+            reference.registrationId,
+            reference.registrationEpochMs,
+            Date.now(),
+            input.seatId,
+            current.assignment_version,
+          );
+          await this.commitReferenceInstallation(transaction, reference, null);
+          return {
+            result: {
+              state: 'assigned',
+              seatId: input.seatId,
+              assignmentVersion: current.assignment_version,
+            } as const,
+            referenceInstalled: true,
+            displacedReference: null,
+          };
+        }
+
+        const assignmentVersion = (current?.assignment_version ?? 0) + 1;
+        const displacedReference =
+          current &&
+          typeof current.coordinator_registration_id === 'string' &&
+          UUID_PATTERN.test(current.coordinator_registration_id) &&
+          positiveInteger(current.coordinator_registration_epoch_ms)
+            ? {
+                seatId: input.seatId,
+                accountId: current.account_id,
+                sessionId: current.session_id,
+                sessionVersion: current.session_version,
+                matchId,
+                registrationId: current.coordinator_registration_id,
+                registrationEpochMs: current.coordinator_registration_epoch_ms,
+              }
+            : null;
+        this.ctx.storage.sql.exec(
+          `DELETE FROM match_seat_token WHERE seat_id = ?`,
+          input.seatId,
+        );
+        this.ctx.storage.sql.exec(
+          `INSERT INTO match_seat_assignment (
+             seat_id, account_id, session_id, session_version, assignment_version,
+             coordinator_registration_id, coordinator_registration_epoch_ms, updated_at_ms
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(seat_id) DO UPDATE SET
+             account_id = excluded.account_id,
+             session_id = excluded.session_id,
+             session_version = excluded.session_version,
+             assignment_version = excluded.assignment_version,
+             coordinator_registration_id = excluded.coordinator_registration_id,
+             coordinator_registration_epoch_ms = excluded.coordinator_registration_epoch_ms,
+             updated_at_ms = excluded.updated_at_ms`,
+          input.seatId,
+          input.accountId,
+          input.sessionId,
+          input.sessionVersion,
+          assignmentVersion,
+          reference.registrationId,
+          reference.registrationEpochMs,
+          Date.now(),
+        );
+        await this.commitReferenceInstallation(
+          transaction,
+          reference,
+          displacedReference,
+        );
+        return {
+          result: { state: 'assigned', seatId: input.seatId, assignmentVersion } as const,
+          referenceInstalled: true,
+          displacedReference,
+        };
+      });
+    } catch (error) {
+      if (!this.assignmentOwnsReference(reference)) {
+        await this.scheduleReferenceCleanup(reference);
+      }
+      throw error;
+    }
+
+    if (committed.result.state === 'assigned') {
+      this.closeStaleSeatConnections(
+        committed.result.seatId,
+        committed.result.assignmentVersion,
+      );
+    }
+    if (!committed.referenceInstalled && !this.assignmentOwnsReference(reference)) {
+      await this.unregisterReference(reference, coordinator);
+    }
+    if (committed.displacedReference) {
+      await this.unregisterReference(committed.displacedReference);
+    }
+    return committed.result;
   }
 
   async issueSeatToken(principal: MatchSessionPrincipal): Promise<SeatTokenIssueResult> {
@@ -349,10 +669,12 @@ export class MatchDO extends DurableObject<Env> {
               WHERE assignment.account_id = ?
                 AND assignment.session_id = ?
                 AND assignment.session_version = ?
+                AND assignment.coordinator_registration_id IS NOT NULL
+                AND assignment.coordinator_registration_epoch_ms IS NOT NULL
                 AND NOT EXISTS (
                   SELECT 1 FROM match_session_invalidation AS invalidation
                    WHERE invalidation.session_id = assignment.session_id
-                     AND invalidation.invalidated_version >= assignment.session_version
+                     AND invalidation.invalidated_version > assignment.session_version
                 )`,
             principal.accountId,
             principal.sessionId,
@@ -446,7 +768,7 @@ export class MatchDO extends DurableObject<Env> {
                 AND NOT EXISTS (
                   SELECT 1 FROM match_session_invalidation AS invalidation
                    WHERE invalidation.session_id = token.session_id
-                     AND invalidation.invalidated_version >= token.session_version
+                     AND invalidation.invalidated_version > token.session_version
                 )`,
             candidate.digestHex,
             candidate.keyVersion,
@@ -550,7 +872,7 @@ export class MatchDO extends DurableObject<Env> {
     }
     const url = new URL(request.url);
     const matchId = matchIdFromPath(url.pathname);
-    if (!matchId || url.search !== '') {
+    if (!matchId || url.search !== '' || this.ctx.id.name !== matchId) {
       return json({ error: 'INVALID_MATCH_PATH' }, { status: 400 });
     }
 
@@ -610,7 +932,7 @@ export class MatchDO extends DurableObject<Env> {
         `SELECT invalidated_version FROM match_session_invalidation WHERE session_id = ?`,
         attachment.sessionId,
       ).toArray()[0];
-      if (invalidated && invalidated.invalidated_version >= attachment.sessionVersion) {
+      if (invalidated && invalidated.invalidated_version > attachment.sessionVersion) {
         socket.close(AUTHENTICATION_CLOSE_CODE, SESSION_CLOSE_REASON);
         return;
       }
@@ -685,22 +1007,42 @@ export class MatchDO extends DurableObject<Env> {
 
   async alarm(): Promise<void> {
     const now = Date.now();
-    const due = this.ctx.storage.sql.exec<{ deadline_key: string }>(
-      `SELECT deadline_key FROM do_deadline WHERE due_at_ms <= ?`,
-      now,
-    ).toArray();
-    const dueKeys = new Set(due.map((row) => row.deadline_key));
+    const dueWebSocketKeys = new Set(
+      this.ctx.storage.sql.exec<{ deadline_key: string }>(
+        `SELECT deadline_key FROM do_deadline
+          WHERE deadline_kind = 'ws-auth' AND due_at_ms <= ?`,
+        now,
+      ).toArray().map((row) => row.deadline_key),
+    );
     for (const socket of this.ctx.getWebSockets()) {
       const attachment = socket.deserializeAttachment() as ConnectionAttachment | null;
       if (
         (attachment?.mode === 'pending' || attachment?.mode === 'verifying') &&
-        dueKeys.has(pendingDeadlineKey(attachment.connectionId)) &&
+        dueWebSocketKeys.has(pendingDeadlineKey(attachment.connectionId)) &&
         attachment.authDeadlineEpochMs <= now
       ) {
         socket.close(AUTHENTICATION_CLOSE_CODE, AUTHENTICATION_CLOSE_REASON);
       }
     }
-    this.ctx.storage.sql.exec(`DELETE FROM do_deadline WHERE due_at_ms <= ?`, now);
+    this.ctx.storage.sql.exec(
+      `DELETE FROM do_deadline
+        WHERE deadline_kind = 'ws-auth' AND due_at_ms <= ?`,
+      now,
+    );
+    await this.withReferenceOperationLock(async () => {
+      const dueReferenceKeys = this.ctx.storage.sql.exec<{ deadline_key: string }>(
+        `SELECT deadline_key FROM do_deadline
+          WHERE deadline_kind = ? AND due_at_ms <= ?
+          ORDER BY due_at_ms, deadline_key
+          LIMIT ?`,
+        REFERENCE_CLEANUP_DEADLINE_KIND,
+        Date.now(),
+        REFERENCE_CLEANUP_BATCH_SIZE,
+      ).toArray();
+      for (const row of dueReferenceKeys) {
+        await this.retryReferenceCleanup(row.deadline_key);
+      }
+    });
     await this.rescheduleAfterAlarm();
   }
 
@@ -751,7 +1093,9 @@ export class MatchDO extends DurableObject<Env> {
           AND account_id = ?
           AND session_id = ?
           AND session_version = ?
-          AND assignment_version = ?`,
+          AND assignment_version = ?
+          AND coordinator_registration_id IS NOT NULL
+          AND coordinator_registration_epoch_ms IS NOT NULL`,
       attachment.seatId,
       attachment.accountId,
       attachment.sessionId,
@@ -759,6 +1103,311 @@ export class MatchDO extends DurableObject<Env> {
       attachment.assignmentVersion,
     ).toArray();
     return rows.length === 1;
+  }
+
+  private async withReferenceOperationLock<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.referenceOperationTail;
+    let release!: () => void;
+    this.referenceOperationTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
+  }
+
+  private hasLocalAssignmentConflict(
+    input: MatchSessionPrincipal & { seatId: MatchSeatId },
+  ): boolean {
+    const invalidation = this.ctx.storage.sql.exec<{ invalidated_version: number }>(
+      `SELECT invalidated_version FROM match_session_invalidation WHERE session_id = ?`,
+      input.sessionId,
+    ).toArray()[0];
+    if (invalidation && invalidation.invalidated_version > input.sessionVersion) return true;
+    const duplicate = this.ctx.storage.sql.exec<{ found: number }>(
+      `SELECT 1 AS found FROM match_seat_assignment
+        WHERE (account_id = ? OR session_id = ?) AND seat_id <> ?
+        LIMIT 1`,
+      input.accountId,
+      input.sessionId,
+      input.seatId,
+    ).toArray();
+    if (duplicate.length > 0) return true;
+    const current = this.ctx.storage.sql.exec<AssignmentRow>(
+      `SELECT seat_id, account_id, session_id, session_version, assignment_version
+         FROM match_seat_assignment WHERE seat_id = ?`,
+      input.seatId,
+    ).toArray()[0];
+    return Boolean(
+      (current?.session_id === input.sessionId && current.account_id !== input.accountId) ||
+      (current?.session_id === input.sessionId &&
+        current.account_id === input.accountId &&
+        current.session_version > input.sessionVersion),
+    );
+  }
+
+  private referenceWorkForSeat(seatId: MatchSeatId): ReferenceCleanupRow | undefined {
+    return this.ctx.storage.sql.exec<ReferenceCleanupRow>(
+      `SELECT registration_id, registration_epoch_ms, seat_id, account_id,
+              session_id, session_version,
+              match_id, work_kind, retry_attempt
+         FROM match_reference_cleanup WHERE seat_id = ?`,
+      seatId,
+    ).toArray()[0];
+  }
+
+  private referenceWorkFromRow(row: ReferenceCleanupRow): MatchReferenceWork {
+    if (!isSeatId(row.seat_id)) throw new TypeError('MATCH_REFERENCE_WORK_INVALID');
+    return {
+      seatId: row.seat_id,
+      accountId: row.account_id,
+      sessionId: row.session_id,
+      sessionVersion: row.session_version,
+      matchId: row.match_id,
+      registrationId: row.registration_id,
+      registrationEpochMs: row.registration_epoch_ms,
+    };
+  }
+
+  private nextReferenceEpoch(): number {
+    return this.ctx.storage.transactionSync(() => {
+      const stored = this.ctx.storage.sql.exec<{ last_epoch_ms: number }>(
+        `SELECT last_epoch_ms FROM match_reference_clock WHERE clock_key = 1`,
+      ).toArray()[0]?.last_epoch_ms ?? 0;
+      const next = Math.max(Date.now(), stored + 1);
+      this.ctx.storage.sql.exec(
+        `INSERT INTO match_reference_clock (clock_key, last_epoch_ms) VALUES (1, ?)
+         ON CONFLICT(clock_key) DO UPDATE SET last_epoch_ms = excluded.last_epoch_ms`,
+        next,
+      );
+      return next;
+    });
+  }
+
+  private advanceReferenceEpoch(cancelledThroughEpochMs: number): void {
+    if (!positiveInteger(cancelledThroughEpochMs)) {
+      throw new TypeError('MATCH_REFERENCE_EPOCH_INVALID');
+    }
+    this.ctx.storage.sql.exec(
+      `INSERT INTO match_reference_clock (clock_key, last_epoch_ms) VALUES (1, ?)
+       ON CONFLICT(clock_key) DO UPDATE SET
+         last_epoch_ms = MAX(last_epoch_ms, excluded.last_epoch_ms)`,
+      cancelledThroughEpochMs,
+    );
+  }
+
+  private assignmentOwnsReference(reference: MatchReferenceWork): boolean {
+    return this.ctx.storage.sql.exec<{ found: number }>(
+      `SELECT 1 AS found FROM match_seat_assignment
+        WHERE seat_id = ? AND account_id = ? AND session_id = ?
+          AND session_version = ? AND coordinator_registration_id = ?
+          AND coordinator_registration_epoch_ms = ?`,
+      reference.seatId,
+      reference.accountId,
+      reference.sessionId,
+      reference.sessionVersion,
+      reference.registrationId,
+      reference.registrationEpochMs,
+    ).toArray().length === 1;
+  }
+
+  private async persistPendingReference(reference: MatchReferenceWork): Promise<void> {
+    const dueAtEpochMs = Date.now() + REFERENCE_CLEANUP_RETRY_BASE_MS;
+    await this.ctx.storage.transaction(async (transaction) => {
+      this.ctx.storage.sql.exec(
+        `INSERT INTO match_reference_cleanup (
+           registration_id, registration_epoch_ms, seat_id, account_id,
+           session_id, session_version,
+           match_id, work_kind, retry_attempt
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending_assignment', 0)`,
+        reference.registrationId,
+        reference.registrationEpochMs,
+        reference.seatId,
+        reference.accountId,
+        reference.sessionId,
+        reference.sessionVersion,
+        reference.matchId,
+      );
+      this.upsertReferenceDeadline(reference.registrationId, dueAtEpochMs);
+      await this.ensureNextAlarmInTransaction(transaction);
+    });
+  }
+
+  private async commitReferenceInstallation(
+    transaction: DurableObjectTransaction,
+    installed: MatchReferenceWork,
+    displaced: MatchReferenceWork | null,
+  ): Promise<void> {
+    this.ctx.storage.sql.exec(
+      `DELETE FROM match_reference_cleanup WHERE registration_id = ?`,
+      installed.registrationId,
+    );
+    this.ctx.storage.sql.exec(
+      `DELETE FROM do_deadline WHERE deadline_key = ?`,
+      referenceCleanupDeadlineKey(installed.registrationId),
+    );
+    if (displaced) {
+      this.ctx.storage.sql.exec(
+        `INSERT INTO match_reference_cleanup (
+           registration_id, registration_epoch_ms, seat_id, account_id,
+           session_id, session_version,
+           match_id, work_kind, retry_attempt
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'cleanup', 0)`,
+        displaced.registrationId,
+        displaced.registrationEpochMs,
+        displaced.seatId,
+        displaced.accountId,
+        displaced.sessionId,
+        displaced.sessionVersion,
+        displaced.matchId,
+      );
+      this.upsertReferenceDeadline(
+        displaced.registrationId,
+        Date.now() + REFERENCE_CLEANUP_RETRY_BASE_MS,
+      );
+    }
+    await this.ensureNextAlarmInTransaction(transaction);
+  }
+
+  private upsertReferenceDeadline(registrationId: string, dueAtEpochMs: number): void {
+    this.ctx.storage.sql.exec(
+      `INSERT INTO do_deadline (deadline_key, deadline_kind, due_at_ms)
+       VALUES (?, ?, ?)
+       ON CONFLICT(deadline_key) DO UPDATE SET
+         deadline_kind = excluded.deadline_kind,
+         due_at_ms = MIN(do_deadline.due_at_ms, excluded.due_at_ms)`,
+      referenceCleanupDeadlineKey(registrationId),
+      REFERENCE_CLEANUP_DEADLINE_KIND,
+      dueAtEpochMs,
+    );
+  }
+
+  private async unregisterReference(
+    reference: MatchReferenceWork,
+    coordinator?: SessionCoordinatorPort,
+  ): Promise<void> {
+    try {
+      const target = coordinator ?? sessionCoordinatorStub(this.env, reference.sessionId);
+      await target.unregisterMatch({
+        sessionId: reference.sessionId,
+        sessionVersion: reference.sessionVersion,
+        matchId: reference.matchId,
+        registrationId: reference.registrationId,
+        registrationEpochMs: reference.registrationEpochMs,
+      });
+      this.clearReferenceCleanup(reference.registrationId);
+    } catch {
+      await this.scheduleReferenceCleanup(reference);
+    }
+  }
+
+  private clearReferenceCleanup(registrationId: string): void {
+    this.ctx.storage.transactionSync(() => {
+      this.ctx.storage.sql.exec(
+        `DELETE FROM match_reference_cleanup WHERE registration_id = ?`,
+        registrationId,
+      );
+      this.ctx.storage.sql.exec(
+        `DELETE FROM do_deadline WHERE deadline_key = ?`,
+        referenceCleanupDeadlineKey(registrationId),
+      );
+    });
+  }
+
+  private async scheduleReferenceCleanup(reference: MatchReferenceWork): Promise<void> {
+    const dueAtEpochMs = Date.now() + REFERENCE_CLEANUP_RETRY_BASE_MS;
+    await this.ctx.storage.transaction(async (transaction) => {
+      this.ctx.storage.sql.exec(
+        `INSERT INTO match_reference_cleanup (
+           registration_id, registration_epoch_ms, seat_id, account_id,
+           session_id, session_version,
+           match_id, work_kind, retry_attempt
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'cleanup', 0)
+         ON CONFLICT(registration_id) DO UPDATE SET
+           registration_epoch_ms = excluded.registration_epoch_ms,
+           seat_id = excluded.seat_id,
+           account_id = excluded.account_id,
+           session_id = excluded.session_id,
+           session_version = excluded.session_version,
+           match_id = excluded.match_id,
+           work_kind = 'cleanup'`,
+        reference.registrationId,
+        reference.registrationEpochMs,
+        reference.seatId,
+        reference.accountId,
+        reference.sessionId,
+        reference.sessionVersion,
+        reference.matchId,
+      );
+      this.upsertReferenceDeadline(reference.registrationId, dueAtEpochMs);
+      await this.ensureNextAlarmInTransaction(transaction);
+    });
+  }
+
+  private async retryReferenceCleanup(deadlineKey: string): Promise<boolean> {
+    const cleanup = this.ctx.storage.sql.exec<ReferenceCleanupRow>(
+      `SELECT registration_id, registration_epoch_ms, seat_id, account_id,
+              session_id, session_version,
+              match_id, work_kind, retry_attempt
+         FROM match_reference_cleanup
+        WHERE ? = 'coordinator-cleanup:' || registration_id`,
+      deadlineKey,
+    ).toArray()[0];
+    if (!cleanup) {
+      this.ctx.storage.sql.exec(
+        `DELETE FROM do_deadline WHERE deadline_key = ?`,
+        deadlineKey,
+      );
+      return true;
+    }
+    try {
+      const coordinator = sessionCoordinatorStub(this.env, cleanup.session_id);
+      await coordinator.unregisterMatch({
+        sessionId: cleanup.session_id,
+        sessionVersion: cleanup.session_version,
+        matchId: cleanup.match_id,
+        registrationId: cleanup.registration_id,
+        registrationEpochMs: cleanup.registration_epoch_ms,
+      });
+      this.clearReferenceCleanup(cleanup.registration_id);
+      return true;
+    } catch {
+      const retryAttempt = cleanup.retry_attempt + 1;
+      const dueAtEpochMs = Date.now() + referenceCleanupRetryDelayMs(retryAttempt);
+      await this.ctx.storage.transaction(async (transaction) => {
+        this.ctx.storage.sql.exec(
+          `UPDATE match_reference_cleanup
+              SET retry_attempt = ?
+            WHERE registration_id = ?`,
+          retryAttempt,
+          cleanup.registration_id,
+        );
+        this.ctx.storage.sql.exec(
+          `UPDATE do_deadline SET due_at_ms = ? WHERE deadline_key = ?`,
+          dueAtEpochMs,
+          deadlineKey,
+        );
+        await this.ensureNextAlarmInTransaction(transaction);
+      });
+      return false;
+    }
+  }
+
+  /** SQLite deadlineとruntime alarmを同一storage transactionで確定する。 */
+  private async ensureNextAlarmInTransaction(
+    transaction: DurableObjectTransaction,
+  ): Promise<void> {
+    const next = this.ctx.storage.sql.exec<{ due_at_ms: number | null }>(
+      `SELECT MIN(due_at_ms) AS due_at_ms FROM do_deadline`,
+    ).toArray()[0];
+    if (!next || next.due_at_ms === null) return;
+    const current = await transaction.getAlarm();
+    if (current === null || next.due_at_ms < current) {
+      await transaction.setAlarm(next.due_at_ms);
+    }
   }
 
   /** 通常eventでは既存alarmを後ろへ動かさない。早く鳴るstale alarmは安全側。 */

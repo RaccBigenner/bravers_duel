@@ -22,11 +22,19 @@
       {
         "name": "MATCH_DO",
         "class_name": "MatchDO"
+      },
+      {
+        "name": "SESSION_COORDINATOR_DO",
+        "class_name": "SessionCoordinatorDO"
       }
     ]
   },
   "exports": {
     "MatchDO": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    },
+    "SessionCoordinatorDO": {
       "type": "durable-object",
       "storage": "sqlite"
     }

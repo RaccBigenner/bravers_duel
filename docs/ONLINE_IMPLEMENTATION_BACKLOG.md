@@ -623,7 +623,7 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
 
 #### OLG-113 secure session/seat token
 
-状態: **境界設計完了・実装中**（2026-08-01）
+状態: **コード実装済み・実stack受入待ち**（2026-08-01）
 
 - 10分TTLのHttpOnly bootstrap cookieとDB上のclaim/leaseを先に作り、同一guest作成の並行実行、
   signup応答喪失、Set-Cookie応答喪失から別accountを自動作成しない
@@ -637,9 +637,11 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
   OLG-121がassignmentを作るまではclient指定のmatch/seatで発行せず未参加として拒否する
 - WebSocketはOrigin/sessionを検証後にupgradeし、最初の5秒以内のauth frameでtokenを原子的に消費。
   認証完了前はgame payloadを送らず、attachmentへraw tokenを残さない
-- logoutはDBでsession versionを上げた後、関連MatchDOへversion付きinvalidateを送りACKを待つ。
-  DOのsingle-thread順序でinvalidate後のcommandを拒否する。新規接続/再接続はDB versionを
-  fail closedで検査し、各commandのDB照会だけをlogoutとの排他制御には使わない
+- logoutはsession単位の`SessionCoordinatorDO`へHMAC digest付きintentと復旧alarmを同一transactionで
+  先に保存する。その後DBでsession versionを上げ、関連MatchDOへversion付きinvalidateを送り全ACKを待つ。
+  WorkerがDB更新の前後で停止してもcoordinatorのalarmがDB失効→fan-outを冪等再開する。DOの
+  single-thread順序でinvalidate後のcommandを拒否し、新規接続/再接続はDB versionをfail closedで
+  検査する。各commandのDB照会だけをlogoutとの排他制御には使わない
 - 初期sliceはHMAC/AES鍵のactive+retained keyringまでとし、online credential回転は未実装。
   回転時は`PENDING`→最初のresolveで昇格する二段階方式等で応答順逆転を安全にする
 
@@ -651,6 +653,18 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
 - 非参加、別match/seat、期限切れ、改変、再利用tokenを拒否し、同一tokenの並行consumeは1件だけ成功する
 - seat tokenなしの通常WebSocketは拒否する。`APP_ENV=local`の`local-smoke`だけは
   SupabaseなしのOLG-102診断用例外として残す
+- public match portはOLG-121のserver-owned assignment directory接続まで閉じ、任意match IDから
+  Durable Objectを作れない。MatchDO URLとnamed DO identityも完全一致を必須にする
+- assignmentごとの一意なregistration IDを持ち、seat置換では旧session参照をversion＋ID完全一致で
+  解除する。遅延した古い解除で新参照を消さず、fan-outはmatch IDで重複排除する。同一matchの応答喪失中
+  IDはcoordinator側で8件まで。MatchDOはregister RPC前のpendingをseatごと1件に制限し、
+  pending削除＋assignment反映＋旧ID cleanup outbox＋alarmを同一transactionで確定する。exact再送は
+  mutating再登録をせずread-only barrierで失効floorとexact参照を確認する。解除の応答喪失は
+  SQLite queue＋上限60秒backoff alarmから新stubで1件ずつ回収する。coordinatorは取消済みIDを
+  O(1)の`cancelledThroughEpochMs` floorへ世代圧縮し、別stubの遅延registerを復活させない。MatchDOは
+  永続clockで`max(Date.now(), last+1, cancelledThrough+1)`を次epochにし、時計逆行と同ms衝突から回復する。
+  正常終了・取消・
+  放棄時の解除はOLG-121へ接続し、最大16件を通算対戦数ではなく進行中MatchDO数の上限にする
 - Docker互換ランタイム上でGoTrue→Worker cookie→session復元→logout→401とDB pgTAPを完走する
 
 - OLG-114 active session/複数タブ制御
@@ -700,7 +714,8 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
 
 ### Epic OLG-120 MatchDO
 
-- OLG-121 engine server adapter
+- OLG-121 engine server adapter（server-owned assignment directoryと、正常終了・取消・放棄後の
+  SessionCoordinator参照解除を含む）
 - OLG-122 `commandId + expectedRevision`
 - OLG-123 stable `battleCardId`
 - OLG-124 player projection

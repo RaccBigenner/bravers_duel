@@ -37,7 +37,7 @@ npm install       # 最初に1回
 npm test          # 全部のテスト（protocol / server / engine / web / admin / スクリプト）
 npm run sim       # 自動対戦シミュレーター
 npm run dev       # ブラウザで動作確認（開発サーバー）
-npm run dev:online    # Supabase + Worker/MatchDOをローカル起動
+npm run dev:online    # Supabase + Worker/MatchDO/SessionCoordinatorDOをローカル起動
 npm run smoke:online  # migration・DB/Auth受入・health・WebSocketを通して終了
 npm run build     # ブラウザ用のビルド
 npm run admin     # カード制作用の管理画面
@@ -65,10 +65,11 @@ npm run dev:online
 - Supabaseを使わずWorker/MatchDOだけ診断: `npm run smoke:online -- --worker-only`
 - 手動起動などで残したローカルSupabaseを停止: `npm run stop:online`
 
-WebSocketはOLG-102の疎通確認用`probe:`だけを扱う。ゲーム本体のCommand/Event/Snapshotは
-後続のOLG-121/122/125で実装する。
-OLG-111のAuth tokenはWorker内部grantにだけ保持し、browser向け`POST /auth/guest`はOLG-113の
-opaque HttpOnly sessionと同時に開くまで404のままにする。
+`local-smoke` WebSocketだけはOLG-102の疎通確認用`probe:`を扱う。通常matchはOLG-113の
+session＋一回性seat token認証まで実装済みだが、任意IDのDO生成を防ぐためpublic正方向は
+OLG-121のserver-owned assignment directory接続まで404にする。ゲーム本体のCommand/Event/Snapshotは
+後続のOLG-121/122/125で実装する。browser向け`POST /auth/guest`、`GET /auth/session`、
+`POST /auth/logout`はopaque HttpOnly sessionとして接続済みで、Supabase Auth tokenはWorker内部grantだけに保持する。
 
 エンジンだけを触るとき:
 

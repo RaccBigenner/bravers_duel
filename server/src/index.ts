@@ -1,8 +1,8 @@
 import { PROTOCOL_SCAFFOLD } from '@bravers/protocol';
 import { handleAuthRequest } from './http/authController';
 import { handleMatchAccessRequest } from './http/matchAccessController';
-import type { SessionRuntimeBindings } from './auth/sessionRuntimeConfig';
 export { MatchDO, matchIdFromPath } from './match/matchDurableObject';
+export { SessionCoordinatorDO } from './session/sessionCoordinatorDurableObject';
 
 const HEALTH_MATCH_ID = 'olg-102-health';
 
@@ -52,10 +52,7 @@ export default {
     const matchResponse = await handleMatchAccessRequest(request, env);
     if (matchResponse) return matchResponse;
 
-    const authResponse = await handleAuthRequest(
-      request,
-      env as unknown as SessionRuntimeBindings,
-    );
+    const authResponse = await handleAuthRequest(request, env);
     if (authResponse) return authResponse;
 
     return json({ error: 'NOT_FOUND' }, { status: 404 });

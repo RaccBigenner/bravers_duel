@@ -35,6 +35,12 @@ type SocketOutcome =
   | { kind: 'message'; data: string }
   | { kind: 'close'; code: number; reason: string };
 
+interface TestPendingAttachment extends MatchSessionPrincipal {
+  mode: 'pending';
+  connectionId: string;
+  authDeadlineEpochMs: number;
+}
+
 let matchSequence = 0;
 
 function matchId(label: string): string {
@@ -99,6 +105,26 @@ function rotatedSeatTokenKeys(): {
     activeVersion,
     retainedVersion: retained.keyVersion,
   };
+}
+
+function pendingAttachment(
+  state: DurableObjectState,
+  sessionId: string,
+): TestPendingAttachment {
+  const attachments = state.getWebSockets().map(
+    (socket) => socket.deserializeAttachment() as Partial<TestPendingAttachment> | null,
+  );
+  const attachment = attachments.find(
+    (candidate) => candidate?.mode === 'pending' && candidate.sessionId === sessionId,
+  );
+  if (
+    !attachment ||
+    typeof attachment.connectionId !== 'string' ||
+    !Number.isSafeInteger(attachment.authDeadlineEpochMs)
+  ) {
+    throw new Error('Expected pending attachment');
+  }
+  return attachment as TestPendingAttachment;
 }
 
 function socketOutcome(socket: WebSocket, timeoutMs = 2_000): Promise<SocketOutcome> {
@@ -247,6 +273,66 @@ describe('OLG-113 MatchDO seat authentication', () => {
     socket.close(1000, 'done');
   });
 
+  it('同じassignmentの再送は永続registration IDを再利用して参照を増やさない', async () => {
+    const id = matchId('assignment-idempotency');
+    const stub = stubFor(id);
+    const session = principal();
+    const first = await stub.assignSeat({ ...session, seatId: 'player-1' });
+    const second = await stub.assignSeat({ ...session, seatId: 'player-1' });
+    expect(second).toEqual(first);
+
+    const storedRegistrationId = await runInDurableObject(
+      stub,
+      (_instance, state) => state.storage.sql.exec<{ coordinator_registration_id: string }>(
+        `SELECT coordinator_registration_id FROM match_seat_assignment WHERE seat_id = 'player-1'`,
+      ).one().coordinator_registration_id,
+    );
+    const coordinatorValues = await runInDurableObject(
+      coordinatorFor(session.sessionId),
+      async (_instance, state) => [...(await state.storage.list()).values()],
+    );
+    const references = coordinatorValues.find(Array.isArray) as
+      | Array<Record<string, unknown>>
+      | undefined;
+    expect(references?.filter((reference) => reference.matchId === id)).toEqual([
+      expect.objectContaining({
+        matchId: id,
+        registrationId: storedRegistrationId,
+      }),
+    ]);
+  });
+
+  it('coordinatorの取消epochが進んでいてもfloor+1を永続して次の明示再送で回復する', async () => {
+    const id = matchId('registration-epoch-recovery');
+    const session = principal();
+    const cancelledThroughEpochMs = Date.now() + 1_000;
+    await coordinatorFor(session.sessionId).unregisterMatch({
+      sessionId: session.sessionId,
+      sessionVersion: session.sessionVersion,
+      matchId: id,
+      registrationId: crypto.randomUUID(),
+      registrationEpochMs: cancelledThroughEpochMs,
+    });
+    const stub = stubFor(id);
+
+    await expect(
+      stub.assignSeat({ ...session, seatId: 'player-1' }),
+    ).resolves.toEqual({ state: 'conflict' });
+    await expect(
+      stub.assignSeat({ ...session, seatId: 'player-1' }),
+    ).resolves.toMatchObject({ state: 'assigned', seatId: 'player-1' });
+    const activeEpoch = await runInDurableObject(
+      stub,
+      (_instance, state) => state.storage.sql.exec<{
+        coordinator_registration_epoch_ms: number;
+      }>(
+        `SELECT coordinator_registration_epoch_ms
+           FROM match_seat_assignment WHERE seat_id = 'player-1'`,
+      ).one().coordinator_registration_epoch_ms,
+    );
+    expect(activeEpoch).toBeGreaterThan(cancelledThroughEpochMs);
+  });
+
   it('seat再割当で旧authenticated socketを閉じ、旧assignmentVersionを使わせない', async () => {
     const id = matchId('reassignment');
     const stub = stubFor(id);
@@ -259,8 +345,9 @@ describe('OLG-113 MatchDO seat authentication', () => {
     });
 
     const closed = socketOutcome(socket);
+    const secondSession = principal();
     const reassigned = await stub.assignSeat({
-      ...principal(),
+      ...secondSession,
       seatId: 'player-1',
     });
     expect(reassigned).toEqual({
@@ -273,6 +360,41 @@ describe('OLG-113 MatchDO seat authentication', () => {
       code: 1008,
       reason: 'SEAT_REASSIGNED',
     });
+    const [oldReferences, newReferences] = await Promise.all([
+      runInDurableObject(
+        coordinatorFor(firstSession.sessionId),
+        async (_instance, state) => [...(await state.storage.list()).values()],
+      ),
+      runInDurableObject(
+        coordinatorFor(secondSession.sessionId),
+        async (_instance, state) => [...(await state.storage.list()).values()],
+      ),
+    ]);
+    expect(JSON.stringify(oldReferences)).not.toContain(id);
+    expect(JSON.stringify(newReferences)).toContain(id);
+  });
+
+  it('同じsession IDを別accountへ付け替えず、既存coordinator参照も保持する', async () => {
+    const id = matchId('session-account-conflict');
+    const stub = stubFor(id);
+    const session = principal();
+    await expect(
+      stub.assignSeat({ ...session, seatId: 'player-1' }),
+    ).resolves.toMatchObject({ state: 'assigned' });
+
+    await expect(
+      stub.assignSeat({
+        ...session,
+        accountId: crypto.randomUUID(),
+        seatId: 'player-1',
+      }),
+    ).resolves.toEqual({ state: 'conflict' });
+    await expect(stub.issueSeatToken(session)).resolves.toMatchObject({ state: 'issued' });
+    const coordinatorValues = await runInDurableObject(
+      coordinatorFor(session.sessionId),
+      async (_instance, state) => [...(await state.storage.list()).values()],
+    );
+    expect(JSON.stringify(coordinatorValues)).toContain(id);
   });
 
   it('別account/session/version/matchの接続を拒否し、正しい主体だけが消費できる', async () => {
@@ -374,6 +496,90 @@ describe('OLG-113 MatchDO seat authentication', () => {
     ).toHaveLength(1);
     first.close(1000, 'done');
     second.close(1000, 'done');
+  });
+
+  it('active+retained候補で鍵更新前に発行したtokenを統合consumeできる', async () => {
+    const id = matchId('retained-key');
+    const stub = stubFor(id);
+    const session = principal();
+    const issued = await assignAndIssue(stub, session);
+    const rotated = rotatedSeatTokenKeys();
+    const candidates = await seatTokenDigestCandidates(issued.seatToken, rotated.keys);
+    expect(candidates.map((candidate) => candidate.keyVersion)).toEqual([
+      rotated.activeVersion,
+      rotated.retainedVersion,
+    ]);
+    const socket = await openPlayerSocket(stub, id, session);
+
+    const consumed = await runInDurableObject(stub, (instance, state) => {
+      const attachment = pendingAttachment(state, session.sessionId);
+      return (instance as MatchDO).consumeSeatTokenCandidates(candidates, session, {
+        connectionId: attachment.connectionId,
+        authDeadlineEpochMs: attachment.authDeadlineEpochMs,
+      });
+    });
+
+    expect(consumed).toEqual({
+      state: 'consumed',
+      seatId: 'player-1',
+      assignmentVersion: issued.assignmentVersion,
+    });
+    const snapshot = await durableSnapshot(stub);
+    expect(snapshot.tokenRows).toHaveLength(1);
+    expect(snapshot.tokenRows[0]?.digest_key_version).toBe(rotated.retainedVersion);
+    expect(snapshot.tokenRows[0]?.consumed_at_ms).toEqual(expect.any(Number));
+    socket.close(1000, 'done');
+  });
+
+  it('2候補がSQLite上で同時一致したambiguousではどちらも消費しない', async () => {
+    const id = matchId('ambiguous-key');
+    const stub = stubFor(id);
+    const session = principal();
+    const issued = await assignAndIssue(stub, session);
+    const rotated = rotatedSeatTokenKeys();
+    const candidates = await seatTokenDigestCandidates(issued.seatToken, rotated.keys);
+    const active = candidates.find(
+      (candidate) => candidate.keyVersion === rotated.activeVersion,
+    );
+    const retained = candidates.find(
+      (candidate) => candidate.keyVersion === rotated.retainedVersion,
+    );
+    if (!active || !retained) throw new Error('Expected active and retained candidates');
+    const socket = await openPlayerSocket(stub, id, session);
+
+    const consumed = await runInDurableObject(stub, (instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO match_seat_token (
+           token_digest, digest_key_version, seat_id, account_id, session_id,
+           session_version, assignment_version, issued_at_ms, expires_at_ms, consumed_at_ms
+         )
+         SELECT ?, ?, seat_id, account_id, session_id, session_version,
+                assignment_version, issued_at_ms, expires_at_ms, consumed_at_ms
+           FROM match_seat_token
+          WHERE token_digest = ? AND digest_key_version = ?`,
+        active.digestHex,
+        active.keyVersion,
+        retained.digestHex,
+        retained.keyVersion,
+      );
+      const attachment = pendingAttachment(state, session.sessionId);
+      return (instance as MatchDO).consumeSeatTokenCandidates(candidates, session, {
+        connectionId: attachment.connectionId,
+        authDeadlineEpochMs: attachment.authDeadlineEpochMs,
+      });
+    });
+
+    expect(consumed).toEqual({ state: 'ambiguous' });
+    const snapshot = await durableSnapshot(stub);
+    expect(snapshot.tokenRows).toHaveLength(2);
+    expect(
+      snapshot.tokenRows.every((row) => row.consumed_at_ms === null),
+    ).toBe(true);
+    expect(snapshot.tokenRows.map((row) => row.digest_key_version).sort()).toEqual([
+      rotated.retainedVersion,
+      rotated.activeVersion,
+    ]);
+    socket.close(1000, 'done');
   });
 
   it('同一assignmentへの発行がMAX_OUTSTANDING_SEAT_TOKENSに達するとrate_limitedになり、消費後に再発行できる', async () => {
@@ -510,6 +716,236 @@ describe('OLG-113 MatchDO seat authentication', () => {
     });
   });
 
+  it('MatchDO側でassignment conflictになった新規参照をcoordinatorから解除する', async () => {
+    const session = principal();
+    const id = matchId('reference-cleanup');
+    const stub = stubFor(id);
+    await stub.invalidateSession({
+      sessionId: session.sessionId,
+      invalidatedVersion: session.sessionVersion + 1,
+    });
+
+    await expect(
+      stub.assignSeat({ ...session, seatId: 'player-1' }),
+    ).resolves.toEqual({ state: 'conflict' });
+    const coordinatorValues = await runInDurableObject(
+      coordinatorFor(session.sessionId),
+      async (_instance, state) => [...(await state.storage.list()).values()],
+    );
+    expect(JSON.stringify(coordinatorValues)).not.toContain(id);
+  });
+
+  it('coordinator解除の応答喪失をSQLiteへ残し、新しいstubのalarm retryで回収する', async () => {
+    const session = principal();
+    const id = matchId('reference-cleanup-retry');
+    const registrationId = crypto.randomUUID();
+    const reference = {
+      seatId: 'player-1' as const,
+      accountId: session.accountId,
+      sessionId: session.sessionId,
+      sessionVersion: session.sessionVersion,
+      matchId: id,
+      registrationId,
+      registrationEpochMs: Date.now(),
+    };
+    const coordinator = coordinatorFor(session.sessionId);
+    await coordinator.registerMatch(reference);
+    const stub = stubFor(id);
+
+    await runInDurableObject(stub, async (instance, state) => {
+      await (
+        instance as unknown as {
+          unregisterReference(input: typeof reference, target: unknown): Promise<void>;
+        }
+      ).unregisterReference(reference, {
+        unregisterMatch: async () => {
+          throw new Error('simulated response loss');
+        },
+      });
+      expect(
+        state.storage.sql.exec<SqlRow>(`SELECT * FROM match_reference_cleanup`).toArray(),
+      ).toEqual([
+        expect.objectContaining({ registration_id: registrationId, retry_attempt: 0 }),
+      ]);
+      expect(
+        state.storage.sql.exec<SqlRow>(
+          `SELECT deadline_kind FROM do_deadline WHERE deadline_key = ?`,
+          `coordinator-cleanup:${registrationId}`,
+        ).one(),
+      ).toEqual({ deadline_kind: 'coordinator-cleanup' });
+      expect(await state.storage.getAlarm()).toEqual(expect.any(Number));
+      state.storage.sql.exec(
+        `UPDATE do_deadline SET due_at_ms = ? WHERE deadline_key = ?`,
+        Date.now() - 1,
+        `coordinator-cleanup:${registrationId}`,
+      );
+      await state.storage.setAlarm(Date.now() + 60_000);
+      await (instance as MatchDO).alarm();
+    });
+
+    const cleaned = await runInDurableObject(stub, (_instance, state) => ({
+      cleanup: state.storage.sql.exec<SqlRow>(`SELECT * FROM match_reference_cleanup`).toArray(),
+      deadlines: state.storage.sql.exec<SqlRow>(
+        `SELECT * FROM do_deadline WHERE deadline_kind = 'coordinator-cleanup'`,
+      ).toArray(),
+    }));
+    expect(cleaned).toEqual({ cleanup: [], deadlines: [] });
+    await expect(coordinator.checkMatch(reference)).resolves.toEqual({ state: 'missing' });
+    await expect(coordinator.registerMatch(reference)).resolves.toMatchObject({
+      state: 'cancelled',
+      cancelledThroughEpochMs: reference.registrationEpochMs,
+    });
+  });
+
+  it('register応答前のpendingを永続化し、停止後alarmが孤児参照へ収束させる', async () => {
+    const session = principal();
+    const id = matchId('pending-registration-recovery');
+    const reference = {
+      seatId: 'player-1' as const,
+      accountId: session.accountId,
+      sessionId: session.sessionId,
+      sessionVersion: session.sessionVersion,
+      matchId: id,
+      registrationId: crypto.randomUUID(),
+      registrationEpochMs: Date.now(),
+    };
+    const coordinator = coordinatorFor(session.sessionId);
+    await coordinator.registerMatch(reference);
+    const stub = stubFor(id);
+
+    await runInDurableObject(stub, async (instance, state) => {
+      await (
+        instance as unknown as {
+          persistPendingReference(input: typeof reference): Promise<void>;
+        }
+      ).persistPendingReference(reference);
+      expect(
+        state.storage.sql.exec<SqlRow>(
+          `SELECT work_kind FROM match_reference_cleanup WHERE registration_id = ?`,
+          reference.registrationId,
+        ).one(),
+      ).toEqual({ work_kind: 'pending_assignment' });
+      expect(await state.storage.getAlarm()).toEqual(expect.any(Number));
+      state.storage.sql.exec(
+        `UPDATE do_deadline SET due_at_ms = ? WHERE deadline_key = ?`,
+        Date.now() - 1,
+        `coordinator-cleanup:${reference.registrationId}`,
+      );
+      await state.storage.setAlarm(Date.now() + 60_000);
+      await (instance as MatchDO).alarm();
+    });
+
+    await expect(coordinator.checkMatch(reference)).resolves.toEqual({ state: 'missing' });
+    await expect(coordinator.registerMatch(reference)).resolves.toMatchObject({
+      state: 'cancelled',
+      cancelledThroughEpochMs: reference.registrationEpochMs,
+    });
+  });
+
+  it('seat置換transaction内で新pendingをactive化し、旧ID cleanup outboxとalarmを残す', async () => {
+    const id = matchId('replacement-outbox');
+    const stub = stubFor(id);
+    const first = principal();
+    await stub.assignSeat({ ...first, seatId: 'player-1' });
+    const oldRegistrationId = await runInDurableObject(
+      stub,
+      (_instance, state) => state.storage.sql.exec<{ coordinator_registration_id: string }>(
+        `SELECT coordinator_registration_id FROM match_seat_assignment WHERE seat_id = 'player-1'`,
+      ).one().coordinator_registration_id,
+    );
+    const second = principal();
+
+    await runInDurableObject(stub, async (instance, state) => {
+      const target = instance as unknown as {
+        assignSeat(input: MatchSessionPrincipal & { seatId: MatchSeatId }): Promise<unknown>;
+        unregisterReference(input: unknown): Promise<void>;
+      };
+      const unregister = target.unregisterReference.bind(instance);
+      target.unregisterReference = async () => {};
+      await expect(
+        target.assignSeat({ ...second, seatId: 'player-1' }),
+      ).resolves.toMatchObject({ state: 'assigned', seatId: 'player-1' });
+      target.unregisterReference = unregister;
+
+      expect(
+        state.storage.sql.exec<SqlRow>(`SELECT * FROM match_reference_cleanup`).toArray(),
+      ).toEqual([
+        expect.objectContaining({
+          registration_id: oldRegistrationId,
+          seat_id: 'player-1',
+          account_id: first.accountId,
+          work_kind: 'cleanup',
+        }),
+      ]);
+      expect(await state.storage.getAlarm()).toEqual(expect.any(Number));
+      const active = state.storage.sql.exec<SqlRow>(
+        `SELECT account_id, coordinator_registration_id
+           FROM match_seat_assignment WHERE seat_id = 'player-1'`,
+      ).one();
+      expect(active.account_id).toBe(second.accountId);
+      expect(active.coordinator_registration_id).not.toBe(oldRegistrationId);
+    });
+  });
+
+  it('cleanup中のseatは次の置換をfail closedにし、alarmは1件ずつ処理する', async () => {
+    const id = matchId('bounded-reference-work');
+    const stub = stubFor(id);
+    const first = principal();
+    const second = principal();
+    const works = [
+      {
+        seatId: 'player-1' as const,
+        accountId: first.accountId,
+        sessionId: first.sessionId,
+        sessionVersion: first.sessionVersion,
+        matchId: id,
+        registrationId: crypto.randomUUID(),
+        registrationEpochMs: Date.now(),
+      },
+      {
+        seatId: 'player-2' as const,
+        accountId: second.accountId,
+        sessionId: second.sessionId,
+        sessionVersion: second.sessionVersion,
+        matchId: id,
+        registrationId: crypto.randomUUID(),
+        registrationEpochMs: Date.now(),
+      },
+    ];
+
+    await runInDurableObject(stub, async (instance, state) => {
+      const target = instance as unknown as {
+        scheduleReferenceCleanup(input: (typeof works)[number]): Promise<void>;
+        retryReferenceCleanup(deadlineKey: string): Promise<boolean>;
+        assignSeat(input: MatchSessionPrincipal & { seatId: MatchSeatId }): Promise<unknown>;
+      };
+      await target.scheduleReferenceCleanup(works[0]!);
+      await target.scheduleReferenceCleanup(works[1]!);
+      state.storage.sql.exec(
+        `UPDATE do_deadline SET due_at_ms = ? WHERE deadline_kind = 'coordinator-cleanup'`,
+        Date.now() - 1,
+      );
+      await state.storage.setAlarm(Date.now() + 60_000);
+
+      const retried: string[] = [];
+      target.retryReferenceCleanup = async (deadlineKey) => {
+        retried.push(deadlineKey);
+        return false;
+      };
+      await (instance as MatchDO).alarm();
+      expect(retried).toHaveLength(1);
+      expect(await state.storage.getAlarm()).toEqual(expect.any(Number));
+      await expect(
+        target.assignSeat({ ...principal(), seatId: 'player-1' }),
+      ).resolves.toEqual({ state: 'conflict' });
+      expect(
+        state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM match_reference_cleanup`,
+        ).one().count,
+      ).toBe(2);
+    });
+  });
+
   it('pending socketを休止復帰させても5秒deadlineのalarmで閉じる', async () => {
     const id = matchId('alarm');
     const stub = stubFor(id);
@@ -551,6 +987,86 @@ describe('OLG-113 MatchDO seat authentication', () => {
     const snapshot = await durableSnapshot(stub);
     expect(snapshot.deadlineRows).toHaveLength(0);
     expect(SEAT_AUTH_FRAME_TIMEOUT_MS).toBe(5_000);
+  });
+
+  it('複数pendingでは早いalarmを後発が遅らせず、同じalarmの二重実行も冪等', async () => {
+    const id = matchId('multiple-alarms');
+    const stub = stubFor(id);
+    const firstSession = principal();
+    const secondSession = principal();
+    const firstSocket = await openPlayerSocket(stub, id, firstSession);
+    const firstState = await runInDurableObject(stub, async (_instance, state) => {
+      const attachment = pendingAttachment(state, firstSession.sessionId);
+      return {
+        attachment,
+        alarm: await state.storage.getAlarm(),
+      };
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const secondSocket = await openPlayerSocket(stub, id, secondSession);
+    const secondState = await runInDurableObject(stub, async (_instance, state) => ({
+      attachment: pendingAttachment(state, secondSession.sessionId),
+      alarm: await state.storage.getAlarm(),
+    }));
+
+    expect(secondState.attachment.authDeadlineEpochMs).toBeGreaterThan(
+      firstState.attachment.authDeadlineEpochMs,
+    );
+    expect(firstState.alarm).toBe(firstState.attachment.authDeadlineEpochMs);
+    expect(secondState.alarm).toBe(firstState.alarm);
+
+    const earlyDueAt = Date.now() + 150;
+    const lateDueAt = earlyDueAt + 60_000;
+    await runInDurableObject(stub, async (_instance, state) => {
+      for (const serverSocket of state.getWebSockets()) {
+        const attachment = serverSocket.deserializeAttachment() as
+          | TestPendingAttachment
+          | null;
+        if (attachment?.mode !== 'pending') continue;
+        const dueAt = attachment.sessionId === firstSession.sessionId
+          ? earlyDueAt
+          : lateDueAt;
+        serverSocket.serializeAttachment({
+          ...attachment,
+          authDeadlineEpochMs: dueAt,
+        });
+        state.storage.sql.exec(
+          `UPDATE do_deadline SET due_at_ms = ? WHERE deadline_key = ?`,
+          dueAt,
+          `ws-auth:${attachment.connectionId}`,
+        );
+      }
+      // 自動配送との競合を避け、下で同じalarm handlerを明示的に二重実行する。
+      await state.storage.setAlarm(lateDueAt + 60_000);
+    });
+
+    const firstClose = socketOutcome(firstSocket);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await runInDurableObject(stub, (instance) => (instance as MatchDO).alarm());
+    await expect(firstClose).resolves.toEqual({
+      kind: 'close',
+      code: 1008,
+      reason: 'AUTH_FAILED',
+    });
+    await runInDurableObject(stub, (instance) => (instance as MatchDO).alarm());
+
+    const remaining = await runInDurableObject(stub, async (_instance, state) => ({
+      deadlines: state.storage.sql.exec<SqlRow>(
+        `SELECT deadline_key, due_at_ms FROM do_deadline`,
+      ).toArray(),
+      secondAttachment: pendingAttachment(state, secondSession.sessionId),
+      alarm: await state.storage.getAlarm(),
+    }));
+    expect(remaining.deadlines).toEqual([
+      {
+        deadline_key: `ws-auth:${secondState.attachment.connectionId}`,
+        due_at_ms: lateDueAt,
+      },
+    ]);
+    expect(remaining.secondAttachment.authDeadlineEpochMs).toBe(lateDueAt);
+    expect(remaining.alarm).toBe(lateDueAt);
+    expect(secondSocket.readyState).toBe(WebSocket.OPEN);
+    secondSocket.close(1000, 'done');
   });
 
   it('無認証diagnosticはlocalの完全一致local-smokeだけに限定する', async () => {

@@ -1,3 +1,4 @@
+import { env } from 'cloudflare:workers';
 import { describe, expect, it, vi } from 'vitest';
 import { generateOpaqueToken } from '../src/auth/sessionCrypto';
 import { GuestAuthError } from '../src/auth/supabaseGuestAuth';
@@ -15,6 +16,13 @@ import {
   type AuthControllerDependencies,
 } from '../src/http/authController';
 import { AUTH_CLIENT_HEADER, AUTH_CLIENT_HEADER_VALUE } from '../src/http/authRequest';
+import {
+  INTERNAL_ACCOUNT_ID_HEADER,
+  INTERNAL_SESSION_ID_HEADER,
+  INTERNAL_SESSION_VERSION_HEADER,
+  type MatchDO,
+} from '../src/match/matchDurableObject';
+import { sessionCoordinatorStub } from '../src/session/sessionCoordinatorDurableObject';
 
 const ORIGIN = 'http://127.0.0.1:8787';
 const ATTEMPT_ID = '11111111-2222-4333-8444-555555555555';
@@ -106,10 +114,18 @@ function controller(
     expiresAtEpochSeconds: 4_102_444_800,
   }));
   const deletePrincipal = vi.fn(async () => undefined);
+  const prepareSessionLogout = vi.fn(async () => ({ state: 'prepared' as const }));
+  const confirmSessionLogout = vi.fn(async () => ({
+    state: 'acknowledged' as const,
+    invalidatedVersion: 2,
+    matchedObjects: 0,
+  }));
   const dependencies: AuthControllerDependencies = {
     createStore,
     createPrincipal,
     deletePrincipal,
+    prepareSessionLogout,
+    confirmSessionLogout,
     randomUuid: () => SESSION_ID,
     ...overrides,
   };
@@ -118,6 +134,8 @@ function controller(
     createStore,
     createPrincipal,
     deletePrincipal,
+    prepareSessionLogout,
+    confirmSessionLogout,
   };
 }
 
@@ -136,6 +154,38 @@ function post(
     method: 'POST',
     headers,
     body: JSON.stringify(body),
+  });
+}
+
+function nextSocketEvent(
+  socket: WebSocket,
+): Promise<{ kind: 'message'; data: string } | { kind: 'close'; reason: string }> {
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      clearTimeout(timer);
+      socket.removeEventListener('message', onMessage);
+      socket.removeEventListener('close', onClose);
+      socket.removeEventListener('error', onError);
+    };
+    const onMessage = (event: MessageEvent) => {
+      cleanup();
+      resolve({ kind: 'message', data: String(event.data) });
+    };
+    const onClose = (event: CloseEvent) => {
+      cleanup();
+      resolve({ kind: 'close', reason: event.reason });
+    };
+    const onError = () => {
+      cleanup();
+      reject(new Error('Unexpected WebSocket error'));
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error('Timed out waiting for WebSocket event'));
+    }, 2_000);
+    socket.addEventListener('message', onMessage);
+    socket.addEventListener('close', onClose);
+    socket.addEventListener('error', onError);
   });
 }
 
@@ -399,7 +449,7 @@ describe('OLG-113 auth controller', () => {
     expect(flow.createPrincipal).toHaveBeenCalledOnce();
   });
 
-  it('logoutはDB失効成功後だけcookieを消し、失敗時はcookieを維持する', async () => {
+  it('logoutはDB失効後に関連MatchDOの全ACKを待ってcookieを消す', async () => {
     const revoke = vi.fn(async () => ({
       sessionId: SESSION_ID,
       accountId: ACCOUNT_ID,
@@ -416,6 +466,30 @@ describe('OLG-113 auth controller', () => {
     expect(loggedOut?.status).toBe(204);
     expect(setCookieValues(loggedOut!).join('\n')).toContain('Max-Age=0');
     expect(revoke).toHaveBeenCalledOnce();
+    expect(success.prepareSessionLogout).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        sessionId: SESSION_ID,
+        accountId: ACCOUNT_ID,
+        sessionVersion: 1,
+        sessionDigestKeyVersion: 1,
+      }),
+    );
+    expect(success.confirmSessionLogout).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        sessionId: SESSION_ID,
+        accountId: ACCOUNT_ID,
+        sessionVersion: 1,
+        invalidatedVersion: 2,
+      }),
+    );
+    expect(success.prepareSessionLogout.mock.invocationCallOrder[0]).toBeLessThan(
+      revoke.mock.invocationCallOrder[0]!,
+    );
+    expect(revoke.mock.invocationCallOrder[0]).toBeLessThan(
+      success.confirmSessionLogout.mock.invocationCallOrder[0]!,
+    );
 
     const failed = controller(
       fakeStore({
@@ -430,7 +504,117 @@ describe('OLG-113 auth controller', () => {
       localBindings(),
     );
     expect(unavailable?.status).toBe(503);
-    expect(unavailable?.headers.get('Set-Cookie')).toBeNull();
+    expect(setCookieValues(unavailable!).join('\n')).toContain('Max-Age=0');
+    expect(failed.prepareSessionLogout).toHaveBeenCalledOnce();
+    expect(failed.confirmSessionLogout).not.toHaveBeenCalled();
+  });
+
+  it('DB失効後のMatchDO fan-out未完は503でcookieを消し、coordinator retryへ委ねる', async () => {
+    const store = fakeStore({
+      resolveSessionCandidates: vi.fn(async () => principal),
+      revokeSession: vi.fn(async () => ({
+        sessionId: SESSION_ID,
+        accountId: ACCOUNT_ID,
+        sessionVersion: 2,
+        alreadyRevoked: false,
+      })),
+    });
+    const pendingFlow = controller(store, {
+      confirmSessionLogout: vi.fn(async () => ({
+        state: 'pending' as const,
+        invalidatedVersion: 2,
+        pendingObjects: 1,
+      })),
+    });
+    const pending = await pendingFlow.handle(
+      post('/auth/logout', {}, { cookie: `bd_session_local=${SESSION_TOKEN}` }),
+      localBindings(),
+    );
+    expect(pending?.status).toBe(503);
+    expect(pending?.headers.get('Retry-After')).toBe('1');
+    expect(setCookieValues(pending!).join('\n')).toContain('Max-Age=0');
+    expect(await pending?.json()).toEqual({ error: 'AUTH_UNAVAILABLE' });
+
+    const failedFlow = controller(store, {
+      confirmSessionLogout: vi.fn(async () => {
+        throw new Error('coordinator unavailable');
+      }),
+    });
+    const failed = await failedFlow.handle(
+      post('/auth/logout', {}, { cookie: `bd_session_local=${SESSION_TOKEN}` }),
+      localBindings(),
+    );
+    expect(failed?.status).toBe(503);
+    expect(setCookieValues(failed!).join('\n')).toContain('Max-Age=0');
+  });
+
+  it('route logoutがDB version更新後に実SessionCoordinator経由で既存socketを閉じる', async () => {
+    const matchId = `logout-route-${crypto.randomUUID().slice(0, 8)}`;
+    const matchStub: DurableObjectStub<MatchDO> = env.MATCH_DO.get(
+      env.MATCH_DO.idFromName(matchId),
+    );
+    const matchPrincipal = {
+      accountId: ACCOUNT_ID,
+      sessionId: SESSION_ID,
+      sessionVersion: 1,
+    };
+    await expect(
+      matchStub.assignSeat({ ...matchPrincipal, seatId: 'player-1' }),
+    ).resolves.toMatchObject({ state: 'assigned', seatId: 'player-1' });
+    const issued = await matchStub.issueSeatToken(matchPrincipal);
+    expect(issued.state).toBe('issued');
+    if (issued.state !== 'issued') throw new Error('Expected issued seat token');
+    const upgraded = await matchStub.fetch(
+      new Request(`${ORIGIN}/matches/${matchId}/ws`, {
+        headers: {
+          Upgrade: 'websocket',
+          [INTERNAL_ACCOUNT_ID_HEADER]: ACCOUNT_ID,
+          [INTERNAL_SESSION_ID_HEADER]: SESSION_ID,
+          [INTERNAL_SESSION_VERSION_HEADER]: '1',
+        },
+      }),
+    );
+    const socket = upgraded.webSocket;
+    expect(upgraded.status).toBe(101);
+    if (!socket) throw new Error('Expected WebSocket response');
+    socket.accept();
+    const authenticated = nextSocketEvent(socket);
+    socket.send(JSON.stringify({ type: 'auth', seatToken: issued.seatToken }));
+    await expect(authenticated).resolves.toEqual({ kind: 'message', data: 'auth_ok' });
+
+    const revoke = vi.fn(async () => ({
+      sessionId: SESSION_ID,
+      accountId: ACCOUNT_ID,
+      sessionVersion: 2,
+      alreadyRevoked: false,
+    }));
+    const flow = controller(
+      fakeStore({
+        resolveSessionCandidates: vi.fn(async () => principal),
+        revokeSession: revoke,
+      }),
+      {
+        prepareSessionLogout: (bindings, input) =>
+          sessionCoordinatorStub(bindings, input.sessionId).prepareLogout(input),
+        confirmSessionLogout: (bindings, input) =>
+          sessionCoordinatorStub(bindings, input.sessionId).confirmLogout(input),
+      },
+    );
+    const closed = nextSocketEvent(socket);
+    const response = await flow.handle(
+      post('/auth/logout', {}, { cookie: `bd_session_local=${SESSION_TOKEN}` }),
+      {
+        ...localBindings(),
+        SESSION_COORDINATOR_DO: env.SESSION_COORDINATOR_DO,
+      },
+    );
+
+    expect(response?.status).toBe(204);
+    expect(revoke).toHaveBeenCalledOnce();
+    await expect(closed).resolves.toEqual({ kind: 'close', reason: 'SESSION_ENDED' });
+    await expect(matchStub.issueSeatToken(matchPrincipal)).resolves.toEqual({
+      state: 'not_assigned',
+    });
   });
 
   it('remote guestはcreate_auth claim後にCAPTCHA欠損を安全解放する', async () => {

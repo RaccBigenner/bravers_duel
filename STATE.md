@@ -120,9 +120,17 @@
 - OLG-111は2026-08-01にコード実装済み。Supabase anonymous Auth userと同じUUIDの
   `public.account`をtriggerで原子的に作り、RLSと権限剥奪でclientのData APIから隠す。
   Worker内部providerはtokenを外へ出さず、remoteではsecret key＋信頼済みIP転送を必須にし、
-  曖昧なsignup失敗を自動再試行しない。`POST /auth/guest`とopaque cookieはOLG-113へ残した。
+  曖昧なsignup失敗を自動再試行しない。`POST /auth/guest`とopaque cookieは後続OLG-113で接続済み。
   live smokeはrequest期限と中断後の削除完了待ちを持つ。pgTAP 27項目とGoTrue live smokeは
   `npm run smoke:online`へ配線済みで、Docker起動後の実行待ち。
+- OLG-113は2026-08-01にコード実装済み。10分bootstrap claim、opaque HttpOnly session、
+  30秒・単一match/seat・一回性seat token、5秒WebSocket auth frameをserver権威で接続した。
+  logoutは`SessionCoordinatorDO`へ失効intent＋alarmを原子的に先置きし、DB version更新後に
+  関連MatchDOの全ACKを待つ。Worker応答喪失時もDB失効から自動再開する。public match正方向は
+  MatchDOのRPC前pending・seat置換cleanup outbox・世代圧縮取消floorで停止/別stub順序逆転も
+  fail closedにした。OLG-121のassignment directoryまで閉じたまま。root全test、server 142 test、
+  実Worker/DO smokeはgreen。
+  残るのはDocker互換ランタイム上のGoTrue→cookie→session復元→logout→401とpgTAP受入。
 - P2へNPCシングル市場を正式登録した。G2 Collection Closed Betaは固定買取/販売、有限な実在個体在庫、
   atomic quote/orderで開始する。固定価格のraw集計からpolicyを承認し、2〜4週間shadow計算する。
   日次±5%・基準80〜120%の動的価格を実注文へ使えるのはG8だけとし、G4以降の標本、
@@ -157,7 +165,9 @@
   全検証はgreen。Docker互換ランタイム起動後に`npm run smoke:online`を1回通し、
   Supabase migration/pgTAPまで確認できたら完了にする。
 - **OLG-111も実装済み・実stack受入待ち**。同じ`npm run smoke:online`でGoTrue匿名signup、
-  同一UUIDのaccount行、直接read拒否、削除cascadeまで通れば完了にする。HTTP routeはOLG-113で開く。
+  同一UUIDのaccount行、直接read拒否、削除cascadeまで通れば完了にする。HTTP routeはOLG-113で接続済み。
+- **OLG-113も実装済み・実stack受入待ち**。同じ実stackでguest cookie発行、session復元、logout後401、
+  pgTAPを完走したら完了にする。通常matchのpublic正方向はOLG-121まで閉じる。
   OLG-003PのCloudflare作業はG0 blockerとして並行管理する。
 - ここまでの経緯は一番下の「開発の記録」を見る。
 

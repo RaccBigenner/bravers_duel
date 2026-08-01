@@ -32,6 +32,14 @@ import {
 } from '../auth/supabaseSessionStore';
 import type { SessionPrincipal } from '../auth/supabaseSessionStore';
 import {
+  sessionCoordinatorStub,
+  type SessionCoordinatorBindings,
+  type SessionInvalidationResult,
+  type SessionLogoutConfirmation,
+  type SessionLogoutIntent,
+  type SessionLogoutPreparationResult,
+} from '../session/sessionCoordinatorDurableObject';
+import {
   SessionRuntimeConfigError,
   createSessionRequestPolicy,
   createSessionRuntimeConfig,
@@ -56,6 +64,10 @@ const AUTH_ROUTES = new Map<string, 'GET' | 'POST'>([
 export const AUTH_UPSTREAM_TIMEOUT_MS = 7_000;
 export const BOOTSTRAP_CLAIM_LEASE_MS = 30_000;
 
+export interface AuthControllerBindings
+  extends SessionRuntimeBindings,
+    SessionCoordinatorBindings {}
+
 export interface AuthControllerDependencies {
   createStore(
     credential: SessionStoreCredential,
@@ -71,6 +83,14 @@ export interface AuthControllerDependencies {
     accountId: string,
     signal: AbortSignal,
   ): Promise<void>;
+  prepareSessionLogout(
+    bindings: AuthControllerBindings,
+    input: SessionLogoutIntent,
+  ): Promise<SessionLogoutPreparationResult>;
+  confirmSessionLogout(
+    bindings: AuthControllerBindings,
+    input: SessionLogoutConfirmation,
+  ): Promise<SessionInvalidationResult>;
   randomUuid(): string;
 }
 
@@ -87,6 +107,10 @@ const DEFAULT_DEPENDENCIES = Object.freeze({
       signal,
       timeoutMs: AUTH_UPSTREAM_TIMEOUT_MS,
     }),
+  prepareSessionLogout: (bindings, input) =>
+    sessionCoordinatorStub(bindings, input.sessionId).prepareLogout(input),
+  confirmSessionLogout: (bindings, input) =>
+    sessionCoordinatorStub(bindings, input.sessionId).confirmLogout(input),
   randomUuid: () => crypto.randomUUID(),
 } satisfies AuthControllerDependencies);
 
@@ -128,6 +152,12 @@ function unavailable(): Response {
 
 function integrityFailure(): Response {
   return authJson({ error: 'SESSION_INTEGRITY_FAILURE' }, 503);
+}
+
+function logoutPropagationPending(profile: CookieProfile): Response {
+  const headers = responseHeaders({ 'Retry-After': '1' });
+  appendClearCookies(headers, profile);
+  return authJson({ error: 'AUTH_UNAVAILABLE' }, 503, headers);
 }
 
 function principalBody(principal: SessionPrincipal): Record<string, unknown> {
@@ -526,6 +556,7 @@ async function handleLogout(
   config: SessionRuntimeConfig,
   profile: CookieProfile,
   dependencies: AuthControllerDependencies,
+  bindings: AuthControllerBindings,
 ): Promise<Response> {
   const sessionCookie = parseOpaqueCookie(request.headers.get('Cookie'), 'session', profile);
   if (sessionCookie.state !== 'valid') {
@@ -544,18 +575,71 @@ async function handleLogout(
     return integrityFailure();
   }
   if (lookup.state === 'ready') {
-    const revoked = await store.revokeSession({
+    const intent: SessionLogoutIntent = {
+      sessionId: lookup.principal.sessionId,
+      accountId: lookup.principal.accountId,
+      sessionVersion: lookup.principal.sessionVersion,
       sessionDigestHex: lookup.matchedCandidate.digestHex,
       sessionDigestKeyVersion: lookup.matchedCandidate.keyVersion,
-      reason: 'LOGOUT',
-    });
+    };
+    let preparation: SessionLogoutPreparationResult;
+    try {
+      preparation = await dependencies.prepareSessionLogout(bindings, intent);
+    } catch {
+      return unavailable();
+    }
+    if (preparation.state === 'conflict') return integrityFailure();
+    if (preparation.state === 'already_completed') {
+      const headers = responseHeaders();
+      appendClearCookies(headers, profile);
+      return authEmpty(204, headers);
+    }
+
+    let invalidatedVersion: number;
+    if (preparation.state === 'fanout_pending') {
+      invalidatedVersion = preparation.invalidatedVersion;
+    } else {
+      let revoked;
+      try {
+        revoked = await store.revokeSession({
+          sessionDigestHex: lookup.matchedCandidate.digestHex,
+          sessionDigestKeyVersion: lookup.matchedCandidate.keyVersion,
+          reason: 'LOGOUT',
+        });
+      } catch {
+        return logoutPropagationPending(profile);
+      }
+      if (
+        !revoked ||
+        revoked.sessionId !== lookup.principal.sessionId ||
+        revoked.accountId !== lookup.principal.accountId ||
+        revoked.sessionVersion <= lookup.principal.sessionVersion
+      ) {
+        return logoutPropagationPending(profile);
+      }
+      invalidatedVersion = revoked.sessionVersion;
+    }
+
+    const confirmation: SessionLogoutConfirmation = {
+      ...intent,
+      invalidatedVersion,
+    };
     if (
-      !revoked ||
-      revoked.sessionId !== lookup.principal.sessionId ||
-      revoked.accountId !== lookup.principal.accountId ||
-      revoked.sessionVersion <= lookup.principal.sessionVersion
-    ) {
-      return integrityFailure();
+      invalidatedVersion <= lookup.principal.sessionVersion
+    ) return integrityFailure();
+    try {
+      const invalidation = await dependencies.confirmSessionLogout(
+        bindings,
+        confirmation,
+      );
+      if (
+        invalidation.state !== 'acknowledged' ||
+        invalidation.invalidatedVersion < invalidatedVersion
+      ) {
+        return logoutPropagationPending(profile);
+      }
+    } catch {
+      return logoutPropagationPending(profile);
     }
   }
 
@@ -567,8 +651,8 @@ async function handleLogout(
 export function createAuthRequestHandler(
   dependencies: AuthControllerDependencies = DEFAULT_DEPENDENCIES,
 ): (
-  request: Request,
-  bindings: SessionRuntimeBindings,
+    request: Request,
+    bindings: AuthControllerBindings,
 ) => Promise<Response | null> {
   return async (request, bindings) => {
     let url: URL;
@@ -612,7 +696,7 @@ export function createAuthRequestHandler(
       if (url.pathname === '/auth/session') {
         return await handleSession(request, config, profile, dependencies);
       }
-      return await handleLogout(request, config, profile, dependencies);
+      return await handleLogout(request, config, profile, dependencies, bindings);
     } catch (error) {
       if (error instanceof AuthRequestError) {
         return authJson({ error: error.code }, error.status);

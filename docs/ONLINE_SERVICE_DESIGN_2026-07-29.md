@@ -1473,10 +1473,24 @@ LINE/Googleのメールが同じでも、自動でアカウント統合しない
 - 交換、認証手段の追加/削除、アカウント削除には直近再認証
 - 最後の回復可能な認証手段は削除不可
 - 新規認証リンク直後の高価値交換にクールダウン
-- ログアウトはDBでsession versionを上げて失効した後、関連MatchDOへversion付きinvalidateを送り、
-  各DOのACKを待つ。DOのsingle-thread順序でinvalidateより後のcommandを拒否し、既にそのDOで
-  linearize済みのcommandだけは完了し得る。新規接続/再接続はDBのsession/versionをfail closedで
-  検査するが、各commandのDB照会だけをlogoutとの排他制御とはみなさない
+- ログアウトはsession IDでnamedした`SessionCoordinatorDO`へ、cookie raw値ではなく照合済みHMAC digest、
+  account/session version、復旧alarmを同一storage transactionで先に保存する。次にDBでsession versionを
+  上げて失効し、coordinatorが保持する最大16件の関連MatchDOへversion付きinvalidateを送り各DOのACKを待つ。
+  16件は進行中MatchDO数の防御上限である。各assignmentは一意なregistration IDを持ち、coordinator側は
+  同じmatchの応答喪失中registrationを最大8件に抑える。MatchDOはregister RPC前にpending ID・deadline・
+  alarmをSQLiteへ原子的に置き、seatごと最大1件に制限する。seat置換は新pending削除・assignment反映・
+  旧ID cleanup outbox・alarmを同一transactionで確定してから解除RPCを送る。exact再送は参照を
+  再追加せず、SessionCoordinatorのread-only barrierで失効floor/workとexact ID存在を確認する。解除の
+  応答喪失はcleanup queue＋上限60秒backoff alarmから新stubで1件ずつ回収し、coordinatorは
+  取消済みIDをO(1)の`cancelledThroughEpochMs` floorへ世代圧縮し、別stub間の順序逆転で遅延registerを
+  復活させない。MatchDOは永続clockから`max(Date.now(), last+1, cancelledThrough+1)`で次epochを採番する。
+  fan-outはmatch IDで重複排除する。
+  OLG-121は試合の正常終了・取消・放棄を永続化した後にも同じ解除を必須とし、通算対戦数を上限にしない。
+  ACK失敗は参照を残して上限60秒の自前backoff alarmで再送する。Workerがintent保存後のDB更新前、または
+  DB更新後のfan-out前に停止しても、alarmが同じdigestで冪等なDB失効から再開する。全ACK後にdigest付きworkを
+  消し、失効version floorだけを残す。DOのsingle-thread順序でinvalidateより後のcommandを拒否し、既に
+  linearize済みのcommandだけは完了し得る。新規接続/再接続はDBのsession/versionをfail closedで検査するが、
+  各commandのDB照会だけをlogoutとの排他制御とはみなさない
 
 `guest_bootstrap_attempt`、`app_session`、session credentialはRLSを有効化するだけでなく、
 `anon`/`authenticated`/`service_role`の直接table権限を外す。空`search_path`の限定
