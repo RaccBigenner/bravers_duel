@@ -640,7 +640,7 @@ export class MatchDO extends DurableObject<Env> {
     return this.withOperationLock(() => this.startNpcBattleExclusive(input));
   }
 
-  /** OLG-123まではengine-native actionをRPC内部テストだけで扱い、wireへ公開しない。 */
+  /** OLG-123のstable MatchActionを内部RPCで扱う。browser wireはOLG-122/125/124まで開かない。 */
   async applyNpcBattleAction(
     input: ApplyNpcBattleActionInput,
   ): Promise<ApplyNpcBattleActionResult> {

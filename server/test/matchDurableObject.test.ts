@@ -1,5 +1,11 @@
 import { env } from 'cloudflare:workers';
-import { actingPlayer, searchAi, type BattleState } from '@bravers/engine';
+import {
+  actingPlayer,
+  legalActions,
+  searchAi,
+  type BattleAction,
+  type BattleState,
+} from '@bravers/engine';
 import {
   evictDurableObject,
   runDurableObjectAlarm,
@@ -18,7 +24,11 @@ import {
   type MatchSessionPrincipal,
   type MatchSeatId,
 } from '../src/match/matchDurableObject';
-import { HUMAN_PLAYER } from '../src/battle/engineBattleAdapter';
+import {
+  HUMAN_PLAYER,
+  matchActionFromEngineAction,
+  type AuthoritativeBattleSnapshot,
+} from '../src/battle/engineBattleAdapter';
 import {
   createMatchAccessRequestHandler,
   type MatchAccessBindings,
@@ -117,17 +127,27 @@ async function expectMatchInstanceError(
   expect(message).toContain(expectedCode);
 }
 
+function stableHumanAction(
+  snapshot: unknown,
+  engineAction: BattleAction,
+) {
+  // DurableObjectStubのRPC型はtupleを通常配列へ広げるため、server内部snapshotへ戻す。
+  const authoritative = snapshot as AuthoritativeBattleSnapshot;
+  return matchActionFromEngineAction(
+    authoritative.state,
+    authoritative.battleCards,
+    HUMAN_PLAYER,
+    engineAction,
+  );
+}
+
 async function leaveFinishedRuntimeBeforeTerminalCommit(
   instance: MatchDO,
   session: MatchSessionPrincipal,
 ): Promise<{ currentStateHash: string; steps: unknown[] }> {
   const target = instance as unknown as {
     battleRuntime: {
-      authoritativeSnapshot(): {
-        state: BattleState;
-        currentStateHash: string;
-        steps: unknown[];
-      };
+      authoritativeSnapshot(): AuthoritativeBattleSnapshot;
     } | null;
     persistBattleTerminal: (...args: unknown[]) => Promise<unknown>;
     applyNpcBattleAction: MatchDO['applyNpcBattleAction'];
@@ -147,7 +167,10 @@ async function leaveFinishedRuntimeBeforeTerminalCommit(
       try {
         await target.applyNpcBattleAction({
           principal: session,
-          action: human.choose(snapshot.state, HUMAN_PLAYER),
+          action: stableHumanAction(
+            snapshot,
+            human.choose(snapshot.state, HUMAN_PLAYER),
+          ),
         });
       } catch (error) {
         errorMessage = error instanceof Error ? error.message : String(error);
@@ -1314,10 +1337,11 @@ describe('OLG-121 MatchDO authoritative NPC battle lifecycle', () => {
     const battle = await startReservedNpcBattle();
     const before = await battle.stub.getNpcBattleSnapshot(battle.session);
     expect(actingPlayer(before.state as BattleState)).toBe(HUMAN_PLAYER);
-    const action = searchAi({ keepHand: 2 }).choose(
+    const engineAction = searchAi({ keepHand: 2 }).choose(
       before.state as BattleState,
       HUMAN_PLAYER,
     );
+    const action = stableHumanAction(before, engineAction);
 
     await expectMatchInstanceError(
       battle.stub,
@@ -1345,6 +1369,73 @@ describe('OLG-121 MatchDO authoritative NPC battle lifecycle', () => {
     }
   });
 
+  it('battleCardIdを現在手札だけから解決し、index移動後も同じ個体へ当てる', async () => {
+    const battle = await startReservedNpcBattle();
+    await battle.stub.applyNpcBattleAction({
+      principal: battle.session,
+      action: { type: 'endPlay' },
+    });
+    const chargeSnapshot = await battle.stub.getNpcBattleSnapshot(battle.session);
+    const chargeActions = legalActions(chargeSnapshot.state as BattleState).filter(
+      (action): action is Extract<BattleAction, { type: 'charge' }> => action.type === 'charge',
+    );
+    expect(chargeActions.length).toBeGreaterThan(1);
+    const first = stableHumanAction(chargeSnapshot, chargeActions[0]!);
+    const last = stableHumanAction(chargeSnapshot, chargeActions.at(-1)!);
+    if (first.type !== 'charge' || last.type !== 'charge') {
+      throw new Error('Expected stable charge actions');
+    }
+    const lastPrintingId = chargeSnapshot.battleCards.players[HUMAN_PLAYER].hand.at(-1)?.printingId;
+    const opponentHandId = chargeSnapshot.battleCards.players[1].hand[0]?.battleCardId;
+    const ownDeckId = chargeSnapshot.battleCards.players[HUMAN_PLAYER].deck[0]?.battleCardId;
+    if (!lastPrintingId || !opponentHandId || !ownDeckId) {
+      throw new Error('Expected hand and deck battleCardIds');
+    }
+
+    const rejectedActions: unknown[] = [
+      chargeActions[0],
+      { ...first, handIndex: 0 },
+      { ...first, battleCardId: 'bc_ffffffffffffffffffffffffffffffff' },
+      { ...first, battleCardId: opponentHandId },
+      { ...first, battleCardId: ownDeckId },
+    ];
+    for (const action of rejectedActions) {
+      await expectMatchInstanceError(
+        battle.stub,
+        (instance) => instance.applyNpcBattleAction({ principal: battle.session, action }),
+        'BATTLE_ACTION_INVALID',
+      );
+      await expect(battle.stub.getNpcBattleSnapshot(battle.session)).resolves.toEqual(
+        chargeSnapshot,
+      );
+    }
+
+    await battle.stub.applyNpcBattleAction({ principal: battle.session, action: first });
+    const shifted = await battle.stub.getNpcBattleSnapshot(battle.session);
+    const shiftedLast = shifted.battleCards.players[HUMAN_PLAYER].hand.find(
+      (card) => card.battleCardId === last.battleCardId,
+    );
+    expect(shiftedLast?.printingId).toBe(lastPrintingId);
+
+    await battle.stub.applyNpcBattleAction({ principal: battle.session, action: last });
+    const after = await battle.stub.getNpcBattleSnapshot(battle.session);
+    expect(
+      after.battleCards.players[HUMAN_PLAYER].ap.find(
+        (card) => card.battleCardId === last.battleCardId,
+      )?.printingId,
+    ).toBe(lastPrintingId);
+
+    await expectMatchInstanceError(
+      battle.stub,
+      (instance) => instance.applyNpcBattleAction({
+        principal: battle.session,
+        action: last,
+      }),
+      'BATTLE_ACTION_INVALID',
+    );
+    await expect(battle.stub.getNpcBattleSnapshot(battle.session)).resolves.toEqual(after);
+  });
+
   it('NPC戦を最後まで進め、engine結果を先に永続化してassignmentと予約を解除する', async () => {
     const battle = await startReservedNpcBattle();
     const human = searchAi({ keepHand: 2 });
@@ -1353,9 +1444,10 @@ describe('OLG-121 MatchDO authoritative NPC battle lifecycle', () => {
     for (let safety = 0; safety < 1_000; safety += 1) {
       const snapshot = await battle.stub.getNpcBattleSnapshot(battle.session);
       expect(actingPlayer(snapshot.state as BattleState)).toBe(HUMAN_PLAYER);
+      const engineAction = human.choose(snapshot.state as BattleState, HUMAN_PLAYER);
       const applied = await battle.stub.applyNpcBattleAction({
         principal: battle.session,
-        action: human.choose(snapshot.state as BattleState, HUMAN_PLAYER),
+        action: stableHumanAction(snapshot, engineAction),
       });
       if (applied.lifecycleState === 'finished') {
         finalTransition = applied;
@@ -1494,16 +1586,22 @@ describe('OLG-121 MatchDO authoritative NPC battle lifecycle', () => {
     });
     const before = await battle.stub.getNpcBattleSnapshot(battle.session);
 
-    const rejected = socketOutcome(socket);
-    socket.send(JSON.stringify({ type: 'action', action: { type: 'endPlay' } }));
-    await expect(rejected).resolves.toEqual({
-      kind: 'message',
-      data: 'error:game-not-ready',
-    });
+    const ownBattleCardId = before.battleCards.players[HUMAN_PLAYER].hand[0]?.battleCardId;
+    if (!ownBattleCardId) throw new Error('Expected own hand battleCardId');
+    for (const frame of [
+      { type: 'action', action: { type: 'charge', handIndex: 0 } },
+      { type: 'action', action: { type: 'charge', battleCardId: ownBattleCardId } },
+    ]) {
+      const rejected = socketOutcome(socket);
+      socket.send(JSON.stringify(frame));
+      await expect(rejected).resolves.toEqual({
+        kind: 'message',
+        data: 'error:game-not-ready',
+      });
+    }
 
     const after = await battle.stub.getNpcBattleSnapshot(battle.session);
-    expect(after.currentStateHash).toBe(before.currentStateHash);
-    expect(after.steps).toEqual(before.steps);
+    expect(after).toEqual(before);
     socket.close(1000, 'done');
   });
 
@@ -1518,10 +1616,11 @@ describe('OLG-121 MatchDO authoritative NPC battle lifecycle', () => {
       data: 'auth_ok',
     });
     const before = await battle.stub.getNpcBattleSnapshot(battle.session);
-    const action = searchAi({ keepHand: 2 }).choose(
+    const engineAction = searchAi({ keepHand: 2 }).choose(
       before.state as BattleState,
       HUMAN_PLAYER,
     );
+    const action = stableHumanAction(before, engineAction);
     const closed = socketOutcome(socket);
 
     await expect(battle.stub.invalidateSession({
