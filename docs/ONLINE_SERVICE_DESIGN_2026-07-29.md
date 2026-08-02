@@ -331,6 +331,27 @@ NPC戦のこの状態は`hibernated`と呼ぶ。11・4.4の`TournamentDO`/`Match
 - 永続化したsnapshotの保存期限は**180日**とする。期限切れで自動破棄した場合、敗北扱いには
   せず、単に再開不可（対戦履歴上は未完了のまま）になる。期限は運用設定で調整できる版付き値とする
 
+#### 開始要求の冪等性（OLG-129）
+
+`POST /matches/npc` は応答喪失後の再送と、終端後まで遅延した古い要求を新規開始から区別する。
+クライアントは毎回の新規開始に一意な `Idempotency-Key` ヘッダーを付け、body は従来どおり
+exact `{}` とする。キーはASCIIの `[A-Za-z0-9][A-Za-z0-9._~-]{0,63}`、session/accountに
+束縛し、cookie・seat token・WebSocket URLへは流用しない。キー無し、形式不正、同一キーの
+異なる要求は `400 IDEMPOTENCY_KEY_INVALID` として開始しない。
+
+SessionCoordinatorはsessionVersion単位で次を原子的に保持する。
+
+- active reservation: `idempotencyKey` と `matchId/seed` を保存し、同一キーの再送は同じ予約へ収束
+- released tombstone: terminal解放時にキー・matchId・releasedAtを保存し、**24時間**だけ再送結果を保持
+- 上限: active 1件 + released tombstone 16件。期限切れを先に削除し、全て有効なら新規開始を
+  `503 IDEMPOTENCY_TOMBSTONE_CAPACITY`（Retry-After付き）で拒否する。古いキーを上書きしない
+
+active中の同一キーは既存matchを起動する（`created:false`）。released tombstoneに一致するキーは
+MatchDOを再起動せず、保存済みmatchIdを`200`で返す（`replayed:true`）。異なるキーは新規開始、
+異なるsession/accountからの同一キーは各sessionのキー空間に入らず通常の認可境界で拒否する。
+TTL満了後は同じキーでも新規開始として扱う。成功・終端エラーはtombstoneに保存し、一時障害は
+保存せず同じキーで再試行可能にする。
+
 ### 4.2 レートマッチ
 
 名称は初期UIでは「レート戦」より「クイック対戦」を主にし、結果画面でレート変動を見せる。

@@ -733,6 +733,21 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
 - OLG-129 battle start idempotency tombstone（終端後まで極端に遅延した旧開始要求と新規開始を区別。
   G1では受容残余とし、G4 public前にbounded tombstoneまたはIdempotency-Keyで閉じる）
 
+#### OLG-129 battle start idempotency tombstone
+
+実装契約を次で固定する。
+
+- `POST /matches/npc` は `Idempotency-Key`（ASCII 1〜64文字、先頭英数字、session/account束縛）を必須とし、
+  bodyはexact `{}` のまま。キー無し/形式不正/要求不一致は開始前に400で拒否する
+- SessionCoordinatorのactive reservationへキーを保存し、同一キーの応答喪失再送は同じmatch/seedへ収束する
+- terminal解放時はキー・matchId・releasedAtのtombstoneを24時間、最大16件保持する。期限切れから削除し、
+  16件すべて有効なら古いキーを捨てず503 + Retry-Afterで新規開始を待たせる
+- tombstone一致の再送はMatchDOを再度startせず、保存済みmatchIdを200で返す。TTL満了後だけ新規開始になる
+- 成功/終端結果は保存し、一時障害は保存しない。異なるsession/accountのキー空間を混同しない
+
+受入テスト: 応答喪失の同時再送、active中の同一キー、terminal後の遅延旧キー、異なるキーの新規開始、
+TTL境界、16件上限、古いキーの再利用、異なるsession/account、MatchDOを二重起動しないことを固定する。
+
 #### OLG-121 engine server adapter
 
 状態: **コード実装済み**（2026-08-01）
