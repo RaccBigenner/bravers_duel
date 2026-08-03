@@ -552,7 +552,8 @@
   opacity: 0.75;
 }
 .home-note { color: #667; font-size: 11.5px; max-width: 300px; margin: 4px auto 0; line-height: 1.6; }
-.home-retention-notice { color: #765a2d; background: #fff8e8; border: 1px solid #ead7aa; border-radius: 8px; font-size: 11.5px; max-width: 300px; margin: 10px auto 0; padding: 8px 10px; line-height: 1.55; }
+.home-retention-notice { color: #765a2d; background: #fff8e8; border: 1px solid #ead7aa; border-radius: 8px; display: grid; gap: 3px; font-size: 11.5px; max-width: 300px; margin: 10px auto 0; padding: 8px 10px; line-height: 1.55; text-align: left; }
+.home-retention-notice strong { color: #5b431f; font-size: 12px; }
 .big-btn {
   background: linear-gradient(180deg, #ffe680, #d4af37);
   color: #321;

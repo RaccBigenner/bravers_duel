@@ -49,13 +49,13 @@ export function Home({
           </button>
         </div>
         <p className="home-note">
-          オープンβテスト — CPU対戦のローカルデータは保存されません。デッキはJSONで書き出せます。
-          オンライン対戦はサーバーに保存され、リロード後も続きから戻れます。
-          品質向上のため、匿名のプレイ統計とレビューを送信します（個人情報は含みません）。
+          プロトタイプ版 — まずはCPU対戦をお試しください。
+          対戦結果とデッキはこのブラウザに保存されませんが、デッキはJSONで書き出せます。
         </p>
         <p className="home-retention-notice" role="note">
-          ゲストアカウントは、90日以上利用がない場合に削除されることがあります。
-          スターターを受け取る前に、アカウント保護（LINE・Google連携）をおすすめします。
+          <strong>アカウントについて</strong>
+          <span>90日間まったく利用しないゲストアカウントは、データ整理のため削除することがあります。</span>
+          <span>スターターを受け取る前にLINEまたはGoogleを連携すると、アカウントを保護できます。</span>
         </p>
       </div>
       {showRules && <RulesModal onClose={() => setShowRules(false)} />}
