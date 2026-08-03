@@ -7,6 +7,7 @@ import {
 const base = {
   accountId: 'guest-1',
   isAnonymous: true,
+  hasProtectedValue: false,
   lastActiveAtEpochMs: 1_000,
   hasActiveSession: false,
   hasInProgressBattle: false,
@@ -21,7 +22,7 @@ describe('guestRetentionPolicy', () => {
   });
 
   it('fails closed for every protection condition', () => {
-    for (const key of ['isAnonymous', 'hasActiveSession', 'hasInProgressBattle', 'hasIdentityLinkInProgress'] as const) {
+    for (const key of ['isAnonymous', 'hasProtectedValue', 'hasActiveSession', 'hasInProgressBattle', 'hasIdentityLinkInProgress'] as const) {
       const value = { ...base, [key]: key === 'isAnonymous' ? false : true };
       expect(isExpiredGuestCandidate(value, 1_000 + GUEST_RETENTION_MS)).toBe(false);
     }

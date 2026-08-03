@@ -23,8 +23,9 @@ describe('OLG-116 guest activity migration', () => {
   it('活動時刻・匿名flag・保持indexを追加する', async () => {
     const value = await sql();
     assert.match(value, /alter table public\.account add column if not exists is_anonymous boolean not null default true/);
+    assert.match(value, /add column if not exists retention_protected boolean not null default false/);
     assert.match(value, /add column if not exists last_active_at timestamptz not null default statement_timestamp\(\)/);
-    assert.match(value, /create index if not exists account_guest_retention_idx on public\.account \(is_anonymous, last_active_at, account_id\)/);
+    assert.match(value, /create index if not exists account_guest_retention_idx on public\.account \(is_anonymous, retention_protected, last_active_at, account_id\)/);
   });
 
   it('活動更新RPCをservice_roleだけに公開し、search_pathを固定する', async () => {

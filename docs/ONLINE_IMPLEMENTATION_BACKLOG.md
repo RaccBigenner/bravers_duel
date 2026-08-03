@@ -712,9 +712,10 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
 状態: データモデル実装済み（2026-08-03）。Workerの活動更新配線、cleanup transactionと運用jobは未着手（G4 Public Online Beta公開前ゲート）
 
 - Supabase anonymous userは自動削除されないため、定期cleanup jobを運営側で持つ
-- 初期値は`last_active_at`から90日。ゲスト開始とスターター受取前に日本語で明示し、
-  保護済みaccountは対象外にする。`auth.users.created_at`だけで削除判定しない
-- `public.account`はWorker管理の`is_anonymous`と`last_active_at`を持ち、
+- 初期値は`last_active_at`から365日。未連携・保護価値なしゲストだけを対象にし、
+  有料購入・カード/BP所持・スターター受取・外部ID連携中のaccountはサービス継続中に削除しない。
+  `auth.users.created_at`だけで削除判定しない
+- `public.account`はWorker管理の`is_anonymous`・`retention_protected`・`last_active_at`を持ち、
   `touch_account_last_active(uuid)`をservice_role限定RPCとして更新する。判定用複合indexも同じmigrationで作る
 - `touch_account_last_active`はsession確立または認証済みcommand受理時にWorkerから呼ぶ。呼び出し元が配線されるまで、
   cleanupを有効化してはならない（古い活動時刻で現役ゲストを誤削除しないため）

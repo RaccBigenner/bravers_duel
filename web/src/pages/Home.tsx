@@ -54,7 +54,7 @@ export function Home({
         </p>
         <p className="home-retention-notice" role="note">
           <strong>アカウントについて</strong>
-          <span>90日間まったく利用しないゲストアカウントは、データ整理のため削除することがあります。</span>
+          <span>365日間利用がなく、購入・所持カードなどの保護対象がないゲストアカウントは、データ整理の対象になることがあります。</span>
           <span>スターターを受け取る前にLINEまたはGoogleを連携すると、アカウントを保護できます。</span>
         </p>
       </div>

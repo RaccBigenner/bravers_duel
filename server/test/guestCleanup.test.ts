@@ -5,6 +5,7 @@ import { runGuestCleanup, type GuestCleanupStore } from '../src/auth/guestCleanu
 const now = 10_000 + GUEST_RETENTION_MS;
 const expired = {
   accountId: 'guest-1', isAnonymous: true, lastActiveAtEpochMs: 10_000,
+  hasProtectedValue: false,
   hasActiveSession: false, hasInProgressBattle: false, hasIdentityLinkInProgress: false,
 };
 

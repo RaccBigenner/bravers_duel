@@ -1456,11 +1456,13 @@ Apple Loginは、ネイティブアプリ/App IDとの連携が必要になっ�
 休眠ゲストの保持:
 
 - Supabaseは匿名userを自動削除しないため、OLG-116で定期cleanupを持つ。作成日だけではなく
-  serverが更新する`last_active_at`を判定基準にし、初期保持期間は90日とする
-- ゲスト開始時とスターター受取前に「90日以上利用がないと削除される可能性」と
-  アカウント保護導線を日本語で示す。期間を短縮する場合は事前告知なしで適用しない
-- 削除候補は`is_anonymous = true`、期限より前の`last_active_at`、active session/進行中バトル/
-  外部ID連携処理なしを同じtransactionで再検査する。一つでも判定できなければ削除しない
+  serverが更新する`last_active_at`を判定基準にし、未連携・保護価値なしゲストの初期保持期間は365日とする
+- 有料購入、カード/BP所持、スターター受取、外部ID連携、進行中の取引・問い合わせがあるaccountは
+  `retention_protected = true`としてサービス継続中は自動削除しない
+- ゲスト開始時とスターター受取前に「365日以上利用がない、かつ保護価値がないゲストだけが整理対象」と
+  アカウント保護導線を日本語で示す。削除前には複数回通知と30日の復旧猶予を置く
+- 削除候補は`is_anonymous = true`、`retention_protected = false`、期限より前の`last_active_at`、
+  active session/進行中バトル/外部ID連携処理なしを同じtransactionで再検査する。一つでも判定できなければ削除しない
 - batch上限、dry-run件数、kill switch、削除成否数の監査値を持つ。保護済みaccountは期限に関係なく
   定期cleanupの対象外とし、削除の競合はlast activity更新を勝たせる
 

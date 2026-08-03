@@ -4,6 +4,7 @@ import { runGuestCleanupJob } from '../src/auth/guestCleanupJob';
 
 const candidate = {
   accountId: 'guest-1', isAnonymous: true, lastActiveAtEpochMs: 1_000,
+  hasProtectedValue: false,
   hasActiveSession: false, hasInProgressBattle: false, hasIdentityLinkInProgress: false,
 };
 

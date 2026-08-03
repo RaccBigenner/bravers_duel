@@ -2,15 +2,18 @@
 -- account_idは認証情報ではなく、更新はWorkerの限定RPCだけに閉じる。
 alter table public.account
   add column if not exists is_anonymous boolean not null default true,
+  add column if not exists retention_protected boolean not null default false,
   add column if not exists last_active_at timestamptz not null default statement_timestamp();
 
 comment on column public.account.is_anonymous is
   'Server-maintained protection flag. External identity linking must set this false in a later transaction.';
 comment on column public.account.last_active_at is
-  'Last activity observed by the authoritative Worker. Used for the 90-day guest retention window.';
+  'Last activity observed by the authoritative Worker. Used for the 365-day guest retention window.';
+comment on column public.account.retention_protected is
+  'True for purchased/owned value, starter recipients, linked identities, or any account that must survive cleanup.';
 
 create index if not exists account_guest_retention_idx
-  on public.account (is_anonymous, last_active_at, account_id);
+  on public.account (is_anonymous, retention_protected, last_active_at, account_id);
 
 create or replace function public.touch_account_last_active(p_account_id uuid)
 returns boolean
@@ -47,7 +50,7 @@ begin
     from public.account
    where account_id = p_account_id
    for update;
-  if not found or not v_account.is_anonymous or v_account.last_active_at > p_cutoff then
+  if not found or not v_account.is_anonymous or v_account.retention_protected or v_account.last_active_at > p_cutoff then
     return false;
   end if;
   if exists (

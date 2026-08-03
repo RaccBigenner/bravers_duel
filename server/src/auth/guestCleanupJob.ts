@@ -1,4 +1,5 @@
 import { runGuestCleanup, type GuestCleanupResult, type GuestCleanupStore } from './guestCleanup';
+import { GUEST_RETENTION_MS } from './guestRetentionPolicy';
 
 export interface GuestCleanupJobConfig {
   enabled: boolean;
@@ -32,7 +33,7 @@ export async function runGuestCleanupJob(
     return result;
   }
   const candidates = await store.listGuestCandidates({
-    cutoffEpochMs: input.nowEpochMs - 90 * 24 * 60 * 60 * 1_000,
+    cutoffEpochMs: input.nowEpochMs - GUEST_RETENTION_MS,
     limit: config.batchLimit,
   });
   if (config.dryRun) {
