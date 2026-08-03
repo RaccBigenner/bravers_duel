@@ -29,3 +29,47 @@ $$;
 revoke all on function public.touch_account_last_active(uuid)
   from public, anon, authenticated;
 grant execute on function public.touch_account_last_active(uuid) to service_role;
+
+create or replace function public.delete_guest_if_eligible(
+  p_account_id uuid,
+  p_cutoff timestamptz
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_account public.account%rowtype;
+begin
+  -- accountを先にロックし、活動更新と削除候補の再検査を同じtransactionに閉じる。
+  select * into v_account
+    from public.account
+   where account_id = p_account_id
+   for update;
+  if not found or not v_account.is_anonymous or v_account.last_active_at > p_cutoff then
+    return false;
+  end if;
+  if exists (
+    select 1 from public.app_session
+     where account_id = p_account_id
+       and revoked_at is null
+       and idle_expires_at > statement_timestamp()
+  ) then
+    return false;
+  end if;
+  if exists (
+    select 1 from public.guest_bootstrap_attempt
+     where account_id = p_account_id
+       and attempt_state <> 'COMPLETED'
+  ) then
+    return false;
+  end if;
+  delete from auth.users where id = p_account_id;
+  return found;
+end;
+$$;
+
+revoke all on function public.delete_guest_if_eligible(uuid, timestamptz)
+  from public, anon, authenticated;
+grant execute on function public.delete_guest_if_eligible(uuid, timestamptz) to service_role;

@@ -69,6 +69,8 @@ export interface RevokedSession {
 export interface SessionStore {
   /** 認証済みrequestの活動時刻をserver側で更新する。未対応storeはcleanup配線前の互換用。 */
   touchAccountLastActive?(accountId: string): Promise<boolean>;
+  /** account lock・session/bootstrap再検査・Auth cascade削除をDB側transactionで行う。 */
+  deleteGuestIfEligible?(input: { accountId: string; cutoff: string }): Promise<boolean>;
   createBootstrap(input: {
     bootstrapDigestHex: string;
     digestKeyVersion: number;
@@ -500,6 +502,17 @@ export class SupabaseSessionStore implements SessionStore {
   async touchAccountLastActive(accountId: string): Promise<boolean> {
     const raw = await this.#rpc('touch_account_last_active', {
       p_account_id: inputUuid(accountId),
+    });
+    if (typeof raw !== 'boolean') {
+      throw new SessionStoreError('SESSION_STORE_RESPONSE_INVALID');
+    }
+    return raw;
+  }
+
+  async deleteGuestIfEligible(input: { accountId: string; cutoff: string }): Promise<boolean> {
+    const raw = await this.#rpc('delete_guest_if_eligible', {
+      p_account_id: inputUuid(input.accountId),
+      p_cutoff: input.cutoff,
     });
     if (typeof raw !== 'boolean') {
       throw new SessionStoreError('SESSION_STORE_RESPONSE_INVALID');

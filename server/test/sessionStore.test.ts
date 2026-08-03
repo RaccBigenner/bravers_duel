@@ -34,6 +34,22 @@ describe('OLG-113 Supabase session store', () => {
     expect(JSON.parse(String(init.body))).toEqual({ p_account_id: ACCOUNT_ID });
   });
 
+  it('guest削除の再検査RPCへaccountとcutoffを渡す', async () => {
+    const fetchMock = vi.fn(async () => json(false));
+    const store = new SupabaseSessionStore(credential, { fetch: fetchMock });
+
+    await expect(store.deleteGuestIfEligible({
+      accountId: ACCOUNT_ID,
+      cutoff: '2026-05-05T00:00:00.000Z',
+    })).resolves.toBe(false);
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('http://127.0.0.1:54321/rest/v1/rpc/delete_guest_if_eligible');
+    expect(JSON.parse(String(init.body))).toEqual({
+      p_account_id: ACCOUNT_ID,
+      p_cutoff: '2026-05-05T00:00:00.000Z',
+    });
+  });
+
   it('secret keyの限定RPCでbootstrapを作りraw tokenを送らない', async () => {
     const fetchMock = vi.fn(async () => json({ state: 'created', attempt_id: ATTEMPT_ID }));
     const store = new SupabaseSessionStore(credential, { fetch: fetchMock });

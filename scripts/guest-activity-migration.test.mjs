@@ -38,4 +38,19 @@ describe('OLG-116 guest activity migration', () => {
     assert.match(value, /revoke all on function public\.touch_account_last_active\(uuid\) from public, anon, authenticated/);
     assert.match(value, /grant execute on function public\.touch_account_last_active\(uuid\) to service_role/);
   });
+
+  it('削除直前のaccount lock・保護条件再検査・Auth cascade削除を限定RPCへ閉じる', async () => {
+    const value = await sql();
+    const start = value.indexOf('create or replace function public.delete_guest_if_eligible(');
+    const end = value.indexOf('$$;', start);
+    assert.ok(start >= 0 && end > start);
+    const definition = value.slice(start, end);
+    assert.match(definition, /for update/);
+    assert.match(definition, /not v_account\.is_anonymous/);
+    assert.match(definition, /from public\.app_session/);
+    assert.match(definition, /from public\.guest_bootstrap_attempt/);
+    assert.match(definition, /delete from auth\.users where id = p_account_id/);
+    assert.match(value, /revoke all on function public\.delete_guest_if_eligible\(uuid, timestamptz\) from public, anon, authenticated/);
+    assert.match(value, /grant execute on function public\.delete_guest_if_eligible\(uuid, timestamptz\) to service_role/);
+  });
 });
