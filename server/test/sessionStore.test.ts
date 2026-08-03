@@ -24,6 +24,16 @@ function json(body: unknown, status = 200): Response {
 }
 
 describe('OLG-113 Supabase session store', () => {
+  it('guest activityを限定RPCへ送りboolean結果をstrictに検証する', async () => {
+    const fetchMock = vi.fn(async () => json(true));
+    const store = new SupabaseSessionStore(credential, { fetch: fetchMock });
+
+    await expect(store.touchAccountLastActive(ACCOUNT_ID)).resolves.toBe(true);
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('http://127.0.0.1:54321/rest/v1/rpc/touch_account_last_active');
+    expect(JSON.parse(String(init.body))).toEqual({ p_account_id: ACCOUNT_ID });
+  });
+
   it('secret keyの限定RPCでbootstrapを作りraw tokenを送らない', async () => {
     const fetchMock = vi.fn(async () => json({ state: 'created', attempt_id: ATTEMPT_ID }));
     const store = new SupabaseSessionStore(credential, { fetch: fetchMock });

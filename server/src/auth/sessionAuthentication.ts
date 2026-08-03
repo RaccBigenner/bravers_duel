@@ -36,5 +36,9 @@ export async function lookupOpaqueSessionToken(
     (candidate) => candidate.keyVersion === resolution.credentialKeyVersion,
   );
   if (!matchedCandidate) return { state: 'integrity_failure' };
+  if (store.touchAccountLastActive) {
+    const touched = await store.touchAccountLastActive(resolution.accountId);
+    if (!touched) return { state: 'integrity_failure' };
+  }
   return { state: 'ready', principal: resolution, matchedCandidate };
 }
