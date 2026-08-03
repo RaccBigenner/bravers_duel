@@ -709,13 +709,15 @@ OLG-101の雛形を、外部resource/secretを使わずローカルで実際に�
 
 ### OLG-116 休眠ゲストの保持・定期削除
 
-状態: データモデル実装済み（2026-08-03）。cleanup transactionと運用jobは未着手（G4 Public Online Beta公開前ゲート）
+状態: データモデル実装済み（2026-08-03）。Workerの活動更新配線、cleanup transactionと運用jobは未着手（G4 Public Online Beta公開前ゲート）
 
 - Supabase anonymous userは自動削除されないため、定期cleanup jobを運営側で持つ
 - 初期値は`last_active_at`から90日。ゲスト開始とスターター受取前に日本語で明示し、
   保護済みaccountは対象外にする。`auth.users.created_at`だけで削除判定しない
 - `public.account`はWorker管理の`is_anonymous`と`last_active_at`を持ち、
   `touch_account_last_active(uuid)`をservice_role限定RPCとして更新する。判定用複合indexも同じmigrationで作る
+- `touch_account_last_active`はsession確立または認証済みcommand受理時にWorkerから呼ぶ。呼び出し元が配線されるまで、
+  cleanupを有効化してはならない（古い活動時刻で現役ゲストを誤削除しないため）
 - candidateを小さなbatchでlockし、匿名状態、最終活動、active session、進行中バトル、
   外部ID連携中でないことを削除直前に再検査する。曖昧な場合はfail closedで残す
 - dry-run、batch上限、kill switch、対象/削除/除外件数の監査、活動更新との競合テスを
