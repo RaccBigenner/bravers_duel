@@ -50,4 +50,18 @@ describe('guestCleanup', () => {
     await expect(runGuestCleanup(store, { nowEpochMs: 1, limit: 501 })).rejects.toThrow('GUEST_CLEANUP_LIMIT_INVALID');
     expect(store.listGuestCandidates).not.toHaveBeenCalled();
   });
+
+  it('activity更新が削除直前に競合した場合はstoreがskipを返し、監査集計も削除0になる', async () => {
+    let activityUpdated = false;
+    const store: GuestCleanupStore = {
+      listGuestCandidates: async () => {
+        activityUpdated = true;
+        return [expired];
+      },
+      deleteIfEligible: async () => (activityUpdated ? 'skipped' : 'deleted'),
+    };
+    await expect(runGuestCleanup(store, { nowEpochMs: now, limit: 1 })).resolves.toEqual({
+      scanned: 1, deleted: 0, skipped: 1, missing: 0,
+    });
+  });
 });
