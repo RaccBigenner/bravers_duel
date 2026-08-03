@@ -53,6 +53,10 @@ export function Home({
           オンライン対戦はサーバーに保存され、リロード後も続きから戻れます。
           品質向上のため、匿名のプレイ統計とレビューを送信します（個人情報は含みません）。
         </p>
+        <p className="home-retention-notice" role="note">
+          ゲストアカウントは、90日以上利用がない場合に削除されることがあります。
+          スターターを受け取る前に、アカウント保護（LINE・Google連携）をおすすめします。
+        </p>
       </div>
       {showRules && <RulesModal onClose={() => setShowRules(false)} />}
     </div>
