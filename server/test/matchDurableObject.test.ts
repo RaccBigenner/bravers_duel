@@ -4045,6 +4045,30 @@ describe('OLG-125 MatchDO battle persistence and crash recovery', () => {
       .rejects.toThrow('MATCH_BATTLE_PERSISTENCE_INVALID');
   });
 
+  it('terminal後の未知commandIdは台帳capacity exhaustionをDO errorとして伝播する', async () => {
+    const battle = await startReservedNpcBattle();
+    await expect(battle.stub.cancelNpcBattle({
+      principal: battle.session,
+      reason: 'server_cancelled',
+    })).resolves.toMatchObject({ state: 'cancelled' });
+
+    const command = npcCommand(battle.id, 0, { type: 'unknown' });
+    await runInDurableObject(battle.stub, async (instance) => {
+      const target = instance as unknown as {
+        battleCommands: { hasCapacity: () => boolean };
+        applyNpcBattleCommandExclusive(input: {
+          principal: MatchSessionPrincipal;
+          command: MatchCommandCandidate;
+        }): Promise<unknown>;
+      };
+      target.battleCommands.hasCapacity = () => false;
+      await expect(target.applyNpcBattleCommandExclusive({
+        principal: battle.session,
+        command,
+      })).rejects.toThrow('MATCH_COMMAND_CAPACITY_EXCEEDED');
+    });
+  });
+
   it('runtime無しcancelledに残ったstale assignmentをconstructor gateで拒否する', async () => {
     const battle = await reserveNpcBattle();
     await runInDurableObject(battle.stub, async (instance) => {
