@@ -1133,11 +1133,10 @@ export class MatchDO extends DurableObject<Env> {
       throw new MatchBattleError('MATCH_STATE_UNAVAILABLE');
     }
     if (lifecycle.lifecycle_state !== 'active') {
-      return this.persistRejectedCommandResult(
-        command,
-        identity,
-        this.actionOrTerminalCommandResult(command, 'MATCH_ALREADY_TERMINAL', revision),
-      );
+      // terminal後の未知commandIdは台帳を増やさない。revisionは確定済みで結果は
+      // commandごとに決定的なので、再送のたびに永続化しなくても同じ結果へ収束する
+      // (拒否枠512件capを再送spamで消費させない)。
+      return this.actionOrTerminalCommandResult(command, 'MATCH_ALREADY_TERMINAL', revision);
     }
     runtime ??= this.requireBattleRuntime();
     if (runtime.commandRevision() !== revision) {

@@ -4069,6 +4069,36 @@ describe('OLG-125 MatchDO battle persistence and crash recovery', () => {
     });
   });
 
+  it('terminal後の未知commandId再送を繰り返しても台帳recordsは増えない', async () => {
+    const battle = await startReservedNpcBattle();
+    await expect(battle.stub.cancelNpcBattle({
+      principal: battle.session,
+      reason: 'server_cancelled',
+    })).resolves.toMatchObject({ state: 'cancelled' });
+
+    const before = await runInDurableObject(battle.stub, (instance) => {
+      const target = instance as unknown as { battleCommands: { size: number } };
+      return target.battleCommands.size;
+    });
+
+    for (let i = 0; i < 5; i += 1) {
+      const command = npcCommand(battle.id, 0, { type: 'unknown' });
+      await expect(battle.stub.applyNpcBattleCommand({
+        principal: battle.session,
+        command,
+      })).resolves.toMatchObject({
+        state: 'rejected',
+        errorCode: 'MATCH_ALREADY_TERMINAL',
+      });
+    }
+
+    const after = await runInDurableObject(battle.stub, (instance) => {
+      const target = instance as unknown as { battleCommands: { size: number } };
+      return target.battleCommands.size;
+    });
+    expect(after).toBe(before);
+  });
+
   it('runtime無しcancelledに残ったstale assignmentをconstructor gateで拒否する', async () => {
     const battle = await reserveNpcBattle();
     await runInDurableObject(battle.stub, async (instance) => {
